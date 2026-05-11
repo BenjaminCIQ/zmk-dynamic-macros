@@ -12,7 +12,7 @@ config ZMK_BEHAVIOR_DYNAMIC_MACRO_MAX_SLOTS
 
 config ZMK_BEHAVIOR_DYNAMIC_MACRO_MAX_EVENTS
     int "Maximum number of events per macro slot (press + release = 2 events)"
-    default 32
+    default 64
 
 config ZMK_BEHAVIOR_DYNAMIC_MACRO_TAP_DELAY
     int "Delay in ms between each event during playback"
