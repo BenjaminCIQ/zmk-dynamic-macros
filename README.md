@@ -11,7 +11,6 @@ A [ZMK](https://zmk.dev/) module that adds dynamic macro recording and playback 
 - **Status** output showing all filled slots with their contents
 - **NVS persistence** across reboots (configurable, enabled by default)
 - **Typed feedback** for all operations (configurable, enabled by default)
-- Designed as a standalone ZMK module -- no fork required
 
 ## Setup
 
