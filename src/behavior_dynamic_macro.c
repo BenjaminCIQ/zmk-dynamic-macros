@@ -1150,10 +1150,12 @@ struct dm_storage_op {
     struct dm_slot slot;
 };
 
-K_KERNEL_STACK_DEFINE(dm_storage_work_q_stack,
-                      CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_STORAGE_WORK_QUEUE_STACK_SIZE);
-K_MSGQ_DEFINE(dm_storage_msgq, sizeof(struct dm_storage_op),
-              CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_STORAGE_QUEUE_LEN, 4);
+#define DM_STORAGE_STACK_SIZE  1024
+#define DM_STORAGE_QUEUE_LEN   8
+#define DM_STORAGE_PRIORITY    10
+
+K_KERNEL_STACK_DEFINE(dm_storage_work_q_stack, DM_STORAGE_STACK_SIZE);
+K_MSGQ_DEFINE(dm_storage_msgq, sizeof(struct dm_storage_op), DM_STORAGE_QUEUE_LEN, 4);
 
 static struct k_work_q dm_storage_work_q;
 static struct k_work dm_storage_work;
@@ -1167,7 +1169,7 @@ static void settings_slot_key(struct behavior_dynamic_macro_data *data, int slot
 }
 
 static void dm_storage_work_handler(struct k_work *work) {
-    struct dm_storage_op op;
+    static struct dm_storage_op op;
 
     while (k_msgq_get(&dm_storage_msgq, &op, K_NO_WAIT) == 0) {
         char key[64];
@@ -1220,7 +1222,7 @@ static void init_storage_work_queue(void) {
     k_work_init(&dm_storage_work, dm_storage_work_handler);
     k_work_queue_start(&dm_storage_work_q, dm_storage_work_q_stack,
                        K_KERNEL_STACK_SIZEOF(dm_storage_work_q_stack),
-                       CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_STORAGE_WORK_QUEUE_PRIORITY, NULL);
+                       DM_STORAGE_PRIORITY, NULL);
     dm_storage_work_q_started = true;
 }
 

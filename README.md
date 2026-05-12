@@ -148,9 +148,6 @@ Add any overrides to your board's `.conf` file (e.g., `dasbob.conf`):
 # CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_PERSIST=y
 # CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_NVS_SLOTS=8
 # CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_RAM_SLOTS=8
-# CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_STORAGE_QUEUE_LEN=8
-# CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_STORAGE_WORK_QUEUE_STACK_SIZE=1024
-# CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_STORAGE_WORK_QUEUE_PRIORITY=10
 # CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_FEEDBACK_BASIC=y
 ```
 
@@ -300,9 +297,6 @@ Normal keyboard input is captured while in RECORDING but does not change the sta
 | `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_PERSIST`                       | bool   | y       | Enable NVS flash persistence (requires `CONFIG_SETTINGS`)                                 |
 | `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_NVS_SLOTS`                     | int    | 8       | Number of low-index persistent slots backed by NVS flash, range 0-16                      |
 | `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_RAM_SLOTS`                     | int    | 8       | Number of RAM-only temporary slots after the NVS range, range 0-48                        |
-| `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_STORAGE_QUEUE_LEN`             | int    | 8       | Number of pending NVS save/delete operations                                              |
-| `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_STORAGE_WORK_QUEUE_STACK_SIZE` | int    | 1024    | Stack size for the low-priority storage worker                                            |
-| `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_STORAGE_WORK_QUEUE_PRIORITY`   | int    | 10      | Priority for the storage worker                                                           |
 | `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_FEEDBACK_OFF`                  | choice | n       | Disable typed feedback                                                                    |
 | `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_FEEDBACK_ERROR`                | choice | n       | Type only serious errors, such as storage failures                                        |
 | `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_FEEDBACK_BASIC`                | choice | y       | Type short state/action messages                                                          |
