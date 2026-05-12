@@ -13,8 +13,11 @@
 #include <zephyr/kernel.h>
 #include <drivers/behavior.h>
 #include <zmk/behavior.h>
+#include <zmk/event_manager.h>
 #include <zmk/events/keycode_state_changed.h>
+#include <zmk/keys.h>
 #include <zmk/keymap.h>
+#include <dt-bindings/zmk/hid_usage_pages.h>
 #include <dt-bindings/zmk/dynamic_macros.h>
 
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_PERSIST)
@@ -920,6 +923,9 @@ static int on_keymap_binding_released(struct zmk_behavior_binding *binding,
 static const struct behavior_driver_api behavior_dynamic_macro_driver_api = {
     .binding_pressed = on_keymap_binding_pressed,
     .binding_released = on_keymap_binding_released,
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_METADATA)
+    .get_parameter_metadata = zmk_behavior_get_empty_param_metadata,
+#endif
 };
 
 /* -------------------------------------------------------------------------- */
