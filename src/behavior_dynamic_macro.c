@@ -33,7 +33,6 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 /*  Constants and types                                                       */
 /* -------------------------------------------------------------------------- */
 
-#define MAX_SLOTS  CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_MAX_SLOTS
 #define MAX_EVENTS CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_MAX_EVENTS
 #define TAP_DELAY  CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_TAP_DELAY
 #define DM_FEEDBACK_OFF     0
@@ -46,6 +45,9 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #else
 #define NVS_SLOTS 0
 #endif
+#define RAM_SLOTS     CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_RAM_SLOTS
+#define MAX_SLOTS     (NVS_SLOTS + RAM_SLOTS)
+#define SLOT_CAPACITY (MAX_SLOTS > 0 ? MAX_SLOTS : 1)
 
 enum dm_state {
     DM_STATE_IDLE = 0,
@@ -85,9 +87,9 @@ struct behavior_dynamic_macro_config {
 struct behavior_dynamic_macro_data {
     const struct device *dev;
     enum dm_state state;
-    struct dm_slot slots[MAX_SLOTS];
-    bool pending_delete[MAX_SLOTS];
-    uint32_t slot_generation[MAX_SLOTS];
+    struct dm_slot slots[SLOT_CAPACITY];
+    bool pending_delete[SLOT_CAPACITY];
+    uint32_t slot_generation[SLOT_CAPACITY];
     struct dm_slot recording_buffer;
     struct k_work_delayable assign_timeout_work;
     int playback_slot;
@@ -733,14 +735,16 @@ static void feedback_status(struct behavior_dynamic_macro_data *data) {
         return;
     }
 
-    data->status_mode = feedback_enabled(DM_FEEDBACK_VERBOSE);
+    data->status_mode = feedback_enabled(DM_FEEDBACK_VERBOSE) && MAX_SLOTS > 0;
     data->status_next_slot = 1;
     fb_reset(data);
     fb_append_str(data, "[DM ");
     fb_append_number(data, filled_slot_count(data));
     fb_append_char(data, '/');
     fb_append_number(data, MAX_SLOTS);
-    if (NVS_SLOTS > 0 && NVS_SLOTS < MAX_SLOTS) {
+    if (MAX_SLOTS == 0) {
+        fb_append_str(data, " NO SLOTS");
+    } else if (NVS_SLOTS > 0 && NVS_SLOTS < MAX_SLOTS) {
         fb_append_str(data, " NVS:0-");
         fb_append_number(data, NVS_SLOTS - 1);
         fb_append_str(data, " RAM:");
@@ -753,7 +757,7 @@ static void feedback_status(struct behavior_dynamic_macro_data *data) {
         fb_append_str(data, " NVS");
     }
     fb_append_str(data, "]\n");
-    if (feedback_enabled(DM_FEEDBACK_VERBOSE)) {
+    if (data->status_mode) {
         render_status_slot(data, 0);
     }
     start_feedback(data, DM_STATE_IDLE, -1);

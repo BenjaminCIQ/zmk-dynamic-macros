@@ -6,10 +6,6 @@ config ZMK_BEHAVIOR_DYNAMIC_MACRO
 
 if ZMK_BEHAVIOR_DYNAMIC_MACRO
 
-config ZMK_BEHAVIOR_DYNAMIC_MACRO_MAX_SLOTS
-    int "Maximum number of dynamic macro slots"
-    default 16
-
 config ZMK_BEHAVIOR_DYNAMIC_MACRO_MAX_EVENTS
     int "Maximum number of events per macro slot (press + release = 2 events)"
     default 64
@@ -29,9 +25,16 @@ config ZMK_BEHAVIOR_DYNAMIC_MACRO_PERSIST
 
 config ZMK_BEHAVIOR_DYNAMIC_MACRO_NVS_SLOTS
     int "Number of NVS-backed dynamic macro slots"
-    default ZMK_BEHAVIOR_DYNAMIC_MACRO_MAX_SLOTS
-    range 0 ZMK_BEHAVIOR_DYNAMIC_MACRO_MAX_SLOTS
+    default 8
+    range 0 16
     depends on ZMK_BEHAVIOR_DYNAMIC_MACRO_PERSIST
+
+config ZMK_BEHAVIOR_DYNAMIC_MACRO_RAM_SLOTS
+    int "Number of RAM-only dynamic macro slots"
+    default 8
+    range 0 48
+
+warning "Dynamic macro has zero slots; all DM_SLOT keymap bindings will be unusable" if ZMK_BEHAVIOR_DYNAMIC_MACRO_RAM_SLOTS = 0 && (!ZMK_BEHAVIOR_DYNAMIC_MACRO_PERSIST || ZMK_BEHAVIOR_DYNAMIC_MACRO_NVS_SLOTS = 0)
 
 config ZMK_BEHAVIOR_DYNAMIC_MACRO_STORAGE_QUEUE_LEN
     int "Dynamic macro storage queue length"
