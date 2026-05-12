@@ -70,6 +70,7 @@ struct dm_data {
 static struct dm_data dm;
 
 static void save_slot(int slot_idx);
+static int delete_slot_from_storage(int slot_idx);
 
 /* -------------------------------------------------------------------------- */
 /*  Feedback: text output via simulated keystrokes                            */
@@ -557,6 +558,15 @@ static void feedback_deleted(int slot_idx) {
     start_feedback(DM_STATE_IDLE, -1);
 }
 
+static void feedback_delete_failed(int slot_idx) {
+    status_mode = false;
+    fb_reset();
+    fb_append_str("[DM DEL ");
+    fb_append_number(slot_idx);
+    fb_append_str(" FAILED]");
+    start_feedback(DM_STATE_IDLE, -1);
+}
+
 static void feedback_slot_empty(int slot_idx) {
     status_mode = false;
     fb_reset();
@@ -610,6 +620,10 @@ static void feedback_deleted(int slot_idx) {
     (void)slot_idx;
     dm.state = DM_STATE_IDLE;
 }
+static void feedback_delete_failed(int slot_idx) {
+    (void)slot_idx;
+    dm.state = DM_STATE_IDLE;
+}
 static void feedback_slot_empty(int slot_idx) {
     (void)slot_idx;
     dm.state = DM_STATE_IDLE;
@@ -629,10 +643,43 @@ static void feedback_status(void) { dm.state = DM_STATE_IDLE; }
 
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_PERSIST)
 
+static bool parse_settings_slot_name(const char *name, int *slot_idx) {
+    const char prefix[] = "slot/";
+    const char *p = name;
+    int parsed = 0;
+
+    for (size_t i = 0; i < sizeof(prefix) - 1; i++) {
+        if (p[i] != prefix[i]) {
+            return false;
+        }
+    }
+
+    p += sizeof(prefix) - 1;
+    if (*p == '\0') {
+        return false;
+    }
+
+    while (*p != '\0') {
+        if (*p < '0' || *p > '9') {
+            return false;
+        }
+
+        parsed = parsed * 10 + (*p - '0');
+        if (parsed >= MAX_SLOTS) {
+            return false;
+        }
+
+        p++;
+    }
+
+    *slot_idx = parsed;
+    return true;
+}
+
 static int dm_settings_set(const char *name, size_t len, settings_read_cb read_cb, void *cb_arg) {
     int slot_idx = -1;
 
-    if (sscanf(name, "slot/%d", &slot_idx) != 1 || slot_idx < 0 || slot_idx >= MAX_SLOTS) {
+    if (!parse_settings_slot_name(name, &slot_idx)) {
         return -ENOENT;
     }
 
@@ -716,22 +763,26 @@ static void save_slot(int slot_idx) {
             (unsigned int)dm.slots[slot_idx].event_count);
 }
 
-static void delete_slot_from_storage(int slot_idx) {
+static int delete_slot_from_storage(int slot_idx) {
     char key[16];
     snprintf(key, sizeof(key), "dm/slot/%d", slot_idx);
     int rc = settings_delete(key);
     if (rc) {
         LOG_ERR("Failed to delete dynamic macro slot %d from storage: %d", slot_idx, rc);
-        return;
+        return rc;
     }
 
     LOG_DBG("Deleted dynamic macro slot %d from storage", slot_idx);
+    return 0;
 }
 
 #else /* !CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_PERSIST */
 
-static void save_slot(int slot_idx) {}
-static void delete_slot_from_storage(int slot_idx) {}
+static void save_slot(int slot_idx) { (void)slot_idx; }
+static int delete_slot_from_storage(int slot_idx) {
+    (void)slot_idx;
+    return 0;
+}
 
 #endif /* CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_PERSIST */
 
@@ -864,9 +915,14 @@ static void cmd_slot(int slot_idx) {
         if (dm.slots[slot_idx].event_count == 0) {
             feedback_slot_empty(slot_idx);
         } else {
+            int rc = delete_slot_from_storage(slot_idx);
+            if (rc) {
+                feedback_delete_failed(slot_idx);
+                return;
+            }
+
             dm.slots[slot_idx].event_count = 0;
             feedback_deleted(slot_idx);
-            delete_slot_from_storage(slot_idx);
         }
         LOG_DBG("Slot %d cleared", slot_idx);
         break;
