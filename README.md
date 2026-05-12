@@ -116,7 +116,7 @@ Add any overrides to your board's `.conf` file (e.g., `dasbob.conf`):
 ```ini
 # All settings below show their defaults -- only add lines you want to change.
 # CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_MAX_SLOTS=16
-# CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_MAX_EVENTS=32
+# CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_MAX_EVENTS=64
 # CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_TAP_DELAY=30
 # CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_ASSIGN_TIMEOUT=10000
 # CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_PERSIST=y
@@ -211,7 +211,7 @@ Pressing **REC** while already recording restarts the recording (discards the cu
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_MAX_SLOTS` | int | 16 | Number of macro storage slots |
-| `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_MAX_EVENTS` | int | 32 | Max events per slot. Each key press + release = 2 events, so 32 events = 16 full key taps |
+| `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_MAX_EVENTS` | int | 64 | Max events per slot. Each key press + release = 2 events, so 64 events = 32 full key taps |
 | `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_TAP_DELAY` | int | 30 | Milliseconds between events during playback and feedback typing |
 | `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_ASSIGN_TIMEOUT` | int | 10000 | Milliseconds before pending assign/delete mode auto-cancels |
 | `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_PERSIST` | bool | y | Enable NVS flash persistence (requires `CONFIG_SETTINGS`) |
@@ -221,16 +221,16 @@ Pressing **REC** while already recording restarts the recording (discards the cu
 
 ### NVS Storage
 
-With default settings (16 slots, 32 events each), the module uses approximately **6 KB** of NVS flash storage. The nRF52840 (nice_nano) typically has a 24-32 KB NVS partition shared with BLE bonds and other ZMK settings. This fits comfortably, but be mindful if you increase `MAX_SLOTS` or `MAX_EVENTS` significantly.
+With default settings (16 slots, 64 events each), a completely full set of persisted slots uses roughly **12 KB** of NVS flash storage before backend overhead. The nRF52840 (nice_nano) typically has a 24-32 KB NVS partition shared with BLE bonds and other ZMK settings. This fits comfortably, but be mindful if you increase `MAX_SLOTS` or `MAX_EVENTS` significantly.
 
-Storage per slot: `4 bytes (event count) + MAX_EVENTS * 10 bytes (per event) = ~324 bytes`
+Storage per slot is compact and only writes recorded events: `4 bytes (event count) + event_count * sizeof(struct dm_event)`. On typical ZMK targets, `struct dm_event` is padded to about 12 bytes, so a full 64-event slot is about 772 bytes before storage backend overhead.
 
 Slots are saved individually -- only when assigned or deleted. This minimizes flash wear.
 
 ### RAM Usage
 
 The module keeps all slots plus one recording buffer in RAM:
-`(MAX_SLOTS + 1) * (4 + MAX_EVENTS * 10) bytes ≈ 5.5 KB` with default settings.
+`(MAX_SLOTS + 1) * (4 + MAX_EVENTS * sizeof(struct dm_event))`, or roughly **13 KB** with default settings on typical ZMK targets.
 
 The nRF52840 has 256 KB RAM, so this is not a concern.
 
