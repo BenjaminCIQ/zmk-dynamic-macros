@@ -36,6 +36,11 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #define MAX_SLOTS  CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_MAX_SLOTS
 #define MAX_EVENTS CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_MAX_EVENTS
 #define TAP_DELAY  CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_TAP_DELAY
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_PERSIST)
+#define NVS_SLOTS CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_NVS_SLOTS
+#else
+#define NVS_SLOTS 0
+#endif
 
 enum dm_state {
     DM_STATE_IDLE = 0,
@@ -99,6 +104,14 @@ struct behavior_dynamic_macro_data {
 
 static void save_slot(struct behavior_dynamic_macro_data *data, int slot_idx);
 static int delete_slot_from_storage(struct behavior_dynamic_macro_data *data, int slot_idx);
+
+static bool slot_is_nvs(int slot_idx) {
+    return IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_PERSIST) && slot_idx < NVS_SLOTS;
+}
+
+static char slot_storage_prefix(int slot_idx) {
+    return slot_is_nvs(slot_idx) ? 'N' : 'R';
+}
 
 /* -------------------------------------------------------------------------- */
 /*  Feedback: text output via simulated keystrokes                            */
@@ -429,7 +442,7 @@ static int filled_slot_count(struct behavior_dynamic_macro_data *data) {
 }
 
 static void render_status_slot(struct behavior_dynamic_macro_data *data, int slot_idx) {
-    fb_append_char(data, 'S');
+    fb_append_char(data, slot_storage_prefix(slot_idx));
     fb_append_number(data, slot_idx);
     fb_append_str(data, ": ");
     if (data->slots[slot_idx].event_count == 0) {
@@ -551,6 +564,7 @@ static void feedback_saved(struct behavior_dynamic_macro_data *data, int slot_id
     data->status_mode = false;
     fb_reset(data);
     fb_append_str(data, "[DM SAVED ");
+    fb_append_char(data, slot_storage_prefix(slot_idx));
     fb_append_number(data, slot_idx);
     fb_append_str(data, ": '");
     render_slot_contents(data, slot);
@@ -562,6 +576,7 @@ static void feedback_slot_full(struct behavior_dynamic_macro_data *data, int slo
     data->status_mode = false;
     fb_reset(data);
     fb_append_str(data, "[DM SLOT ");
+    fb_append_char(data, slot_storage_prefix(slot_idx));
     fb_append_number(data, slot_idx);
     fb_append_str(data, " FULL]");
     start_feedback(data, DM_STATE_PENDING_ASSIGN, -1);
@@ -571,6 +586,7 @@ static void feedback_deleted(struct behavior_dynamic_macro_data *data, int slot_
     data->status_mode = false;
     fb_reset(data);
     fb_append_str(data, "[DM DEL ");
+    fb_append_char(data, slot_storage_prefix(slot_idx));
     fb_append_number(data, slot_idx);
     fb_append_str(data, "]");
     start_feedback(data, DM_STATE_IDLE, -1);
@@ -580,6 +596,7 @@ static void feedback_delete_failed(struct behavior_dynamic_macro_data *data, int
     data->status_mode = false;
     fb_reset(data);
     fb_append_str(data, "[DM DEL ");
+    fb_append_char(data, slot_storage_prefix(slot_idx));
     fb_append_number(data, slot_idx);
     fb_append_str(data, " FAILED]");
     start_feedback(data, DM_STATE_IDLE, -1);
@@ -589,6 +606,7 @@ static void feedback_slot_empty(struct behavior_dynamic_macro_data *data, int sl
     data->status_mode = false;
     fb_reset(data);
     fb_append_str(data, "[DM SLOT ");
+    fb_append_char(data, slot_storage_prefix(slot_idx));
     fb_append_number(data, slot_idx);
     fb_append_str(data, " EMPTY]");
     start_feedback(data, DM_STATE_IDLE, -1);
@@ -609,6 +627,18 @@ static void feedback_status(struct behavior_dynamic_macro_data *data) {
     fb_append_number(data, filled_slot_count(data));
     fb_append_char(data, '/');
     fb_append_number(data, MAX_SLOTS);
+    if (NVS_SLOTS > 0 && NVS_SLOTS < MAX_SLOTS) {
+        fb_append_str(data, " NVS:0-");
+        fb_append_number(data, NVS_SLOTS - 1);
+        fb_append_str(data, " RAM:");
+        fb_append_number(data, NVS_SLOTS);
+        fb_append_char(data, '-');
+        fb_append_number(data, MAX_SLOTS - 1);
+    } else if (NVS_SLOTS == 0) {
+        fb_append_str(data, " RAM");
+    } else {
+        fb_append_str(data, " NVS");
+    }
     fb_append_str(data, "]\n");
     render_status_slot(data, 0);
     start_feedback(data, DM_STATE_IDLE, -1);
@@ -717,6 +747,11 @@ static int dm_settings_set(const char *name, size_t len, settings_read_cb read_c
         return -ENOENT;
     }
 
+    if (!slot_is_nvs(slot_idx)) {
+        LOG_DBG("Ignoring stored dynamic macro RAM slot %d", slot_idx);
+        return 0;
+    }
+
     if (len < sizeof(uint32_t)) {
         LOG_WRN("Slot %d: stored length %zu too small", slot_idx, len);
         return -EINVAL;
@@ -770,7 +805,7 @@ static int dm_settings_export(int (*storage_func)(const char *name, const void *
         struct behavior_dynamic_macro_data *data = dev->data;
 
         for (int i = 0; i < MAX_SLOTS; i++) {
-            if (data->slots[i].event_count == 0) {
+            if (!slot_is_nvs(i) || data->slots[i].event_count == 0) {
                 continue;
             }
 
@@ -791,6 +826,10 @@ SETTINGS_STATIC_HANDLER_DEFINE(dm, "dm", NULL, dm_settings_set, dm_settings_comm
                                dm_settings_export);
 
 static void save_slot(struct behavior_dynamic_macro_data *data, int slot_idx) {
+    if (!slot_is_nvs(slot_idx)) {
+        return;
+    }
+
     const struct behavior_dynamic_macro_config *config = data->dev->config;
     char key[64];
     snprintf(key, sizeof(key), "dm/%s/slot/%d", config->settings_name, slot_idx);
@@ -807,6 +846,10 @@ static void save_slot(struct behavior_dynamic_macro_data *data, int slot_idx) {
 }
 
 static int delete_slot_from_storage(struct behavior_dynamic_macro_data *data, int slot_idx) {
+    if (!slot_is_nvs(slot_idx)) {
+        return 0;
+    }
+
     const struct behavior_dynamic_macro_config *config = data->dev->config;
     char key[64];
     snprintf(key, sizeof(key), "dm/%s/slot/%d", config->settings_name, slot_idx);
