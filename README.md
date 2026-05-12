@@ -1,17 +1,18 @@
 # zmk-dynamic-macros
 
-A [ZMK](https://zmk.dev/) module that adds dynamic macro recording and playback to your keyboard. Record keystrokes on the fly, assign them to slots, and replay them with a single keypress. Macros persist across reboots via NVS flash storage.
+A [ZMK](https://zmk.dev/) module that adds dynamic macro recording and playback to your keyboard. Record keystrokes on the fly, assign them to NVS-backed or RAM-only slots, and replay them with a single keypress.
 
 ## Features
 
 - **Record** keystrokes from either half of a split keyboard
 - **Play back** macros with configurable inter-event delay
-- **Assign** recordings to any of 16 configurable slots
+- **Assign** recordings to configurable NVS-backed and RAM-only slots
 - **Delete** individual macro slots
 - **Status** output showing all filled slots with their contents
-- **NVS or RAM slots** so some macros can persist while others stay temporary
+- **NVS slots** persist across reboots and are labeled `N0`, `N1`, etc.
+- **RAM slots** are temporary, never touch flash, and are labeled after the NVS range, such as `R8`
 - **Async NVS persistence** to reduce USB stalls during flash writes
-- **Typed feedback levels** from off to verbose previews
+- **Typed feedback levels** from off to verbose previews; status and feedback type into the active host window, so trigger them in a safe text field
 
 ## Use Cases
 
@@ -39,8 +40,8 @@ Dynamic macros record raw HID events, so a single macro can mix typed text with 
 | Record | Status preview | Events | Use |
 |--------|----------------|--------|-----|
 | Ctrl+A, Ctrl+C | `N7: '<LCTL+A><LCTL+C>' (8)` | 8 | Select all and copy |
-| Ctrl+S, Ctrl+W | `N8: '<LCTL+S><LCTL+W>' (8)` | 8 | Save and close tab |
-| Home, Shift+End, Ctrl+C | `N9: '<HOME><LSFT+END><LCTL+C>' (10)` | 10 | Select current line and copy |
+| Ctrl+S, Ctrl+W | `R8: '<LCTL+S><LCTL+W>' (8)` | 8 | Save and close tab |
+| Home, Shift+End, Ctrl+C | `R9: '<HOME><LSFT+END><LCTL+C>' (10)` | 10 | Select current line and copy |
 
 ### Mixed text and actions
 
@@ -48,9 +49,9 @@ These combine typed text with modifier combos and navigation in one recording.
 
 | Record | Status preview | Events | Use |
 |--------|----------------|--------|-----|
-| `git commit -m ""` + Left | `N10: 'git commit -m ""<LEFT>' (36)` | 36 | Git commit -- cursor between the quotes, ready to type your message |
-| Ctrl+H, then type `TODO` | `N11: '<LCTL+H>TODO' (12)` | 12 | Open find/replace pre-filled with a search term |
-| Ctrl+T, type `github.com`, Enter | `N12: '<LCTL+T>github.com<RET>' (26)` | 26 | New browser tab straight to a URL |
+| `git commit -m ""` + Left | `R10: 'git commit -m ""<LEFT>' (36)` | 36 | Git commit -- cursor between the quotes, ready to type your message |
+| Ctrl+H, then type `TODO` | `R11: '<LCTL+H>TODO' (12)` | 12 | Open find/replace pre-filled with a search term |
+| Ctrl+T, type `github.com`, Enter | `R12: '<LCTL+T>github.com<RET>' (26)` | 26 | New browser tab straight to a URL |
 
 ### Creative and CAD workflows
 
@@ -58,9 +59,9 @@ Hotkey-heavy applications like Photoshop, Blender, and CAD tools benefit from ch
 
 | Record | Status preview | Events | Use |
 |--------|----------------|--------|-----|
-| Ctrl+J, Ctrl+T | `N13: '<LCTL+J><LCTL+T>' (8)` | 8 | Photoshop -- duplicate layer and enter Free Transform in one tap |
-| Ctrl+Shift+N, type `Sketch1`, Enter | `N14: '<LCTL+LSFT+N>Sketch1<RET>' (20)` | 20 | CAD / Photoshop -- new layer/sketch with a preset name, skipping the dialog |
-| Ctrl+Alt+Shift+E | `N15: '<LCTL+LALT+LSFT+E>' (8)` | 8 | Photoshop -- stamp visible (flatten all layers into a new layer) |
+| Ctrl+J, Ctrl+T | `R13: '<LCTL+J><LCTL+T>' (8)` | 8 | Photoshop -- duplicate layer and enter Free Transform in one tap |
+| Ctrl+Shift+N, type `Sketch1`, Enter | `R14: '<LCTL+LSFT+N>Sketch1<RET>' (20)` | 20 | CAD / Photoshop -- new layer/sketch with a preset name, skipping the dialog |
+| Ctrl+Alt+Shift+E | `R15: '<LCTL+LALT+LSFT+E>' (8)` | 8 | Photoshop -- stamp visible (flatten all layers into a new layer) |
 
 ## Setup
 
@@ -116,12 +117,12 @@ Add any overrides to your board's `.conf` file (e.g., `dasbob.conf`):
 
 ```ini
 # All settings below show their defaults -- only add lines you want to change.
-# CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_MAX_SLOTS=16
 # CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_MAX_EVENTS=64
 # CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_TAP_DELAY=30
 # CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_ASSIGN_TIMEOUT=10000
 # CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_PERSIST=y
-# CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_NVS_SLOTS=16
+# CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_NVS_SLOTS=8
+# CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_RAM_SLOTS=8
 # CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_STORAGE_QUEUE_LEN=8
 # CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_STORAGE_WORK_QUEUE_STACK_SIZE=1024
 # CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_STORAGE_WORK_QUEUE_PRIORITY=10
@@ -161,13 +162,16 @@ If the slot is already empty, you'll see `[DM SLOT N0 EMPTY]` or `[DM SLOT R8 EM
 1. Switch to the macro layer
 2. Press **STATE** -- basic feedback types a short summary; verbose feedback types a full listing of all slots with their contents
 
+`STATE` types into whichever PC window currently has focus. Verbose output can type many lines, so use it in a safe text editor or lower/disable feedback if that is disruptive.
+
 Verbose example output:
 ```
-[DM 2/16 NVS]
+[DM 2/16 NVS:0-7 RAM:8-15]
 N0: 'Hello world' (22)
 N1: -
 N2: '<LCTL+C><LCTL+V>' (8)
 ...
+R8: -
 ```
 
 ### Re-recording
@@ -182,7 +186,7 @@ Pressing **REC** while already recording restarts the recording (discards the cu
 | `&dm DM_STP 0`    | Stop recording, enter assign mode            |
 | `&dm DM_DEL 0`    | Enter delete mode                            |
 | `&dm DM_STATE 0`  | Output status of all slots                   |
-| `&dm DM_SLOT N`   | Interact with slot N (play, assign, or delete depending on current state) |
+| `&dm DM_SLOT N`   | Interact with slot N (play, assign, or delete depending on current state); N must be less than `NVS_SLOTS + RAM_SLOTS` |
 
 ## State Machine
 
@@ -215,12 +219,12 @@ Pressing **REC** while already recording restarts the recording (discards the cu
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_MAX_SLOTS` | int | 16 | Number of macro storage slots |
 | `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_MAX_EVENTS` | int | 64 | Max events per slot. Each key press + release = 2 events, so 64 events = 32 full key taps |
 | `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_TAP_DELAY` | int | 30 | Milliseconds between events during playback and feedback typing |
 | `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_ASSIGN_TIMEOUT` | int | 10000 | Milliseconds before pending assign/delete mode auto-cancels |
 | `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_PERSIST` | bool | y | Enable NVS flash persistence (requires `CONFIG_SETTINGS`) |
-| `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_NVS_SLOTS` | int | 16 | Number of low-index slots backed by NVS; remaining slots are RAM-only |
+| `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_NVS_SLOTS` | int | 8 | Number of low-index persistent slots backed by NVS flash, range 0-16 |
+| `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_RAM_SLOTS` | int | 8 | Number of RAM-only temporary slots after the NVS range, range 0-48 |
 | `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_STORAGE_QUEUE_LEN` | int | 8 | Number of pending NVS save/delete operations |
 | `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_STORAGE_WORK_QUEUE_STACK_SIZE` | int | 1024 | Stack size for the low-priority storage worker |
 | `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_STORAGE_WORK_QUEUE_PRIORITY` | int | 10 | Priority for the storage worker |
@@ -233,9 +237,13 @@ Pressing **REC** while already recording restarts the recording (discards the cu
 
 ### NVS and RAM Storage
 
-Slots are split into NVS-backed and RAM-only ranges. `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_NVS_SLOTS` controls how many low-index slots persist. With the defaults, all 16 slots are NVS-backed. Setting `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_NVS_SLOTS=8` makes slots 0-7 persistent (`N0`-`N7`) and slots 8-15 volatile (`R8`-`R15`). Setting it to 0 makes all slots RAM-only.
+Slots are split into NVS-backed and RAM-only ranges. `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_NVS_SLOTS` controls how many low-index slots persist, and `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_RAM_SLOTS` controls how many temporary slots follow them. With the defaults, slots 0-7 are persistent (`N0`-`N7`) and slots 8-15 are volatile (`R8`-`R15`).
 
-With default settings (16 NVS slots, 64 events each), a completely full set of persisted slots uses roughly **12 KB** of NVS flash storage before backend overhead. The nRF52840 (nice_nano) typically has a 24-32 KB NVS partition shared with BLE bonds and other ZMK settings. This fits comfortably, but be mindful if you increase `MAX_SLOTS`, `MAX_EVENTS`, or `NVS_SLOTS` significantly.
+NVS slots are capped at 16, RAM slots are capped at 48, and total slots are capped at 64. Keymap bindings such as `&dm DM_SLOT 16` fail the build if the configured total slot count does not include that slot. Setting both slot counts to 0 is allowed and emits a Kconfig warning; the behavior still compiles, but no `DM_SLOT` binding is valid.
+
+If persistence is disabled, NVS slots are effectively 0. Set `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_RAM_SLOTS` to the number of volatile slots you want.
+
+With default settings (8 NVS slots, 64 events each), a completely full set of persisted slots uses roughly **6 KB** of NVS flash storage before backend overhead. The nRF52840 (nice_nano) typically has a 24-32 KB NVS partition shared with BLE bonds and other ZMK settings. This fits comfortably, but be mindful if you increase `MAX_EVENTS` or `NVS_SLOTS` significantly.
 
 Storage per slot is compact and only writes recorded events: `4 bytes (event count) + event_count * sizeof(struct dm_event)`. On typical ZMK targets, `struct dm_event` is padded to about 12 bytes, so a full 64-event slot is about 772 bytes before storage backend overhead.
 
@@ -244,7 +252,7 @@ NVS saves and deletes are queued on a low-priority work queue. The macro is usab
 ### RAM Usage
 
 The module keeps all slots plus one recording buffer in RAM:
-`(MAX_SLOTS + 1) * (4 + MAX_EVENTS * sizeof(struct dm_event))`, or roughly **13 KB** with default settings on typical ZMK targets.
+`(NVS_SLOTS + RAM_SLOTS + 1) * (4 + MAX_EVENTS * sizeof(struct dm_event))`, or roughly **13 KB** with default settings on typical ZMK targets.
 
 The nRF52840 has 256 KB RAM, so this is not a concern.
 
