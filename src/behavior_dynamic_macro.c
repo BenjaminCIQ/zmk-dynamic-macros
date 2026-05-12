@@ -77,6 +77,7 @@ enum dm_state {
     DM_STATE_RECORDING,
     DM_STATE_PENDING_ASSIGN,
     DM_STATE_DELETE_PENDING,
+    DM_STATE_MOVE_PENDING,
     DM_STATE_PLAYING,
     DM_STATE_TYPING_FEEDBACK,
 };
@@ -115,6 +116,7 @@ struct behavior_dynamic_macro_data {
     uint32_t slot_generation[SLOT_CAPACITY];
     struct dm_slot recording_buffer;
     struct k_work_delayable assign_timeout_work;
+    int move_source_slot;
     int playback_slot;
     uint32_t playback_event;
     struct k_timer playback_timer;
@@ -154,6 +156,9 @@ static const struct behavior_parameter_value_metadata dm_param_delete[] = {
 };
 static const struct behavior_parameter_value_metadata dm_param_state[] = {
     DM_COMMAND_VALUE("State", DM_STATE),
+};
+static const struct behavior_parameter_value_metadata dm_param_move[] = {
+    DM_COMMAND_VALUE("Move", DM_MOV),
 };
 static const struct behavior_parameter_value_metadata dm_param_unused[] = {
     {
@@ -197,6 +202,12 @@ static const struct behavior_parameter_metadata_set dm_parameter_metadata_sets[]
     {
         .param1_values_len = ARRAY_SIZE(dm_param_state),
         .param1_values = dm_param_state,
+        .param2_values_len = ARRAY_SIZE(dm_param_unused),
+        .param2_values = dm_param_unused,
+    },
+    {
+        .param1_values_len = ARRAY_SIZE(dm_param_move),
+        .param1_values = dm_param_move,
         .param2_values_len = ARRAY_SIZE(dm_param_unused),
         .param2_values = dm_param_unused,
     },
@@ -599,7 +610,8 @@ static void feedback_complete(struct behavior_dynamic_macro_data *data) {
     data->feedback_return_state = DM_STATE_IDLE;
     data->state = return_state;
 
-    if (return_state == DM_STATE_PENDING_ASSIGN || return_state == DM_STATE_DELETE_PENDING) {
+    if (return_state == DM_STATE_PENDING_ASSIGN || return_state == DM_STATE_DELETE_PENDING ||
+        return_state == DM_STATE_MOVE_PENDING) {
         k_work_reschedule(&data->assign_timeout_work,
                           K_MSEC(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_ASSIGN_TIMEOUT));
     }
@@ -717,8 +729,11 @@ static void feedback_saved(struct behavior_dynamic_macro_data *data, int slot_id
 }
 
 static void feedback_slot_full(struct behavior_dynamic_macro_data *data, int slot_idx) {
+    enum dm_state return_state =
+        data->state == DM_STATE_MOVE_PENDING ? DM_STATE_MOVE_PENDING : DM_STATE_PENDING_ASSIGN;
+
     if (!feedback_enabled(DM_FEEDBACK_BASIC)) {
-        data->state = DM_STATE_PENDING_ASSIGN;
+        data->state = return_state;
         k_work_reschedule(&data->assign_timeout_work,
                           K_MSEC(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_ASSIGN_TIMEOUT));
         return;
@@ -730,7 +745,7 @@ static void feedback_slot_full(struct behavior_dynamic_macro_data *data, int slo
     fb_append_char(data, slot_storage_prefix(slot_idx));
     fb_append_number(data, slot_idx);
     fb_append_str(data, " FULL]");
-    start_feedback(data, DM_STATE_PENDING_ASSIGN, -1);
+    start_feedback(data, return_state, -1);
 }
 
 static void feedback_deleted(struct behavior_dynamic_macro_data *data, int slot_idx) {
@@ -807,8 +822,15 @@ static void feedback_delete_queue_full(struct behavior_dynamic_macro_data *data,
 }
 
 static void feedback_slot_empty(struct behavior_dynamic_macro_data *data, int slot_idx) {
+    enum dm_state return_state =
+        data->state == DM_STATE_MOVE_PENDING ? DM_STATE_MOVE_PENDING : DM_STATE_IDLE;
+
     if (!feedback_enabled(DM_FEEDBACK_BASIC)) {
-        data->state = DM_STATE_IDLE;
+        data->state = return_state;
+        if (return_state == DM_STATE_MOVE_PENDING) {
+            k_work_reschedule(&data->assign_timeout_work,
+                              K_MSEC(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_ASSIGN_TIMEOUT));
+        }
         return;
     }
 
@@ -818,7 +840,7 @@ static void feedback_slot_empty(struct behavior_dynamic_macro_data *data, int sl
     fb_append_char(data, slot_storage_prefix(slot_idx));
     fb_append_number(data, slot_idx);
     fb_append_str(data, " EMPTY]");
-    start_feedback(data, DM_STATE_IDLE, -1);
+    start_feedback(data, return_state, -1);
 }
 
 static void feedback_overflow(struct behavior_dynamic_macro_data *data) {
@@ -869,6 +891,103 @@ static void feedback_status(struct behavior_dynamic_macro_data *data) {
     start_feedback(data, DM_STATE_IDLE, -1);
 }
 
+static void feedback_move_prompt(struct behavior_dynamic_macro_data *data) {
+    if (!feedback_enabled(DM_FEEDBACK_BASIC)) {
+        data->state = DM_STATE_MOVE_PENDING;
+        return;
+    }
+
+    data->status_mode = false;
+    fb_reset(data);
+    fb_append_str(data, "[DM MOV]");
+    start_feedback(data, DM_STATE_MOVE_PENDING, -1);
+}
+
+static void feedback_move_source_selected(struct behavior_dynamic_macro_data *data, int slot_idx) {
+    if (!feedback_enabled(DM_FEEDBACK_BASIC)) {
+        data->state = DM_STATE_MOVE_PENDING;
+        return;
+    }
+
+    data->status_mode = false;
+    fb_reset(data);
+    fb_append_str(data, "[DM MOV SRC ");
+    fb_append_char(data, slot_storage_prefix(slot_idx));
+    fb_append_number(data, slot_idx);
+    fb_append_char(data, ']');
+    start_feedback(data, DM_STATE_MOVE_PENDING, -1);
+}
+
+static void feedback_moved(struct behavior_dynamic_macro_data *data, int src, int dst) {
+    if (!feedback_enabled(DM_FEEDBACK_BASIC)) {
+        data->state = DM_STATE_IDLE;
+        return;
+    }
+
+    data->status_mode = false;
+    fb_reset(data);
+    fb_append_str(data, "[DM MOV ");
+    fb_append_char(data, slot_storage_prefix(src));
+    fb_append_number(data, src);
+    fb_append_str(data, "->");
+    fb_append_char(data, slot_storage_prefix(dst));
+    fb_append_number(data, dst);
+    fb_append_char(data, ']');
+    start_feedback(data, DM_STATE_IDLE, -1);
+}
+
+static void feedback_move_cancelled(struct behavior_dynamic_macro_data *data) {
+    if (!feedback_enabled(DM_FEEDBACK_BASIC)) {
+        data->state = DM_STATE_IDLE;
+        return;
+    }
+
+    data->status_mode = false;
+    fb_reset(data);
+    fb_append_str(data, "[DM MOV CANCEL]");
+    start_feedback(data, DM_STATE_IDLE, -1);
+}
+
+static void feedback_chain_insert(struct behavior_dynamic_macro_data *data, int slot_idx,
+                                  const struct dm_slot *slot) {
+    (void)slot_idx;
+
+    data->status_mode = false;
+    fb_reset(data);
+    render_slot_contents(data, slot);
+    start_feedback(data, DM_STATE_RECORDING, -1);
+}
+
+static void feedback_chain_empty(struct behavior_dynamic_macro_data *data, int slot_idx) {
+    if (!feedback_enabled(DM_FEEDBACK_BASIC)) {
+        data->state = DM_STATE_RECORDING;
+        return;
+    }
+
+    data->status_mode = false;
+    fb_reset(data);
+    fb_append_str(data, "[DM SLOT ");
+    fb_append_char(data, slot_storage_prefix(slot_idx));
+    fb_append_number(data, slot_idx);
+    fb_append_str(data, " EMPTY]");
+    start_feedback(data, DM_STATE_RECORDING, -1);
+}
+
+static void feedback_chain_no_room(struct behavior_dynamic_macro_data *data, int slot_idx) {
+    if (!feedback_enabled(DM_FEEDBACK_BASIC)) {
+        data->state = DM_STATE_RECORDING;
+        return;
+    }
+
+    data->status_mode = false;
+    fb_reset(data);
+    fb_append_str(data, "[DM +");
+    fb_append_char(data, slot_storage_prefix(slot_idx));
+    fb_append_number(data, slot_idx);
+    fb_append_str(data, " FULL]");
+    start_feedback(data, DM_STATE_RECORDING, -1);
+}
+
 #else /* DM_FEEDBACK_LEVEL == DM_FEEDBACK_OFF */
 
 static void feedback_rec(struct behavior_dynamic_macro_data *data) { data->state = DM_STATE_RECORDING; }
@@ -885,7 +1004,8 @@ static void feedback_saved(struct behavior_dynamic_macro_data *data, int slot_id
 }
 static void feedback_slot_full(struct behavior_dynamic_macro_data *data, int slot_idx) {
     (void)slot_idx;
-    data->state = DM_STATE_PENDING_ASSIGN;
+    data->state =
+        data->state == DM_STATE_MOVE_PENDING ? DM_STATE_MOVE_PENDING : DM_STATE_PENDING_ASSIGN;
     k_work_reschedule(&data->assign_timeout_work,
                       K_MSEC(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_ASSIGN_TIMEOUT));
 }
@@ -911,6 +1031,11 @@ static void feedback_delete_queue_full(struct behavior_dynamic_macro_data *data,
 }
 static void feedback_slot_empty(struct behavior_dynamic_macro_data *data, int slot_idx) {
     (void)slot_idx;
+    if (data->state == DM_STATE_MOVE_PENDING) {
+        k_work_reschedule(&data->assign_timeout_work,
+                          K_MSEC(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_ASSIGN_TIMEOUT));
+        return;
+    }
     data->state = DM_STATE_IDLE;
 }
 static void feedback_overflow(struct behavior_dynamic_macro_data *data) {
@@ -919,6 +1044,35 @@ static void feedback_overflow(struct behavior_dynamic_macro_data *data) {
                       K_MSEC(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_ASSIGN_TIMEOUT));
 }
 static void feedback_status(struct behavior_dynamic_macro_data *data) { data->state = DM_STATE_IDLE; }
+static void feedback_move_prompt(struct behavior_dynamic_macro_data *data) {
+    data->state = DM_STATE_MOVE_PENDING;
+}
+static void feedback_move_source_selected(struct behavior_dynamic_macro_data *data, int slot_idx) {
+    (void)slot_idx;
+    data->state = DM_STATE_MOVE_PENDING;
+}
+static void feedback_moved(struct behavior_dynamic_macro_data *data, int src, int dst) {
+    (void)src;
+    (void)dst;
+    data->state = DM_STATE_IDLE;
+}
+static void feedback_move_cancelled(struct behavior_dynamic_macro_data *data) {
+    data->state = DM_STATE_IDLE;
+}
+static void feedback_chain_insert(struct behavior_dynamic_macro_data *data, int slot_idx,
+                                  const struct dm_slot *slot) {
+    (void)slot_idx;
+    (void)slot;
+    data->state = DM_STATE_RECORDING;
+}
+static void feedback_chain_empty(struct behavior_dynamic_macro_data *data, int slot_idx) {
+    (void)slot_idx;
+    data->state = DM_STATE_RECORDING;
+}
+static void feedback_chain_no_room(struct behavior_dynamic_macro_data *data, int slot_idx) {
+    (void)slot_idx;
+    data->state = DM_STATE_RECORDING;
+}
 
 #endif /* DM_FEEDBACK_LEVEL > DM_FEEDBACK_OFF */
 
@@ -1268,8 +1422,10 @@ static void assign_timeout_handler(struct k_work *work) {
     struct behavior_dynamic_macro_data *data =
         CONTAINER_OF(delayable, struct behavior_dynamic_macro_data, assign_timeout_work);
 
-    if (data->state == DM_STATE_PENDING_ASSIGN || data->state == DM_STATE_DELETE_PENDING) {
+    if (data->state == DM_STATE_PENDING_ASSIGN || data->state == DM_STATE_DELETE_PENDING ||
+        data->state == DM_STATE_MOVE_PENDING) {
         LOG_DBG("Dynamic macro assign/delete timed out");
+        data->move_source_slot = -1;
         data->state = DM_STATE_IDLE;
     }
 }
@@ -1310,6 +1466,19 @@ static void cmd_delete_mode(struct behavior_dynamic_macro_data *data) {
     LOG_DBG("Entered delete mode");
 }
 
+static void cmd_move_mode(struct behavior_dynamic_macro_data *data) {
+    if (data->state != DM_STATE_IDLE) {
+        return;
+    }
+
+    data->move_source_slot = -1;
+    data->state = DM_STATE_MOVE_PENDING;
+    k_work_reschedule(&data->assign_timeout_work,
+                      K_MSEC(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_ASSIGN_TIMEOUT));
+    LOG_DBG("Entered move mode");
+    feedback_move_prompt(data);
+}
+
 static void cmd_status(struct behavior_dynamic_macro_data *data) {
     if (data->state != DM_STATE_IDLE) {
         return;
@@ -1325,6 +1494,28 @@ static void cmd_slot(struct behavior_dynamic_macro_data *data, int slot_idx) {
     }
 
     switch (data->state) {
+    case DM_STATE_RECORDING: {
+        if (slot_is_empty(data, slot_idx)) {
+            feedback_chain_empty(data, slot_idx);
+            return;
+        }
+
+        struct dm_slot *src = &data->slots[slot_idx];
+        uint32_t remaining = MAX_EVENTS - data->recording_buffer.event_count;
+        if (src->event_count > remaining) {
+            feedback_chain_no_room(data, slot_idx);
+            return;
+        }
+
+        memcpy(&data->recording_buffer.events[data->recording_buffer.event_count],
+               src->events, src->event_count * sizeof(struct dm_event));
+        data->recording_buffer.event_count += src->event_count;
+        feedback_chain_insert(data, slot_idx, src);
+        LOG_DBG("Chained slot %d into recording (%u events total)", slot_idx,
+                (unsigned int)data->recording_buffer.event_count);
+        break;
+    }
+
     case DM_STATE_PENDING_ASSIGN:
         k_work_cancel_delayable(&data->assign_timeout_work);
         if (data->slots[slot_idx].event_count > 0 && !data->pending_delete[slot_idx]) {
@@ -1363,6 +1554,53 @@ static void cmd_slot(struct behavior_dynamic_macro_data *data, int slot_idx) {
         LOG_DBG("Slot %d cleared", slot_idx);
         break;
 
+    case DM_STATE_MOVE_PENDING: {
+        if (data->move_source_slot < 0) {
+            if (slot_is_empty(data, slot_idx)) {
+                feedback_slot_empty(data, slot_idx);
+                return;
+            }
+
+            data->move_source_slot = slot_idx;
+            feedback_move_source_selected(data, slot_idx);
+            LOG_DBG("Selected move source slot %d", slot_idx);
+            return;
+        }
+
+        int src = data->move_source_slot;
+        int dst = slot_idx;
+
+        if (src == dst) {
+            data->move_source_slot = -1;
+            k_work_cancel_delayable(&data->assign_timeout_work);
+            feedback_move_cancelled(data);
+            LOG_DBG("Cancelled same-slot move %d", src);
+            return;
+        }
+
+        if (!slot_is_empty(data, dst)) {
+            feedback_slot_full(data, dst);
+            return;
+        }
+
+        k_work_cancel_delayable(&data->assign_timeout_work);
+        data->pending_delete[dst] = false;
+        data->slot_generation[dst]++;
+        memcpy(&data->slots[dst], &data->slots[src], sizeof(struct dm_slot));
+
+        data->pending_delete[src] = false;
+        data->slot_generation[src]++;
+        memset(&data->slots[src], 0, sizeof(struct dm_slot));
+
+        save_slot(data, dst);
+        delete_slot_from_storage(data, src);
+
+        data->move_source_slot = -1;
+        LOG_DBG("Moved slot %d -> slot %d", src, dst);
+        feedback_moved(data, src, dst);
+        break;
+    }
+
     case DM_STATE_IDLE:
         if (slot_is_empty(data, slot_idx)) {
             return;
@@ -1397,6 +1635,9 @@ static int on_keymap_binding_pressed(struct zmk_behavior_binding *binding,
         return ZMK_BEHAVIOR_OPAQUE;
     case DM_DEL:
         cmd_delete_mode(data);
+        return ZMK_BEHAVIOR_OPAQUE;
+    case DM_MOV:
+        cmd_move_mode(data);
         return ZMK_BEHAVIOR_OPAQUE;
     case DM_STATE:
         cmd_status(data);
@@ -1483,6 +1724,7 @@ static int behavior_dynamic_macro_init(const struct device *dev) {
     memset(data, 0, sizeof(*data));
     data->dev = dev;
     data->state = DM_STATE_IDLE;
+    data->move_source_slot = -1;
     data->playback_slot = -1;
 
     k_work_init_delayable(&data->assign_timeout_work, assign_timeout_handler);

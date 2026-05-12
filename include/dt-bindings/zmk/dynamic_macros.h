@@ -11,3 +11,4 @@
 #define DM_DEL   2
 #define DM_STATE 3
 #define DM_SLOT  4
+#define DM_MOV   5

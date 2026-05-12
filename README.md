@@ -8,6 +8,8 @@ A [ZMK](https://zmk.dev/) module that adds dynamic macro recording and playback 
 - **Play back** macros with configurable inter-event delay
 - **Assign** recordings to configurable NVS-backed and RAM-only slots
 - **Delete** individual macro slots
+- **Move** macros between slots to reorganize, promote RAM macros to NVS, or demote NVS macros to RAM
+- **Chain** existing macros into a new recording to build compound macros
 - **Status** output showing all filled slots with their contents
 - **NVS slots** persist across reboots and are labeled `N0`, `N1`, etc.
 - **RAM slots** are temporary, never touch flash, and are labeled after the NVS range, such as `R8`
@@ -20,48 +22,70 @@ Dynamic macros record raw HID events, so a single macro can mix typed text with 
 
 ### Text shortcuts
 
-| Record | Status preview | Events | Use |
-|--------|----------------|--------|-----|
-| `user@example.com` | `N0: 'user@example.com' (36)` | 36 | Fill in your email on forms |
-| `Best regards,` + Enter + `John` | `N1: 'Best regards,<RET>John' (38)` | 38 | Email sign-off |
-| `Thanks, will do!` | `N2: 'Thanks, will do!' (34)` | 34 | Quick acknowledgement |
-| `:-)` | `N3: ':-)' (6)` | 6 | Emoticons |
+
+| Record                           | Status preview                      | Events | Use                         |
+| -------------------------------- | ----------------------------------- | ------ | --------------------------- |
+| `user@example.com`               | `N0: 'user@example.com' (36)`       | 36     | Fill in your email on forms |
+| `Best regards,` + Enter + `John` | `N1: 'Best regards,<RET>John' (38)` | 38     | Email sign-off              |
+| `Thanks, will do!`               | `N2: 'Thanks, will do!' (34)`       | 34     | Quick acknowledgement       |
+| `:-)`                            | `N3: ':-)' (6)`                     | 6      | Emoticons                   |
+
 
 ### Code snippets
 
-| Record | Status preview | Events | Use |
-|--------|----------------|--------|-----|
-| `console.log();` + Left + Left | `N4: 'console.log();<LEFT><LEFT>' (34)` | 34 | JS debug print -- cursor lands between the parens |
-| `() => {}` + Left | `N5: '() => {}<LEFT>' (18)` | 18 | Arrow function skeleton |
-| `[]()` + Left + Left + Left | `N6: '[]()<LEFT><LEFT><LEFT>' (14)` | 14 | Markdown link template -- cursor in the brackets |
+
+| Record                         | Status preview                          | Events | Use                                               |
+| ------------------------------ | --------------------------------------- | ------ | ------------------------------------------------- |
+| `console.log();` + Left + Left | `N4: 'console.log();<LEFT><LEFT>' (34)` | 34     | JS debug print -- cursor lands between the parens |
+| `() => {}` + Left              | `N5: '() => {}<LEFT>' (18)`             | 18     | Arrow function skeleton                           |
+| `[]()` + Left + Left + Left    | `N6: '[]()<LEFT><LEFT><LEFT>' (14)`     | 14     | Markdown link template -- cursor in the brackets  |
+
 
 ### Editing operations
 
-| Record | Status preview | Events | Use |
-|--------|----------------|--------|-----|
-| Ctrl+A, Ctrl+C | `N7: '<LCTL+A><LCTL+C>' (8)` | 8 | Select all and copy |
-| Ctrl+S, Ctrl+W | `R8: '<LCTL+S><LCTL+W>' (8)` | 8 | Save and close tab |
-| Home, Shift+End, Ctrl+C | `R9: '<HOME><LSFT+END><LCTL+C>' (10)` | 10 | Select current line and copy |
+
+| Record                  | Status preview                        | Events | Use                          |
+| ----------------------- | ------------------------------------- | ------ | ---------------------------- |
+| Ctrl+A, Ctrl+C          | `N7: '<LCTL+A><LCTL+C>' (8)`          | 8      | Select all and copy          |
+| Ctrl+S, Ctrl+W          | `R8: '<LCTL+S><LCTL+W>' (8)`          | 8      | Save and close tab           |
+| Home, Shift+End, Ctrl+C | `R9: '<HOME><LSFT+END><LCTL+C>' (10)` | 10     | Select current line and copy |
+
 
 ### Mixed text and actions
 
 These combine typed text with modifier combos and navigation in one recording.
 
-| Record | Status preview | Events | Use |
-|--------|----------------|--------|-----|
-| `git commit -m ""` + Left | `R10: 'git commit -m ""<LEFT>' (36)` | 36 | Git commit -- cursor between the quotes, ready to type your message |
-| Ctrl+H, then type `TODO` | `R11: '<LCTL+H>TODO' (12)` | 12 | Open find/replace pre-filled with a search term |
-| Ctrl+T, type `github.com`, Enter | `R12: '<LCTL+T>github.com<RET>' (26)` | 26 | New browser tab straight to a URL |
+
+| Record                           | Status preview                        | Events | Use                                                                 |
+| -------------------------------- | ------------------------------------- | ------ | ------------------------------------------------------------------- |
+| `git commit -m ""` + Left        | `R10: 'git commit -m ""<LEFT>' (36)`  | 36     | Git commit -- cursor between the quotes, ready to type your message |
+| Ctrl+H, then type `TODO`         | `R11: '<LCTL+H>TODO' (12)`            | 12     | Open find/replace pre-filled with a search term                     |
+| Ctrl+T, type `github.com`, Enter | `R12: '<LCTL+T>github.com<RET>' (26)` | 26     | New browser tab straight to a URL                                   |
+
 
 ### Creative and CAD workflows
 
 Hotkey-heavy applications like Photoshop, Blender, and CAD tools benefit from chaining multiple shortcuts into a single key.
 
-| Record | Status preview | Events | Use |
-|--------|----------------|--------|-----|
-| Ctrl+J, Ctrl+T | `R13: '<LCTL+J><LCTL+T>' (8)` | 8 | Photoshop -- duplicate layer and enter Free Transform in one tap |
-| Ctrl+Shift+N, type `Sketch1`, Enter | `R14: '<LCTL+LSFT+N>Sketch1<RET>' (20)` | 20 | CAD / Photoshop -- new layer/sketch with a preset name, skipping the dialog |
-| Ctrl+Alt+Shift+E | `R15: '<LCTL+LALT+LSFT+E>' (8)` | 8 | Photoshop -- stamp visible (flatten all layers into a new layer) |
+
+| Record                              | Status preview                          | Events | Use                                                                         |
+| ----------------------------------- | --------------------------------------- | ------ | --------------------------------------------------------------------------- |
+| Ctrl+J, Ctrl+T                      | `R13: '<LCTL+J><LCTL+T>' (8)`           | 8      | Photoshop -- duplicate layer and enter Free Transform in one tap            |
+| Ctrl+Shift+N, type `Sketch1`, Enter | `R14: '<LCTL+LSFT+N>Sketch1<RET>' (20)` | 20     | CAD / Photoshop -- new layer/sketch with a preset name, skipping the dialog |
+| Ctrl+Alt+Shift+E                    | `R15: '<LCTL+LALT+LSFT+E>' (8)`         | 8      | Photoshop -- stamp visible (flatten all layers into a new layer)            |
+
+
+### Compound macros
+
+Chaining lets you build larger workflows from smaller recorded pieces.
+
+
+| Building blocks                                           | Compound recording                                                      | Use                                                               |
+| --------------------------------------------------------- | ----------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `N0: 'git add .<RET>'` and `N1: 'git commit -m ""<LEFT>'` | Record a new slot, press slot N0, press slot N1                         | Stage changes and start a commit message                          |
+| `N2: 'Hi Benjamin,<RET><RET>'`                            | Chain N2, then type a custom message, then chain an email sign-off slot | Reuse a greeting across multiple email templates                  |
+| `R8: '<LCTL+S>'` and `R9: '<LCTL+W>'`                     | Chain R8 and R9 into one NVS slot                                       | Promote a temporary save-and-close workflow to a persistent macro |
+
 
 ## Setup
 
@@ -106,7 +130,7 @@ layer_Macro {
         &none           &dm DM_SLOT 8   &dm DM_SLOT 9   &dm DM_SLOT 10  &dm DM_SLOT 11
         &none           &dm DM_SLOT 12  &dm DM_SLOT 13  &dm DM_SLOT 14  &dm DM_SLOT 15
         &none           &none           &none           &none           &none
-                        &dm DM_STATE 0  &tog MACRO      &none
+                        &dm DM_MOV 0    &dm DM_STATE 0  &tog MACRO
     >;
 };
 ```
@@ -157,6 +181,43 @@ If you don't press a slot key within the assign timeout (default 10 seconds), th
 
 If the slot is already empty, you'll see `[DM SLOT N0 EMPTY]` or `[DM SLOT R8 EMPTY]`.
 
+### Moving a macro
+
+1. Switch to the macro layer
+2. Press **MOV** -- feedback types `[DM MOV]`
+3. Press the **source slot** -- feedback types `[DM MOV SRC N0]` or similar
+4. Press the **destination slot** -- feedback types `[DM MOV N0->R8]` or similar
+
+The destination slot must be empty. If it is full, you'll see `[DM SLOT R8 FULL]` and move mode stays active so you can pick another destination.
+
+MOVE works across all storage combinations:
+
+- RAM to NVS promotes a temporary macro to persistent storage
+- NVS to RAM demotes a persistent macro to temporary storage
+- RAM to RAM reorganizes temporary slots without touching flash
+- NVS to NVS reorganizes persistent slots and updates flash
+
+### Chaining macros during recording
+
+While recording a new macro, press a non-empty **slot key** to inline that slot's events into the current recording.
+
+1. Switch to the macro layer
+2. Press **REC**
+3. Type some keys, or switch to the macro layer immediately
+4. Press a non-empty **slot key** to chain it into the recording
+5. Continue typing or chain more slots
+6. Press **STOP**, then assign the compound recording to an empty slot
+
+When a slot is chained, the module copies the slot's raw HID events into the current recording and types a safe text preview of the chained content into the active host window. For example, chaining a slot containing `hello` previews `hello`; chaining a slot containing Ctrl+C previews the literal token `<LCTL+C>` instead of executing Ctrl+C.
+
+Considerations:
+
+- Chained content is a snapshot. Editing or deleting the source slot later does not change compound macros that already inlined it.
+- The combined recording must still fit within `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_MAX_EVENTS`. If a chained slot would overflow the buffer, the insert is rejected with `[DM +N0 FULL]` and recording continues.
+- Chaining an empty slot types `[DM SLOT N0 EMPTY]` and recording continues.
+- The preview text appears in whichever host window has focus during recording, unless feedback is disabled.
+- There is no recursion risk. Chaining flat-copies recorded events, not references to other slots.
+
 ### Viewing status
 
 1. Switch to the macro layer
@@ -165,6 +226,7 @@ If the slot is already empty, you'll see `[DM SLOT N0 EMPTY]` or `[DM SLOT R8 EM
 `STATE` types into whichever PC window currently has focus. Verbose output can type many lines, so use it in a safe text editor or lower/disable feedback if that is disruptive.
 
 Verbose example output:
+
 ```
 [DM 2/16 NVS:0-7 RAM:8-15]
 N0: 'Hello world' (22)
@@ -180,58 +242,70 @@ Pressing **REC** while already recording restarts the recording (discards the cu
 
 ## Commands Reference
 
-| Keymap binding     | Action                                      |
-|--------------------|---------------------------------------------|
-| `&dm DM_REC 0`    | Start recording (param2 is unused, pass 0)  |
-| `&dm DM_STP 0`    | Stop recording, enter assign mode            |
-| `&dm DM_DEL 0`    | Enter delete mode                            |
-| `&dm DM_STATE 0`  | Output status of all slots                   |
-| `&dm DM_SLOT N`   | Interact with slot N (play, assign, or delete depending on current state); N must be less than `NVS_SLOTS + RAM_SLOTS` |
+
+| Keymap binding   | Action                                                                                                                                     |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `&dm DM_REC 0`   | Start recording (param2 is unused, pass 0)                                                                                                 |
+| `&dm DM_STP 0`   | Stop recording, enter assign mode                                                                                                          |
+| `&dm DM_DEL 0`   | Enter delete mode                                                                                                                          |
+| `&dm DM_MOV 0`   | Enter move mode; press source slot, then destination slot                                                                                  |
+| `&dm DM_STATE 0` | Output status of all slots                                                                                                                 |
+| `&dm DM_SLOT N`  | Interact with slot N (play, assign, delete, move-select, or chain depending on current state); N must be less than `NVS_SLOTS + RAM_SLOTS` |
+
 
 ## State Machine
 
+Solid arrows are **user key presses** (input). Dotted arrows are **system events** (automatic).
+
+```mermaid
+flowchart TD
+    IDLE["IDLE\n(waiting for command)"]
+
+    IDLE -- "press REC" --> RECORDING["RECORDING\n(capturing keystrokes)"]
+    IDLE -- "press DEL" --> DELETE_PENDING["DELETE_PENDING\n(awaiting slot selection)"]
+    IDLE -- "press MOV" --> MOVE_PENDING["MOVE_PENDING\n(awaiting source slot)"]
+    IDLE -- "press non-empty SLOT" --> PLAYING["PLAYING\n(replaying macro)"]
+
+    RECORDING -- "press STOP" --> PENDING_ASSIGN["PENDING_ASSIGN\n(awaiting slot to save into)"]
+    RECORDING -- "press REC again" --> RECORDING
+    RECORDING -- "press non-empty SLOT\n(chain)" --> RECORDING
+
+    PENDING_ASSIGN -- "press empty SLOT\n(save)" --> IDLE
+    PENDING_ASSIGN -- "press full SLOT\n(reject)" --> PENDING_ASSIGN
+    PENDING_ASSIGN -. "timeout" .-> IDLE
+
+    DELETE_PENDING -- "press SLOT\n(delete)" --> IDLE
+    DELETE_PENDING -. "timeout" .-> IDLE
+
+    MOVE_PENDING -- "press 1st SLOT\n(select source)" --> MOVE_PENDING
+    MOVE_PENDING -- "press 2nd SLOT\n(execute move)" --> IDLE
+    MOVE_PENDING -- "press same SLOT\n(cancel)" --> IDLE
+    MOVE_PENDING -. "timeout" .-> IDLE
+
+    PLAYING -. "playback complete" .-> IDLE
 ```
-                    ┌──────────────┐
-          ┌────────>│     IDLE     │<─────────────────────┐
-          │         └──────┬───┬──┘                       │
-          │     REC pressed│   │DEL pressed               │
-          │                v   v                          │
-          │  ┌───────────────┐ ┌──────────────┐           │
-          │  │  RECORDING    │ │DELETE_PENDING │──────────┤
-          │  └───────┬───────┘ └──────────────┘  slot     │
-          │  STOP    │              or timeout   pressed  │
-          │  pressed │                                    │
-          │          v                                    │
-          │  ┌────────────────┐                           │
-          │  │ PENDING_ASSIGN │───────────────────────────┤
-          │  └────────────────┘  slot pressed             │
-          │       or timeout     (empty = save,           │
-          │                       full = reject)          │
-          │                                               │
-          │  ┌────────────────┐                           │
-          └──│    PLAYING     │───────────────────────────┘
-             └────────────────┘  playback complete
-                slot pressed
-               (non-empty, IDLE)
-```
+
+Normal keyboard input is captured while in RECORDING but does not change the state. Typed feedback (e.g. `[DM REC]`, `[DM SAVED N0]`) is handled internally by a transient typing state that returns to the appropriate state shown above.
 
 ## Kconfig Options
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_MAX_EVENTS` | int | 64 | Max events per slot. Each key press + release = 2 events, so 64 events = 32 full key taps |
-| `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_TAP_DELAY` | int | 30 | Milliseconds between events during playback and feedback typing |
-| `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_ASSIGN_TIMEOUT` | int | 10000 | Milliseconds before pending assign/delete mode auto-cancels |
-| `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_PERSIST` | bool | y | Enable NVS flash persistence (requires `CONFIG_SETTINGS`) |
-| `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_NVS_SLOTS` | int | 8 | Number of low-index persistent slots backed by NVS flash, range 0-16 |
-| `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_RAM_SLOTS` | int | 8 | Number of RAM-only temporary slots after the NVS range, range 0-48 |
-| `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_STORAGE_QUEUE_LEN` | int | 8 | Number of pending NVS save/delete operations |
-| `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_STORAGE_WORK_QUEUE_STACK_SIZE` | int | 1024 | Stack size for the low-priority storage worker |
-| `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_STORAGE_WORK_QUEUE_PRIORITY` | int | 10 | Priority for the storage worker |
-| `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_FEEDBACK_OFF` | choice | n | Disable typed feedback |
-| `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_FEEDBACK_ERROR` | choice | n | Type only serious errors, such as storage failures |
-| `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_FEEDBACK_BASIC` | choice | y | Type short state/action messages |
-| `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_FEEDBACK_VERBOSE` | choice | n | Type saved previews and full status listings |
+
+| Option                                                            | Type   | Default | Description                                                                               |
+| ----------------------------------------------------------------- | ------ | ------- | ----------------------------------------------------------------------------------------- |
+| `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_MAX_EVENTS`                    | int    | 64      | Max events per slot. Each key press + release = 2 events, so 64 events = 32 full key taps |
+| `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_TAP_DELAY`                     | int    | 30      | Milliseconds between events during playback and feedback typing                           |
+| `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_ASSIGN_TIMEOUT`                | int    | 10000   | Milliseconds before pending assign/delete mode auto-cancels                               |
+| `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_PERSIST`                       | bool   | y       | Enable NVS flash persistence (requires `CONFIG_SETTINGS`)                                 |
+| `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_NVS_SLOTS`                     | int    | 8       | Number of low-index persistent slots backed by NVS flash, range 0-16                      |
+| `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_RAM_SLOTS`                     | int    | 8       | Number of RAM-only temporary slots after the NVS range, range 0-48                        |
+| `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_STORAGE_QUEUE_LEN`             | int    | 8       | Number of pending NVS save/delete operations                                              |
+| `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_STORAGE_WORK_QUEUE_STACK_SIZE` | int    | 1024    | Stack size for the low-priority storage worker                                            |
+| `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_STORAGE_WORK_QUEUE_PRIORITY`   | int    | 10      | Priority for the storage worker                                                           |
+| `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_FEEDBACK_OFF`                  | choice | n       | Disable typed feedback                                                                    |
+| `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_FEEDBACK_ERROR`                | choice | n       | Type only serious errors, such as storage failures                                        |
+| `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_FEEDBACK_BASIC`                | choice | y       | Type short state/action messages                                                          |
+| `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_FEEDBACK_VERBOSE`              | choice | n       | Type saved previews and full status listings                                              |
+
 
 ## Constraints and Notes
 
@@ -259,6 +333,7 @@ The nRF52840 has 256 KB RAM, so this is not a concern.
 ### Feedback Output
 
 Typed feedback goes to **whatever application currently has focus** on the host computer. This means:
+
 - `[DM REC]` will appear in your text editor, terminal, etc.
 - Verbose STATUS output can type multiple lines of text
 
@@ -278,11 +353,20 @@ The module runs on the **central** half only. ZMK's event system automatically m
 ### Macro Content Display
 
 When a macro is saved, its contents are displayed as a literal preview:
+
 - **Printable text** (letters, numbers, punctuation, and spaces) is concatenated without extra separators, so `hello world` displays as `hello world`.
 - **Shifted printable keys** render as the resulting character, so `LSFT+a` displays as `A` and `LSFT+1` displays as `!`.
 - **Command/action keys** render inline as angle-bracket tokens, such as `<LCTL+C>`, `<TAB>`, `<BSPC>`, `<PGUP>`, or `<MEDIA>`.
 
 Only Shift is treated as part of literal text output. Ctrl, Alt, Gui, navigation, editing, media, mouse, and other non-keyboard actions are shown as action tokens instead of being simulated in the preview.
+
+### Macro Chaining
+
+Chaining copies raw HID events from an existing slot into the recording buffer. The compound macro replays exactly what the source slot contained at the time it was chained.
+
+The maximum size of a compound macro is still bounded by `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_MAX_EVENTS` per slot. Chaining is rejected if the source slot would not fit in the remaining recording buffer space.
+
+Layer switching keys are behaviors, not HID keycode events, so switching to the macro layer during recording to press a slot key does not pollute the recording. The chained slot key itself is also handled as a dynamic macro command rather than recorded as a key event.
 
 ### Slot Overwrite Protection
 
