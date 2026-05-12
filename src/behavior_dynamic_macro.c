@@ -49,6 +49,25 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #define MAX_SLOTS     (NVS_SLOTS + RAM_SLOTS)
 #define SLOT_CAPACITY (MAX_SLOTS > 0 ? MAX_SLOTS : 1)
 
+BUILD_ASSERT(NVS_SLOTS <= 16, "Dynamic macros support at most 16 NVS slots");
+BUILD_ASSERT(RAM_SLOTS <= 48, "Dynamic macros support at most 48 RAM slots");
+BUILD_ASSERT(MAX_SLOTS <= 64, "Dynamic macros support at most 64 total slots");
+
+#define DM_VALIDATE_KEYMAP_BINDING(idx, layer)                                                   \
+    COND_CODE_1(DT_NODE_HAS_COMPAT(DT_PHANDLE_BY_IDX(layer, bindings, idx),                       \
+                                   zmk_behavior_dynamic_macro),                                   \
+                (BUILD_ASSERT(DT_PHA_BY_IDX(layer, bindings, idx, param1) != DM_SLOT ||           \
+                                  DT_PHA_BY_IDX(layer, bindings, idx, param2) < MAX_SLOTS,        \
+                              "DM_SLOT index exceeds configured dynamic macro slots");),          \
+                ())
+
+#define DM_VALIDATE_KEYMAP_LAYER(layer)                                                           \
+    COND_CODE_1(DT_NODE_HAS_PROP(layer, bindings),                                                \
+                (LISTIFY(DT_PROP_LEN(layer, bindings), DM_VALIDATE_KEYMAP_BINDING, (), layer)),   \
+                ())
+
+ZMK_KEYMAP_LAYERS_FOREACH(DM_VALIDATE_KEYMAP_LAYER)
+
 enum dm_state {
     DM_STATE_IDLE = 0,
     DM_STATE_RECORDING,
@@ -110,6 +129,89 @@ struct behavior_dynamic_macro_data {
     struct k_work feedback_work;
 #endif
 };
+
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_METADATA)
+
+#define DM_COMMAND_VALUE(name, command)                                                           \
+    {                                                                                              \
+        .display_name = name,                                                                      \
+        .type = BEHAVIOR_PARAMETER_VALUE_TYPE_VALUE,                                               \
+        .value = command,                                                                          \
+    }
+
+static const struct behavior_parameter_value_metadata dm_param_rec[] = {
+    DM_COMMAND_VALUE("Record", DM_REC),
+};
+static const struct behavior_parameter_value_metadata dm_param_stop[] = {
+    DM_COMMAND_VALUE("Stop", DM_STP),
+};
+static const struct behavior_parameter_value_metadata dm_param_delete[] = {
+    DM_COMMAND_VALUE("Delete", DM_DEL),
+};
+static const struct behavior_parameter_value_metadata dm_param_state[] = {
+    DM_COMMAND_VALUE("State", DM_STATE),
+};
+static const struct behavior_parameter_value_metadata dm_param_unused[] = {
+    {
+        .display_name = "Unused",
+        .type = BEHAVIOR_PARAMETER_VALUE_TYPE_NIL,
+    },
+};
+
+#if MAX_SLOTS > 0
+static const struct behavior_parameter_value_metadata dm_param_slot[] = {
+    DM_COMMAND_VALUE("Slot", DM_SLOT),
+};
+static const struct behavior_parameter_value_metadata dm_param_slot_index[] = {
+    {
+        .display_name = "Slot index",
+        .type = BEHAVIOR_PARAMETER_VALUE_TYPE_RANGE,
+        .range = {.min = 0, .max = MAX_SLOTS - 1},
+    },
+};
+#endif
+
+static const struct behavior_parameter_metadata_set dm_parameter_metadata_sets[] = {
+    {
+        .param1_values_len = ARRAY_SIZE(dm_param_rec),
+        .param1_values = dm_param_rec,
+        .param2_values_len = ARRAY_SIZE(dm_param_unused),
+        .param2_values = dm_param_unused,
+    },
+    {
+        .param1_values_len = ARRAY_SIZE(dm_param_stop),
+        .param1_values = dm_param_stop,
+        .param2_values_len = ARRAY_SIZE(dm_param_unused),
+        .param2_values = dm_param_unused,
+    },
+    {
+        .param1_values_len = ARRAY_SIZE(dm_param_delete),
+        .param1_values = dm_param_delete,
+        .param2_values_len = ARRAY_SIZE(dm_param_unused),
+        .param2_values = dm_param_unused,
+    },
+    {
+        .param1_values_len = ARRAY_SIZE(dm_param_state),
+        .param1_values = dm_param_state,
+        .param2_values_len = ARRAY_SIZE(dm_param_unused),
+        .param2_values = dm_param_unused,
+    },
+#if MAX_SLOTS > 0
+    {
+        .param1_values_len = ARRAY_SIZE(dm_param_slot),
+        .param1_values = dm_param_slot,
+        .param2_values_len = ARRAY_SIZE(dm_param_slot_index),
+        .param2_values = dm_param_slot_index,
+    },
+#endif
+};
+
+static const struct behavior_parameter_metadata dm_parameter_metadata = {
+    .sets_len = ARRAY_SIZE(dm_parameter_metadata_sets),
+    .sets = dm_parameter_metadata_sets,
+};
+
+#endif /* CONFIG_ZMK_BEHAVIOR_METADATA */
 
 static void save_slot(struct behavior_dynamic_macro_data *data, int slot_idx);
 static int delete_slot_from_storage(struct behavior_dynamic_macro_data *data, int slot_idx);
@@ -1313,7 +1415,7 @@ static const struct behavior_driver_api behavior_dynamic_macro_driver_api = {
     .binding_pressed = on_keymap_binding_pressed,
     .binding_released = on_keymap_binding_released,
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_METADATA)
-    .get_parameter_metadata = zmk_behavior_get_empty_param_metadata,
+    .parameter_metadata = &dm_parameter_metadata,
 #endif
 };
 
