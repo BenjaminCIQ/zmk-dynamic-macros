@@ -1633,6 +1633,8 @@ static void cmd_slot(struct behavior_dynamic_macro_data *data, int slot_idx) {
 
     case DM_STATE_IDLE:
         if (slot_is_empty(data, slot_idx)) {
+            LOG_DBG("Slot %d is empty, nothing to play", slot_idx);
+            feedback_slot_empty(data, slot_idx);
             return;
         }
         data->state = DM_STATE_PLAYING;
