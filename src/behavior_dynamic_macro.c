@@ -86,6 +86,8 @@ struct behavior_dynamic_macro_data {
     const struct device *dev;
     enum dm_state state;
     struct dm_slot slots[MAX_SLOTS];
+    bool pending_delete[MAX_SLOTS];
+    uint32_t slot_generation[MAX_SLOTS];
     struct dm_slot recording_buffer;
     struct k_work_delayable assign_timeout_work;
     int playback_slot;
@@ -116,6 +118,10 @@ static bool slot_is_nvs(int slot_idx) {
 
 static char slot_storage_prefix(int slot_idx) {
     return slot_is_nvs(slot_idx) ? 'N' : 'R';
+}
+
+static bool slot_is_empty(struct behavior_dynamic_macro_data *data, int slot_idx) {
+    return data->slots[slot_idx].event_count == 0 || data->pending_delete[slot_idx];
 }
 
 /* -------------------------------------------------------------------------- */
@@ -442,7 +448,7 @@ static int filled_slot_count(struct behavior_dynamic_macro_data *data) {
     int filled = 0;
 
     for (int i = 0; i < MAX_SLOTS; i++) {
-        if (data->slots[i].event_count > 0) {
+        if (!slot_is_empty(data, i)) {
             filled++;
         }
     }
@@ -454,7 +460,7 @@ static void render_status_slot(struct behavior_dynamic_macro_data *data, int slo
     fb_append_char(data, slot_storage_prefix(slot_idx));
     fb_append_number(data, slot_idx);
     fb_append_str(data, ": ");
-    if (data->slots[slot_idx].event_count == 0) {
+    if (slot_is_empty(data, slot_idx)) {
         fb_append_char(data, '-');
     } else {
         fb_append_char(data, '\'');
@@ -649,6 +655,49 @@ static void feedback_delete_failed(struct behavior_dynamic_macro_data *data, int
     start_feedback(data, DM_STATE_IDLE, -1);
 }
 
+static void feedback_save_failed(struct behavior_dynamic_macro_data *data, int slot_idx) {
+    if (!feedback_enabled(DM_FEEDBACK_ERROR) || data->state != DM_STATE_IDLE) {
+        return;
+    }
+
+    data->status_mode = false;
+    fb_reset(data);
+    fb_append_str(data, "[DM SAVE FAILED ");
+    fb_append_char(data, slot_storage_prefix(slot_idx));
+    fb_append_number(data, slot_idx);
+    fb_append_char(data, ']');
+    start_feedback(data, DM_STATE_IDLE, -1);
+}
+
+static void feedback_save_queue_full(struct behavior_dynamic_macro_data *data, int slot_idx) {
+    if (!feedback_enabled(DM_FEEDBACK_ERROR) || data->state != DM_STATE_IDLE) {
+        return;
+    }
+
+    data->status_mode = false;
+    fb_reset(data);
+    fb_append_str(data, "[DM SAVE QUEUE FULL ");
+    fb_append_char(data, slot_storage_prefix(slot_idx));
+    fb_append_number(data, slot_idx);
+    fb_append_char(data, ']');
+    start_feedback(data, DM_STATE_IDLE, -1);
+}
+
+static void feedback_delete_queue_full(struct behavior_dynamic_macro_data *data, int slot_idx) {
+    if (!feedback_enabled(DM_FEEDBACK_ERROR)) {
+        data->state = DM_STATE_IDLE;
+        return;
+    }
+
+    data->status_mode = false;
+    fb_reset(data);
+    fb_append_str(data, "[DM DEL QUEUE FULL ");
+    fb_append_char(data, slot_storage_prefix(slot_idx));
+    fb_append_number(data, slot_idx);
+    fb_append_char(data, ']');
+    start_feedback(data, DM_STATE_IDLE, -1);
+}
+
 static void feedback_slot_empty(struct behavior_dynamic_macro_data *data, int slot_idx) {
     if (!feedback_enabled(DM_FEEDBACK_BASIC)) {
         data->state = DM_STATE_IDLE;
@@ -738,6 +787,18 @@ static void feedback_delete_failed(struct behavior_dynamic_macro_data *data, int
     (void)slot_idx;
     data->state = DM_STATE_IDLE;
 }
+static void feedback_save_failed(struct behavior_dynamic_macro_data *data, int slot_idx) {
+    (void)data;
+    (void)slot_idx;
+}
+static void feedback_save_queue_full(struct behavior_dynamic_macro_data *data, int slot_idx) {
+    (void)data;
+    (void)slot_idx;
+}
+static void feedback_delete_queue_full(struct behavior_dynamic_macro_data *data, int slot_idx) {
+    (void)slot_idx;
+    data->state = DM_STATE_IDLE;
+}
 static void feedback_slot_empty(struct behavior_dynamic_macro_data *data, int slot_idx) {
     (void)slot_idx;
     data->state = DM_STATE_IDLE;
@@ -759,6 +820,121 @@ static void feedback_status(struct behavior_dynamic_macro_data *data) { data->st
 static const struct device *dm_devices[] = {DT_INST_FOREACH_STATUS_OKAY(DM_DEVICE)};
 
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_PERSIST)
+
+enum dm_storage_op_type {
+    DM_STORAGE_OP_SAVE,
+    DM_STORAGE_OP_DELETE,
+};
+
+struct dm_storage_op {
+    enum dm_storage_op_type type;
+    struct behavior_dynamic_macro_data *data;
+    int slot_idx;
+    uint32_t generation;
+    struct dm_slot slot;
+};
+
+K_KERNEL_STACK_DEFINE(dm_storage_work_q_stack,
+                      CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_STORAGE_WORK_QUEUE_STACK_SIZE);
+K_MSGQ_DEFINE(dm_storage_msgq, sizeof(struct dm_storage_op),
+              CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_STORAGE_QUEUE_LEN, 4);
+
+static struct k_work_q dm_storage_work_q;
+static struct k_work dm_storage_work;
+static bool dm_storage_work_q_started;
+
+static void settings_slot_key(struct behavior_dynamic_macro_data *data, int slot_idx, char *key,
+                              size_t key_len) {
+    const struct behavior_dynamic_macro_config *config = data->dev->config;
+
+    snprintf(key, key_len, "dm/%s/slot/%d", config->settings_name, slot_idx);
+}
+
+static void dm_storage_work_handler(struct k_work *work) {
+    struct dm_storage_op op;
+
+    while (k_msgq_get(&dm_storage_msgq, &op, K_NO_WAIT) == 0) {
+        char key[64];
+        settings_slot_key(op.data, op.slot_idx, key, sizeof(key));
+
+        if (op.type == DM_STORAGE_OP_SAVE) {
+            size_t data_size = sizeof(uint32_t) + op.slot.event_count * sizeof(struct dm_event);
+            int rc = settings_save_one(key, &op.slot, data_size);
+            if (rc) {
+                LOG_ERR("Failed to save dynamic macro slot %d: %d", op.slot_idx, rc);
+                feedback_save_failed(op.data, op.slot_idx);
+            } else {
+                LOG_DBG("Saved dynamic macro slot %d (%u events)", op.slot_idx,
+                        (unsigned int)op.slot.event_count);
+            }
+            continue;
+        }
+
+        int rc = settings_delete(key);
+        if (rc) {
+            LOG_ERR("Failed to delete dynamic macro slot %d from storage: %d", op.slot_idx, rc);
+            if (op.data->pending_delete[op.slot_idx] &&
+                op.data->slot_generation[op.slot_idx] == op.generation) {
+                op.data->pending_delete[op.slot_idx] = false;
+            }
+            if (op.data->state == DM_STATE_IDLE) {
+                feedback_delete_failed(op.data, op.slot_idx);
+            }
+            continue;
+        }
+
+        if (op.data->pending_delete[op.slot_idx] &&
+            op.data->slot_generation[op.slot_idx] == op.generation) {
+            memset(&op.data->slots[op.slot_idx], 0, sizeof(struct dm_slot));
+            op.data->pending_delete[op.slot_idx] = false;
+            if (op.data->state == DM_STATE_IDLE) {
+                feedback_deleted(op.data, op.slot_idx);
+            }
+        }
+
+        LOG_DBG("Deleted dynamic macro slot %d from storage", op.slot_idx);
+    }
+}
+
+static void init_storage_work_queue(void) {
+    if (dm_storage_work_q_started) {
+        return;
+    }
+
+    k_work_init(&dm_storage_work, dm_storage_work_handler);
+    k_work_queue_start(&dm_storage_work_q, dm_storage_work_q_stack,
+                       K_KERNEL_STACK_SIZEOF(dm_storage_work_q_stack),
+                       CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_STORAGE_WORK_QUEUE_PRIORITY, NULL);
+    dm_storage_work_q_started = true;
+}
+
+static int enqueue_storage_op(struct behavior_dynamic_macro_data *data, enum dm_storage_op_type type,
+                              int slot_idx, const struct dm_slot *slot) {
+    struct dm_storage_op op = {
+        .type = type,
+        .data = data,
+        .slot_idx = slot_idx,
+        .generation = data->slot_generation[slot_idx],
+    };
+
+    if (slot != NULL) {
+        memcpy(&op.slot, slot, sizeof(op.slot));
+    }
+
+    int rc = k_msgq_put(&dm_storage_msgq, &op, K_NO_WAIT);
+    if (rc) {
+        LOG_ERR("Dynamic macro storage queue full for slot %d: %d", slot_idx, rc);
+        if (type == DM_STORAGE_OP_SAVE) {
+            feedback_save_queue_full(data, slot_idx);
+        } else {
+            feedback_delete_queue_full(data, slot_idx);
+        }
+        return rc;
+    }
+
+    k_work_submit_to_queue(&dm_storage_work_q, &dm_storage_work);
+    return 0;
+}
 
 static bool parse_settings_slot_name(const char *name, struct behavior_dynamic_macro_data **data,
                                      int *slot_idx) {
@@ -867,16 +1043,15 @@ static int dm_settings_export(int (*storage_func)(const char *name, const void *
                                                    size_t val_len)) {
     for (size_t dev_idx = 0; dev_idx < ARRAY_SIZE(dm_devices); dev_idx++) {
         const struct device *dev = dm_devices[dev_idx];
-        const struct behavior_dynamic_macro_config *config = dev->config;
         struct behavior_dynamic_macro_data *data = dev->data;
 
         for (int i = 0; i < MAX_SLOTS; i++) {
-            if (!slot_is_nvs(i) || data->slots[i].event_count == 0) {
+            if (!slot_is_nvs(i) || slot_is_empty(data, i)) {
                 continue;
             }
 
             char key[64];
-            snprintf(key, sizeof(key), "dm/%s/slot/%d", config->settings_name, i);
+            settings_slot_key(data, i, key, sizeof(key));
             size_t data_size = sizeof(uint32_t) +
                                data->slots[i].event_count * sizeof(struct dm_event);
             int rc = storage_func(key, &data->slots[i], data_size);
@@ -896,19 +1071,7 @@ static void save_slot(struct behavior_dynamic_macro_data *data, int slot_idx) {
         return;
     }
 
-    const struct behavior_dynamic_macro_config *config = data->dev->config;
-    char key[64];
-    snprintf(key, sizeof(key), "dm/%s/slot/%d", config->settings_name, slot_idx);
-    size_t data_size = sizeof(uint32_t) +
-                       data->slots[slot_idx].event_count * sizeof(struct dm_event);
-    int rc = settings_save_one(key, &data->slots[slot_idx], data_size);
-    if (rc) {
-        LOG_ERR("Failed to save dynamic macro slot %d: %d", slot_idx, rc);
-        return;
-    }
-
-    LOG_DBG("Saved dynamic macro slot %d (%u events)", slot_idx,
-            (unsigned int)data->slots[slot_idx].event_count);
+    enqueue_storage_op(data, DM_STORAGE_OP_SAVE, slot_idx, &data->slots[slot_idx]);
 }
 
 static int delete_slot_from_storage(struct behavior_dynamic_macro_data *data, int slot_idx) {
@@ -916,17 +1079,7 @@ static int delete_slot_from_storage(struct behavior_dynamic_macro_data *data, in
         return 0;
     }
 
-    const struct behavior_dynamic_macro_config *config = data->dev->config;
-    char key[64];
-    snprintf(key, sizeof(key), "dm/%s/slot/%d", config->settings_name, slot_idx);
-    int rc = settings_delete(key);
-    if (rc) {
-        LOG_ERR("Failed to delete dynamic macro slot %d from storage: %d", slot_idx, rc);
-        return rc;
-    }
-
-    LOG_DBG("Deleted dynamic macro slot %d from storage", slot_idx);
-    return 0;
+    return enqueue_storage_op(data, DM_STORAGE_OP_DELETE, slot_idx, NULL);
 }
 
 #else /* !CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_PERSIST */
@@ -1064,10 +1217,12 @@ static void cmd_slot(struct behavior_dynamic_macro_data *data, int slot_idx) {
     switch (data->state) {
     case DM_STATE_PENDING_ASSIGN:
         k_work_cancel_delayable(&data->assign_timeout_work);
-        if (data->slots[slot_idx].event_count > 0) {
+        if (data->slots[slot_idx].event_count > 0 && !data->pending_delete[slot_idx]) {
             feedback_slot_full(data, slot_idx);
             return;
         }
+        data->pending_delete[slot_idx] = false;
+        data->slot_generation[slot_idx]++;
         memcpy(&data->slots[slot_idx], &data->recording_buffer, sizeof(struct dm_slot));
         feedback_saved(data, slot_idx, &data->slots[slot_idx]);
         LOG_DBG("Assigned recording to slot %d (%d events)", slot_idx,
@@ -1076,13 +1231,20 @@ static void cmd_slot(struct behavior_dynamic_macro_data *data, int slot_idx) {
 
     case DM_STATE_DELETE_PENDING:
         k_work_cancel_delayable(&data->assign_timeout_work);
-        if (data->slots[slot_idx].event_count == 0) {
+        if (slot_is_empty(data, slot_idx)) {
             feedback_slot_empty(data, slot_idx);
         } else {
-            int rc = delete_slot_from_storage(data, slot_idx);
-            if (rc) {
-                feedback_delete_failed(data, slot_idx);
-                return;
+            if (slot_is_nvs(slot_idx)) {
+                data->pending_delete[slot_idx] = true;
+                data->state = DM_STATE_IDLE;
+                int rc = delete_slot_from_storage(data, slot_idx);
+                if (rc) {
+                    data->pending_delete[slot_idx] = false;
+                    return;
+                }
+
+                LOG_DBG("Queued slot %d for deletion", slot_idx);
+                break;
             }
 
             data->slots[slot_idx].event_count = 0;
@@ -1092,7 +1254,7 @@ static void cmd_slot(struct behavior_dynamic_macro_data *data, int slot_idx) {
         break;
 
     case DM_STATE_IDLE:
-        if (data->slots[slot_idx].event_count == 0) {
+        if (slot_is_empty(data, slot_idx)) {
             return;
         }
         data->state = DM_STATE_PLAYING;
@@ -1216,6 +1378,9 @@ static int behavior_dynamic_macro_init(const struct device *dev) {
     k_work_init_delayable(&data->assign_timeout_work, assign_timeout_handler);
     k_work_init(&data->playback_work, playback_work_handler);
     k_timer_init(&data->playback_timer, playback_timer_handler, NULL);
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_PERSIST)
+    init_storage_work_queue();
+#endif
 #if DM_FEEDBACK_LEVEL > DM_FEEDBACK_OFF
     k_work_init(&data->feedback_work, feedback_work_handler);
     k_timer_init(&data->feedback_timer, feedback_timer_handler, NULL);
