@@ -1182,6 +1182,21 @@ static void settings_slot_key(struct behavior_dynamic_macro_data *data, int slot
     snprintf(key, key_len, "dm/%s/slot/%d", config->settings_name, slot_idx);
 }
 
+/*
+ * Threading model:
+ *
+ * All behavior handlers and the event listener run on the system work queue
+ * (cooperative, single-threaded). This storage work handler runs on
+ * dm_storage_work_q at priority 10.
+ *
+ * Thread safety:
+ * - pending_delete uses atomic bit operations (safe across threads)
+ * - slot_generation is only written by main thread, read here for staleness check
+ * - slots[] are only written by main thread; this handler reads slot data via
+ *   the op.slot copy in the message queue, never directly from data->slots[]
+ * - On delete completion, we only clear the atomic flag; slot data is cleared
+ *   lazily when reassigned (memcpy overwrites entire slot)
+ */
 static void dm_storage_work_handler(struct k_work *work) {
     static struct dm_storage_op op;
     static uint8_t save_buf[sizeof(struct dm_slot_header) + MAX_EVENTS * sizeof(struct dm_event)];
@@ -1228,7 +1243,6 @@ static void dm_storage_work_handler(struct k_work *work) {
 
         if (atomic_test_bit(op.data->pending_delete, op.slot_idx) &&
             op.data->slot_generation[op.slot_idx] == op.generation) {
-            memset(&op.data->slots[op.slot_idx], 0, sizeof(struct dm_slot));
             atomic_clear_bit(op.data->pending_delete, op.slot_idx);
             if (op.data->state == DM_STATE_IDLE) {
                 feedback_deleted(op.data, op.slot_idx);
