@@ -1228,10 +1228,14 @@ static void feedback_chain_no_room(struct behavior_dynamic_macro_data *data, int
 
     data->status_mode = false;
     fb_reset(data);
-    fb_append_str(data, "[DM +");
+    fb_append_str(data, DM_MSG_CHAIN);
     fb_append_char(data, slot_storage_prefix(slot_idx));
     fb_append_number(data, slot_idx);
+#if DM_LOCALE_PLAIN
+    fb_append_str(data, " FULL");
+#else
     fb_append_str(data, " FULL]");
+#endif
     start_feedback(data, DM_STATE_RECORDING, -1);
 }
 
