@@ -349,21 +349,40 @@ static struct hid_keycode ascii_to_hid(char c) {
 }
 
 static void fb_reset(struct behavior_dynamic_macro_data *data) {
-    data->feedback_len = 0;
-    data->feedback_pos = 0;
+    data->ring_head = 0;
+    data->ring_tail = 0;
     data->feedback_press_phase = true;
+    data->preview_slot = NULL;
+    data->preview_idx = 0;
+    data->preview_mods = 0;
+    data->preview_done = true;
+    data->needs_suffix = false;
+    data->status_current_slot = -1;
+}
+
+static inline uint8_t ring_count(struct behavior_dynamic_macro_data *data) {
+    return (data->ring_head - data->ring_tail) & (FB_RING_SIZE - 1);
+}
+
+static inline uint8_t ring_space(struct behavior_dynamic_macro_data *data) {
+    return FB_RING_SIZE - 1 - ring_count(data);
+}
+
+static inline bool ring_empty(struct behavior_dynamic_macro_data *data) {
+    return data->ring_head == data->ring_tail;
+}
+
+static void fb_push(struct behavior_dynamic_macro_data *data, uint16_t keycode, uint8_t mods) {
+    data->ring[data->ring_head] = (struct fb_event){.keycode = keycode, .mods = mods};
+    data->ring_head = (data->ring_head + 1) & (FB_RING_SIZE - 1);
 }
 
 static void fb_append_hid(struct behavior_dynamic_macro_data *data, uint32_t keycode, uint8_t mods) {
-    if (data->feedback_len >= FEEDBACK_BUF_LEN) {
-        LOG_WRN("Dynamic macro feedback buffer full");
+    if (ring_space(data) < 1) {
+        LOG_WRN("Dynamic macro feedback ring full");
         return;
     }
-
-    data->feedback_buf[data->feedback_len++] = (struct fb_event){
-        .keycode = (uint16_t)keycode,
-        .mods = mods,
-    };
+    fb_push(data, (uint16_t)keycode, mods);
 }
 
 static void fb_append_char(struct behavior_dynamic_macro_data *data, char c) {
@@ -564,14 +583,37 @@ static bool is_replayable_event(const struct dm_event *ev, uint8_t active_mods) 
     return printable_char_for_keycode(ev->keycode, (mods & MOD_SHIFT_MASK) != 0, &dummy);
 }
 
-static bool render_modifiers(struct behavior_dynamic_macro_data *data, uint8_t mods) {
-    static const uint8_t mod_bits[] = {0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80};
-    static const char *mod_names[] = {"LCTL", "LSFT", "LALT", "LGUI",
-                                      "RCTL", "RSFT", "RALT", "RGUI"};
+static const uint8_t mod_bits[] = {0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80};
+static const char *mod_names[] = {"LCTL", "LSFT", "LALT", "LGUI",
+                                  "RCTL", "RSFT", "RALT", "RGUI"};
+
+static uint8_t token_size(uint8_t mods, uint16_t usage_page, uint32_t keycode) {
+    uint8_t size = 0;
+#if !DM_LOCALE_PLAIN
+    size += 2; /* < and > */
+#endif
     bool first = true;
     for (int i = 0; i < 8; i++) {
         if (mods & mod_bits[i]) {
             if (!first) {
+                size += 1; /* separator */
+            }
+            size += strlen(mod_names[i]);
+            first = false;
+        }
+    }
+    if (!first) {
+        size += 1; /* separator before action name */
+    }
+    size += strlen(action_name(usage_page, keycode));
+    return size;
+}
+
+static void render_modifiers(struct behavior_dynamic_macro_data *data, uint8_t mods,
+                             bool *first) {
+    for (int i = 0; i < 8; i++) {
+        if (mods & mod_bits[i]) {
+            if (!*first) {
 #if DM_LOCALE_PLAIN
                 fb_append_char(data, ' ');
 #else
@@ -579,10 +621,9 @@ static bool render_modifiers(struct behavior_dynamic_macro_data *data, uint8_t m
 #endif
             }
             fb_append_str(data, mod_names[i]);
-            first = false;
+            *first = false;
         }
     }
-    return !first;
 }
 
 static void render_action_token(struct behavior_dynamic_macro_data *data, uint8_t mods,
@@ -590,7 +631,9 @@ static void render_action_token(struct behavior_dynamic_macro_data *data, uint8_
 #if !DM_LOCALE_PLAIN
     fb_append_char(data, '<');
 #endif
-    if (render_modifiers(data, mods)) {
+    bool first = true;
+    render_modifiers(data, mods, &first);
+    if (!first) {
 #if DM_LOCALE_PLAIN
         fb_append_char(data, ' ');
 #else
@@ -603,38 +646,58 @@ static void render_action_token(struct behavior_dynamic_macro_data *data, uint8_
 #endif
 }
 
-static void render_slot_contents(struct behavior_dynamic_macro_data *data,
-                                 const struct dm_slot *slot) {
-    uint8_t active_mods = 0;
+/*
+ * Stream preview content from slot. Returns true if more work remains.
+ * Caller must set data->preview_slot before first call.
+ * Resumes from data->preview_idx with modifier state in data->preview_mods.
+ */
+static bool render_slot_contents_stream(struct behavior_dynamic_macro_data *data) {
+    const struct dm_slot *slot = data->preview_slot;
+    if (!slot) {
+        return false;
+    }
 
-    for (uint32_t i = 0; i < slot->event_count; i++) {
-        const struct dm_event *ev = &slot->events[i];
+    while (data->preview_idx < slot->event_count) {
+        const struct dm_event *ev = &slot->events[data->preview_idx];
 
         if (is_mod(ev->usage_page, ev->keycode)) {
             uint8_t mod_bit = 1 << (ev->keycode - 0xE0);
             if (ev->pressed) {
-                active_mods |= mod_bit;
+                data->preview_mods |= mod_bit;
             } else {
-                active_mods &= ~mod_bit;
+                data->preview_mods &= ~mod_bit;
             }
+            data->preview_idx++;
             continue;
         }
 
         if (!ev->pressed) {
+            data->preview_idx++;
             continue;
         }
 
-        uint8_t mods = active_mods | ev->implicit_mods | ev->explicit_mods;
-        char output;
+        uint8_t mods = data->preview_mods | ev->implicit_mods | ev->explicit_mods;
 
-        if (is_replayable_event(ev, active_mods) &&
-            printable_char_for_keycode(ev->keycode, (mods & MOD_SHIFT_MASK) != 0, &output)) {
+        if (is_replayable_event(ev, data->preview_mods)) {
+            /* Printable char: 1 fb_event */
+            if (ring_space(data) < 1) {
+                return true; /* need drain */
+            }
             uint8_t emit_mods = (mods & MOD_SHIFT_MASK) ? 0x02 : 0x00;
             fb_append_hid(data, ev->keycode, emit_mods);
         } else {
+            /* Action token: variable size */
+            uint8_t size = token_size(mods, ev->usage_page, ev->keycode);
+            if (ring_space(data) < size) {
+                return true; /* need drain */
+            }
             render_action_token(data, mods, ev->usage_page, ev->keycode);
         }
+        data->preview_idx++;
     }
+
+    data->preview_slot = NULL;
+    return false;
 }
 
 static int filled_slot_count(struct behavior_dynamic_macro_data *data) {
@@ -649,7 +712,12 @@ static int filled_slot_count(struct behavior_dynamic_macro_data *data) {
     return filled;
 }
 
-static void render_status_slot(struct behavior_dynamic_macro_data *data, int slot_idx,
+/*
+ * Render status slot. For non-empty slots with preview, sets up streaming
+ * and returns true (caller must handle streaming completion).
+ * Returns false if no streaming needed.
+ */
+static bool render_status_slot(struct behavior_dynamic_macro_data *data, int slot_idx,
                                bool show_preview) {
     fb_append_char(data, slot_storage_prefix(slot_idx));
     fb_append_number(data, slot_idx);
@@ -664,28 +732,43 @@ static void render_status_slot(struct behavior_dynamic_macro_data *data, int slo
 #else
         fb_append_char(data, '-');
 #endif
-    } else {
-        if (show_preview) {
-#if !DM_LOCALE_PLAIN
-            fb_append_char(data, '\'');
-#endif
-            render_slot_contents(data, &data->slots[slot_idx]);
-#if DM_LOCALE_PLAIN
-            fb_append_char(data, ' ');
-#else
-            fb_append_str(data, "' (");
-#endif
-        }
-#if DM_LOCALE_PLAIN
-        fb_append_number(data, data->slots[slot_idx].event_count);
-        fb_append_str(data, " EVENTS");
-#else
-        fb_append_number(data, data->slots[slot_idx].event_count);
-        if (show_preview) {
-            fb_append_char(data, ')');
-        }
-#endif
+        fb_append_char(data, '\n');
+        return false;
     }
+
+    if (show_preview) {
+#if !DM_LOCALE_PLAIN
+        fb_append_char(data, '\'');
+#endif
+        data->preview_slot = &data->slots[slot_idx];
+        data->preview_idx = 0;
+        data->preview_mods = 0;
+        data->preview_done = false;
+        /* Suffix will be added by status_slot_suffix after streaming */
+        render_slot_contents_stream(data);
+        return true;
+    }
+
+#if DM_LOCALE_PLAIN
+    fb_append_number(data, data->slots[slot_idx].event_count);
+    fb_append_str(data, " EVENTS");
+#else
+    fb_append_number(data, data->slots[slot_idx].event_count);
+#endif
+    fb_append_char(data, '\n');
+    return false;
+}
+
+static void status_slot_suffix(struct behavior_dynamic_macro_data *data, int slot_idx) {
+#if DM_LOCALE_PLAIN
+    fb_append_char(data, ' ');
+    fb_append_number(data, data->slots[slot_idx].event_count);
+    fb_append_str(data, " EVENTS");
+#else
+    fb_append_str(data, "' (");
+    fb_append_number(data, data->slots[slot_idx].event_count);
+    fb_append_char(data, ')');
+#endif
     fb_append_char(data, '\n');
 }
 
@@ -703,8 +786,12 @@ static void feedback_complete(struct behavior_dynamic_macro_data *data) {
 
         if (data->status_next_slot < MAX_SLOTS) {
             fb_reset(data);
-            render_status_slot(data, data->status_next_slot, show_preview);
+            data->status_current_slot = data->status_next_slot;
+            bool streaming = render_status_slot(data, data->status_next_slot, show_preview);
             data->status_next_slot++;
+            if (streaming) {
+                /* Will continue via emit handler streaming */
+            }
             k_timer_start(&data->emit_timer, K_NO_WAIT, K_NO_WAIT);
             return;
         }
@@ -735,12 +822,11 @@ static void start_feedback(struct behavior_dynamic_macro_data *data, enum dm_sta
                            int post_save_slot) {
     data->feedback_return_state = return_state;
     data->feedback_post_save_slot = post_save_slot;
-    data->feedback_pos = 0;
     data->feedback_press_phase = true;
     data->suppress_recording = true;
     data->state = DM_STATE_TYPING_FEEDBACK;
 
-    if (data->feedback_len == 0) {
+    if (ring_empty(data) && data->preview_done) {
         feedback_complete(data);
         return;
     }
@@ -789,12 +875,17 @@ static void feedback_saved(struct behavior_dynamic_macro_data *data, int slot_id
     fb_append_number(data, slot_idx);
     if (feedback_enabled(DM_FEEDBACK_VERBOSE)) {
         fb_append_str(data, DM_MSG_PREVIEW_START);
-        render_slot_contents(data, slot);
-        fb_append_str(data, DM_MSG_PREVIEW_END);
-    }
+        data->preview_slot = slot;
+        data->preview_idx = 0;
+        data->preview_mods = 0;
+        data->preview_done = false;
+        data->needs_suffix = true;
+        render_slot_contents_stream(data);
+    } else {
 #if !DM_LOCALE_PLAIN
-    fb_append_char(data, ']');
+        fb_append_char(data, ']');
 #endif
+    }
     start_feedback(data, DM_STATE_IDLE, slot_idx);
 }
 
@@ -1072,7 +1163,12 @@ static void feedback_chain_insert(struct behavior_dynamic_macro_data *data, int 
 
     data->status_mode = false;
     fb_reset(data);
-    render_slot_contents(data, slot);
+    data->preview_slot = slot;
+    data->preview_idx = 0;
+    data->preview_mods = 0;
+    data->preview_done = false;
+    data->needs_suffix = false;
+    render_slot_contents_stream(data);
     start_feedback(data, DM_STATE_RECORDING, -1);
 }
 
@@ -1261,7 +1357,7 @@ static int delete_slot_from_storage(struct behavior_dynamic_macro_data *data, in
 /*
  * Unified emit handler for both macro playback and feedback typing.
  * Playback emits recorded dm_events directly; feedback emits fb_events
- * with explicit press/release phases.
+ * from ring buffer with streaming refill for previews.
  */
 static void emit_work_handler(struct k_work *work) {
     struct behavior_dynamic_macro_data *data =
@@ -1305,12 +1401,33 @@ static void emit_work_handler(struct k_work *work) {
 
 #if DM_TYPING_ENABLED
     if (data->state == DM_STATE_TYPING_FEEDBACK) {
-        if (data->feedback_pos >= data->feedback_len) {
+        /* Refill ring from streaming preview if needed */
+        if (ring_empty(data) && !data->preview_done) {
+            bool more = render_slot_contents_stream(data);
+            if (!more) {
+                data->preview_done = true;
+                if (data->needs_suffix) {
+                    /* feedback_saved suffix */
+                    fb_append_str(data, DM_MSG_PREVIEW_END);
+#if !DM_LOCALE_PLAIN
+                    fb_append_char(data, ']');
+#endif
+                    data->needs_suffix = false;
+                } else if (data->status_mode && data->status_current_slot >= 0) {
+                    /* status slot suffix */
+                    status_slot_suffix(data, data->status_current_slot);
+                    data->status_current_slot = -1;
+                }
+            }
+        }
+
+        if (ring_empty(data)) {
             feedback_complete(data);
             return;
         }
 
-        const struct fb_event *ev = &data->feedback_buf[data->feedback_pos];
+        /* Peek at tail without removing */
+        struct fb_event *ev = &data->ring[data->ring_tail];
         struct zmk_keycode_state_changed kc = {
             .usage_page = HID_USAGE_KEY,
             .keycode = ev->keycode,
@@ -1326,7 +1443,8 @@ static void emit_work_handler(struct k_work *work) {
             data->feedback_press_phase = false;
         } else {
             data->feedback_press_phase = true;
-            data->feedback_pos++;
+            /* Advance tail after both press and release */
+            data->ring_tail = (data->ring_tail + 1) & (FB_RING_SIZE - 1);
         }
 
         k_timer_start(&data->emit_timer, K_MSEC(TAP_DELAY), K_NO_WAIT);
@@ -1678,6 +1796,8 @@ static int behavior_dynamic_macro_init(const struct device *dev) {
 #endif
 #if DM_TYPING_ENABLED
     data->feedback_post_save_slot = -1;
+    data->status_current_slot = -1;
+    data->preview_done = true;
 #endif
 
     LOG_DBG("Dynamic macro behavior initialized (%d slots, %d max events)",

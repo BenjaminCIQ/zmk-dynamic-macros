@@ -73,7 +73,7 @@ struct dm_slot {
 };
 
 #if DM_TYPING_ENABLED
-#define FEEDBACK_BUF_LEN 512
+#define FB_RING_SIZE 64
 
 struct fb_event {
     uint16_t keycode;
@@ -100,18 +100,20 @@ struct behavior_dynamic_macro_data {
     struct k_work emit_work;
     bool suppress_recording;
 #if DM_TYPING_ENABLED
-    struct fb_event feedback_buf[FEEDBACK_BUF_LEN];
-    int feedback_len;
-    int feedback_pos;
+    struct fb_event ring[FB_RING_SIZE];
+    uint8_t ring_head;
+    uint8_t ring_tail;
     bool feedback_press_phase;
     enum dm_state feedback_return_state;
     int feedback_post_save_slot;
     bool status_mode;
     int status_next_slot;
+    int status_current_slot;
     const struct dm_slot *preview_slot;
-    uint32_t preview_event_idx;
-    uint8_t preview_active_mods;
-    bool preview_in_token;
+    uint32_t preview_idx;
+    uint8_t preview_mods;
+    bool preview_done;
+    bool needs_suffix;
 #endif
 };
 
