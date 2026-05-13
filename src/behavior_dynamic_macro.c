@@ -207,6 +207,35 @@ static char slot_storage_prefix(int slot_idx) {
 }
 
 /* -------------------------------------------------------------------------- */
+/*  NVS Persistence                                                           */
+/* -------------------------------------------------------------------------- */
+
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_PERSIST)
+
+static void save_slot(struct behavior_dynamic_macro_data *data, int slot_idx) {
+    dm_storage_save_slot(data, slot_idx);
+}
+
+static int delete_slot_from_storage(struct behavior_dynamic_macro_data *data, int slot_idx) {
+    return dm_storage_delete_slot(data, slot_idx);
+}
+
+#else /* !CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_PERSIST */
+
+static void save_slot(struct behavior_dynamic_macro_data *data, int slot_idx) {
+    (void)data;
+    (void)slot_idx;
+}
+
+static int delete_slot_from_storage(struct behavior_dynamic_macro_data *data, int slot_idx) {
+    (void)data;
+    (void)slot_idx;
+    return 0;
+}
+
+#endif /* CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_PERSIST */
+
+/* -------------------------------------------------------------------------- */
 /*  Feedback: text output via simulated keystrokes                            */
 /* -------------------------------------------------------------------------- */
 
@@ -570,6 +599,10 @@ static const char *action_name(uint16_t usage_page, uint32_t keycode) {
 
 #define MOD_SHIFT_MASK (0x02 | 0x20)
 #define MOD_NON_SHIFT_MASK (~MOD_SHIFT_MASK & 0xFF)
+
+static bool is_mod(uint16_t usage_page, uint32_t keycode) {
+    return usage_page == HID_USAGE_KEY && keycode >= 0xE0 && keycode <= 0xE7;
+}
 
 static bool is_replayable_event(const struct dm_event *ev, uint8_t active_mods) {
     if (ev->usage_page != HID_USAGE_KEY) {
@@ -1322,35 +1355,6 @@ static void feedback_chain_no_room(struct behavior_dynamic_macro_data *data, int
 #endif /* DM_TYPING_ENABLED */
 
 /* -------------------------------------------------------------------------- */
-/*  NVS Persistence                                                           */
-/* -------------------------------------------------------------------------- */
-
-#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_PERSIST)
-
-static void save_slot(struct behavior_dynamic_macro_data *data, int slot_idx) {
-    dm_storage_save_slot(data, slot_idx);
-}
-
-static int delete_slot_from_storage(struct behavior_dynamic_macro_data *data, int slot_idx) {
-    return dm_storage_delete_slot(data, slot_idx);
-}
-
-#else /* !CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_PERSIST */
-
-static void save_slot(struct behavior_dynamic_macro_data *data, int slot_idx) {
-    (void)data;
-    (void)slot_idx;
-}
-
-static int delete_slot_from_storage(struct behavior_dynamic_macro_data *data, int slot_idx) {
-    (void)data;
-    (void)slot_idx;
-    return 0;
-}
-
-#endif /* CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_PERSIST */
-
-/* -------------------------------------------------------------------------- */
 /*  Unified emit pump (playback + feedback typing)                            */
 /* -------------------------------------------------------------------------- */
 
@@ -1727,6 +1731,9 @@ static const struct behavior_driver_api behavior_dynamic_macro_driver_api = {
 /* -------------------------------------------------------------------------- */
 /*  Event listener: capture keycode events during recording                   */
 /* -------------------------------------------------------------------------- */
+
+#define DM_DEVICE(inst) DEVICE_DT_INST_GET(inst),
+static const struct device *dm_devices[] = {DT_INST_FOREACH_STATUS_OKAY(DM_DEVICE)};
 
 static int dm_event_listener(const zmk_event_t *eh) {
     const struct zmk_keycode_state_changed *ev = as_zmk_keycode_state_changed(eh);
