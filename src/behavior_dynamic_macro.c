@@ -221,24 +221,59 @@ static bool feedback_enabled(int level) {
     return DM_FEEDBACK_LEVEL >= level;
 }
 
+static struct hid_keycode letter_to_hid(char c, bool upper) {
+    uint8_t keycode = 0x04 + (c - 'a');
+
+#if DM_LOCALE == DM_LOCALE_DE
+    if (c == 'y') {
+        keycode = 0x1D; /* Z position */
+    } else if (c == 'z') {
+        keycode = 0x1C; /* Y position */
+    }
+#elif DM_LOCALE == DM_LOCALE_FR
+    if (c == 'a') {
+        keycode = 0x14; /* Q position */
+    } else if (c == 'q') {
+        keycode = 0x04; /* A position */
+    } else if (c == 'w') {
+        keycode = 0x1D; /* Z position */
+    } else if (c == 'z') {
+        keycode = 0x1A; /* W position */
+    } else if (c == 'm') {
+        keycode = 0x33; /* semicolon position */
+    }
+#endif
+
+    return (struct hid_keycode){.keycode = keycode, .shift = upper};
+}
+
+static struct hid_keycode digit_to_hid(char c) {
+    uint8_t keycode = (c == '0') ? 0x27 : (0x1E + (c - '1'));
+
+#if DM_LOCALE == DM_LOCALE_FR
+    return (struct hid_keycode){.keycode = keycode, .shift = true};
+#else
+    return (struct hid_keycode){.keycode = keycode, .shift = false};
+#endif
+}
+
 static struct hid_keycode ascii_to_hid(char c) {
     if (c >= 'a' && c <= 'z') {
-        return (struct hid_keycode){.keycode = 0x04 + (c - 'a'), .shift = false};
+        return letter_to_hid(c, false);
     }
     if (c >= 'A' && c <= 'Z') {
-        return (struct hid_keycode){.keycode = 0x04 + (c - 'A'), .shift = true};
+        return letter_to_hid(c - 'A' + 'a', true);
     }
-    if (c >= '1' && c <= '9') {
-        return (struct hid_keycode){.keycode = 0x1E + (c - '1'), .shift = false};
+    if (c >= '0' && c <= '9') {
+        return digit_to_hid(c);
     }
-    if (c == '0') {
-        return (struct hid_keycode){.keycode = 0x27, .shift = false};
-    }
+
     switch (c) {
     case ' ':
         return (struct hid_keycode){.keycode = 0x2C, .shift = false};
     case '\n':
         return (struct hid_keycode){.keycode = 0x28, .shift = false};
+#if !DM_LOCALE_PLAIN
     case '[':
         return (struct hid_keycode){.keycode = 0x2F, .shift = false};
     case ']':
@@ -303,8 +338,9 @@ static struct hid_keycode ascii_to_hid(char c) {
         return (struct hid_keycode){.keycode = 0x35, .shift = false};
     case '~':
         return (struct hid_keycode){.keycode = 0x35, .shift = true};
+#endif
     default:
-        return (struct hid_keycode){.keycode = 0x38, .shift = true}; /* '?' for unknown */
+        return (struct hid_keycode){.keycode = 0x2C, .shift = false}; /* space for unknown */
     }
 }
 
@@ -337,6 +373,52 @@ static void fb_append_str(struct behavior_dynamic_macro_data *data, const char *
         fb_append_char(data, *p);
     }
 }
+
+#if DM_LOCALE_PLAIN
+#define DM_MSG_REC       "DM REC"
+#define DM_MSG_STOP      "DM STOP"
+#define DM_MSG_SAVED     "DM SAVED "
+#define DM_MSG_SLOT      "DM SLOT "
+#define DM_MSG_DEL       "DM DEL "
+#define DM_MSG_DEL_FAIL  "DM DEL FAILED"
+#define DM_MSG_SAVE_FAIL "DM SAVE FAILED "
+#define DM_MSG_SAVE_FULL "DM SAVE QUEUE FULL "
+#define DM_MSG_DEL_FULL  "DM DEL QUEUE FULL "
+#define DM_MSG_EMPTY     " EMPTY"
+#define DM_MSG_FULL      "DM FULL"
+#define DM_MSG_MOV       "DM MOV"
+#define DM_MSG_MOV_SRC   "DM MOV SRC "
+#define DM_MSG_MOV_DEST  "DM MOV "
+#define DM_MSG_MOV_CANCEL "DM MOV CANCEL"
+#define DM_MSG_CHAIN     "DM PLUS"
+#define DM_MSG_PREVIEW_START ""
+#define DM_MSG_PREVIEW_END   ""
+#define DM_MSG_SLOT_START ""
+#define DM_MSG_SLOT_END   ""
+#define DM_MSG_EVENTS    " EVENTS"
+#else
+#define DM_MSG_REC       "[DM REC]"
+#define DM_MSG_STOP      "[DM STOP]"
+#define DM_MSG_SAVED     "[DM SAVED "
+#define DM_MSG_SLOT      "[DM SLOT "
+#define DM_MSG_DEL       "[DM DEL "
+#define DM_MSG_DEL_FAIL  " FAILED]"
+#define DM_MSG_SAVE_FAIL "[DM SAVE FAILED "
+#define DM_MSG_SAVE_FULL "[DM SAVE QUEUE FULL "
+#define DM_MSG_DEL_FULL  "[DM DEL QUEUE FULL "
+#define DM_MSG_EMPTY     ": -]"
+#define DM_MSG_FULL      "[DM FULL]"
+#define DM_MSG_MOV       "[DM MOV]"
+#define DM_MSG_MOV_SRC   "[DM MOV SRC "
+#define DM_MSG_MOV_DEST  "[DM MOV "
+#define DM_MSG_MOV_CANCEL "[DM MOV CANCEL]"
+#define DM_MSG_CHAIN     "[DM +"
+#define DM_MSG_PREVIEW_START ": '"
+#define DM_MSG_PREVIEW_END   "'"
+#define DM_MSG_SLOT_START "["
+#define DM_MSG_SLOT_END   "]"
+#define DM_MSG_EVENTS    ""
+#endif
 
 static void fb_append_number(struct behavior_dynamic_macro_data *data, int n) {
     char buf[8];
@@ -471,7 +553,11 @@ static bool render_modifiers(struct behavior_dynamic_macro_data *data, uint8_t m
     for (int i = 0; i < 8; i++) {
         if (mods & mod_bits[i]) {
             if (!first) {
+#if DM_LOCALE_PLAIN
+                fb_append_char(data, ' ');
+#else
                 fb_append_char(data, '+');
+#endif
             }
             fb_append_str(data, mod_names[i]);
             first = false;
@@ -482,12 +568,20 @@ static bool render_modifiers(struct behavior_dynamic_macro_data *data, uint8_t m
 
 static void render_action_token(struct behavior_dynamic_macro_data *data, uint8_t mods,
                                 uint16_t usage_page, uint32_t keycode) {
+#if !DM_LOCALE_PLAIN
     fb_append_char(data, '<');
+#endif
     if (render_modifiers(data, mods)) {
+#if DM_LOCALE_PLAIN
+        fb_append_char(data, ' ');
+#else
         fb_append_char(data, '+');
+#endif
     }
     fb_append_str(data, action_name(usage_page, keycode));
+#if !DM_LOCALE_PLAIN
     fb_append_char(data, '>');
+#endif
 }
 
 static void render_slot_contents(struct behavior_dynamic_macro_data *data,
@@ -541,15 +635,33 @@ static int filled_slot_count(struct behavior_dynamic_macro_data *data) {
 static void render_status_slot(struct behavior_dynamic_macro_data *data, int slot_idx) {
     fb_append_char(data, slot_storage_prefix(slot_idx));
     fb_append_number(data, slot_idx);
+#if DM_LOCALE_PLAIN
+    fb_append_char(data, ' ');
+#else
     fb_append_str(data, ": ");
+#endif
     if (slot_is_empty(data, slot_idx)) {
+#if DM_LOCALE_PLAIN
+        fb_append_str(data, "EMPTY");
+#else
         fb_append_char(data, '-');
+#endif
     } else {
+#if !DM_LOCALE_PLAIN
         fb_append_char(data, '\'');
+#endif
         render_slot_contents(data, &data->slots[slot_idx]);
+#if DM_LOCALE_PLAIN
+        fb_append_char(data, ' ');
+#else
         fb_append_str(data, "' (");
+#endif
         fb_append_number(data, data->slots[slot_idx].event_count);
+#if DM_LOCALE_PLAIN
+        fb_append_str(data, " EVENTS");
+#else
         fb_append_char(data, ')');
+#endif
     }
     fb_append_char(data, '\n');
 }
@@ -651,7 +763,7 @@ static void feedback_rec(struct behavior_dynamic_macro_data *data) {
 
     data->status_mode = false;
     fb_reset(data);
-    fb_append_str(data, "[DM REC]");
+    fb_append_str(data, DM_MSG_REC);
     start_feedback(data, DM_STATE_RECORDING, -1);
 }
 
@@ -665,7 +777,7 @@ static void feedback_stop(struct behavior_dynamic_macro_data *data) {
 
     data->status_mode = false;
     fb_reset(data);
-    fb_append_str(data, "[DM STOP]");
+    fb_append_str(data, DM_MSG_STOP);
     start_feedback(data, DM_STATE_PENDING_ASSIGN, -1);
 }
 
@@ -679,15 +791,17 @@ static void feedback_saved(struct behavior_dynamic_macro_data *data, int slot_id
 
     data->status_mode = false;
     fb_reset(data);
-    fb_append_str(data, "[DM SAVED ");
+    fb_append_str(data, DM_MSG_SAVED);
     fb_append_char(data, slot_storage_prefix(slot_idx));
     fb_append_number(data, slot_idx);
     if (feedback_enabled(DM_FEEDBACK_VERBOSE)) {
-        fb_append_str(data, ": '");
+        fb_append_str(data, DM_MSG_PREVIEW_START);
         render_slot_contents(data, slot);
-        fb_append_str(data, "'");
+        fb_append_str(data, DM_MSG_PREVIEW_END);
     }
+#if !DM_LOCALE_PLAIN
     fb_append_char(data, ']');
+#endif
     start_feedback(data, DM_STATE_IDLE, slot_idx);
 }
 
@@ -704,10 +818,14 @@ static void feedback_slot_full(struct behavior_dynamic_macro_data *data, int slo
 
     data->status_mode = false;
     fb_reset(data);
-    fb_append_str(data, "[DM SLOT ");
+    fb_append_str(data, DM_MSG_SLOT);
     fb_append_char(data, slot_storage_prefix(slot_idx));
     fb_append_number(data, slot_idx);
+#if DM_LOCALE_PLAIN
+    fb_append_str(data, " FULL");
+#else
     fb_append_str(data, " FULL]");
+#endif
     start_feedback(data, return_state, -1);
 }
 
@@ -719,10 +837,12 @@ void dm_feedback_deleted(struct behavior_dynamic_macro_data *data, int slot_idx)
 
     data->status_mode = false;
     fb_reset(data);
-    fb_append_str(data, "[DM DEL ");
+    fb_append_str(data, DM_MSG_DEL);
     fb_append_char(data, slot_storage_prefix(slot_idx));
     fb_append_number(data, slot_idx);
+#if !DM_LOCALE_PLAIN
     fb_append_str(data, "]");
+#endif
     start_feedback(data, DM_STATE_IDLE, -1);
 }
 
@@ -734,10 +854,10 @@ void dm_feedback_delete_failed(struct behavior_dynamic_macro_data *data, int slo
 
     data->status_mode = false;
     fb_reset(data);
-    fb_append_str(data, "[DM DEL ");
+    fb_append_str(data, DM_MSG_DEL);
     fb_append_char(data, slot_storage_prefix(slot_idx));
     fb_append_number(data, slot_idx);
-    fb_append_str(data, " FAILED]");
+    fb_append_str(data, DM_MSG_DEL_FAIL);
     start_feedback(data, DM_STATE_IDLE, -1);
 }
 
@@ -748,10 +868,12 @@ void dm_feedback_save_failed(struct behavior_dynamic_macro_data *data, int slot_
 
     data->status_mode = false;
     fb_reset(data);
-    fb_append_str(data, "[DM SAVE FAILED ");
+    fb_append_str(data, DM_MSG_SAVE_FAIL);
     fb_append_char(data, slot_storage_prefix(slot_idx));
     fb_append_number(data, slot_idx);
+#if !DM_LOCALE_PLAIN
     fb_append_char(data, ']');
+#endif
     start_feedback(data, DM_STATE_IDLE, -1);
 }
 
@@ -762,10 +884,12 @@ void dm_feedback_save_queue_full(struct behavior_dynamic_macro_data *data, int s
 
     data->status_mode = false;
     fb_reset(data);
-    fb_append_str(data, "[DM SAVE QUEUE FULL ");
+    fb_append_str(data, DM_MSG_SAVE_FULL);
     fb_append_char(data, slot_storage_prefix(slot_idx));
     fb_append_number(data, slot_idx);
+#if !DM_LOCALE_PLAIN
     fb_append_char(data, ']');
+#endif
     start_feedback(data, DM_STATE_IDLE, -1);
 }
 
@@ -777,10 +901,12 @@ void dm_feedback_delete_queue_full(struct behavior_dynamic_macro_data *data, int
 
     data->status_mode = false;
     fb_reset(data);
-    fb_append_str(data, "[DM DEL QUEUE FULL ");
+    fb_append_str(data, DM_MSG_DEL_FULL);
     fb_append_char(data, slot_storage_prefix(slot_idx));
     fb_append_number(data, slot_idx);
+#if !DM_LOCALE_PLAIN
     fb_append_char(data, ']');
+#endif
     start_feedback(data, DM_STATE_IDLE, -1);
 }
 
@@ -799,10 +925,10 @@ static void feedback_slot_empty(struct behavior_dynamic_macro_data *data, int sl
 
     data->status_mode = false;
     fb_reset(data);
-    fb_append_str(data, "[DM SLOT ");
+    fb_append_str(data, DM_MSG_SLOT);
     fb_append_char(data, slot_storage_prefix(slot_idx));
     fb_append_number(data, slot_idx);
-    fb_append_str(data, " EMPTY]");
+    fb_append_str(data, DM_MSG_EMPTY);
     start_feedback(data, return_state, -1);
 }
 
@@ -816,7 +942,7 @@ static void feedback_overflow(struct behavior_dynamic_macro_data *data) {
 
     data->status_mode = false;
     fb_reset(data);
-    fb_append_str(data, "[DM FULL]");
+    fb_append_str(data, DM_MSG_FULL);
     start_feedback(data, DM_STATE_PENDING_ASSIGN, -1);
 }
 
@@ -829,25 +955,49 @@ static void feedback_status(struct behavior_dynamic_macro_data *data) {
     data->status_mode = feedback_enabled(DM_FEEDBACK_VERBOSE) && MAX_SLOTS > 0;
     data->status_next_slot = 1;
     fb_reset(data);
+#if DM_LOCALE_PLAIN
+    fb_append_str(data, "DM ");
+#else
     fb_append_str(data, "[DM ");
+#endif
     fb_append_number(data, filled_slot_count(data));
+#if DM_LOCALE_PLAIN
+    fb_append_str(data, " OF ");
+#else
     fb_append_char(data, '/');
+#endif
     fb_append_number(data, MAX_SLOTS);
     if (MAX_SLOTS == 0) {
         fb_append_str(data, " NO SLOTS");
     } else if (NVS_SLOTS > 0 && NVS_SLOTS < MAX_SLOTS) {
+#if DM_LOCALE_PLAIN
+        fb_append_str(data, " NVS 0 TO ");
+#else
         fb_append_str(data, " NVS:0-");
+#endif
         fb_append_number(data, NVS_SLOTS - 1);
+#if DM_LOCALE_PLAIN
+        fb_append_str(data, " RAM ");
+#else
         fb_append_str(data, " RAM:");
+#endif
         fb_append_number(data, NVS_SLOTS);
+#if DM_LOCALE_PLAIN
+        fb_append_str(data, " TO ");
+#else
         fb_append_char(data, '-');
+#endif
         fb_append_number(data, MAX_SLOTS - 1);
     } else if (NVS_SLOTS == 0) {
         fb_append_str(data, " RAM");
     } else {
         fb_append_str(data, " NVS");
     }
+#if !DM_LOCALE_PLAIN
     fb_append_str(data, "]\n");
+#else
+    fb_append_char(data, '\n');
+#endif
     if (data->status_mode) {
         render_status_slot(data, 0);
     }
@@ -862,7 +1012,7 @@ static void feedback_move_prompt(struct behavior_dynamic_macro_data *data) {
 
     data->status_mode = false;
     fb_reset(data);
-    fb_append_str(data, "[DM MOV]");
+    fb_append_str(data, DM_MSG_MOV);
     start_feedback(data, DM_STATE_MOVE_PENDING, -1);
 }
 
@@ -874,10 +1024,12 @@ static void feedback_move_source_selected(struct behavior_dynamic_macro_data *da
 
     data->status_mode = false;
     fb_reset(data);
-    fb_append_str(data, "[DM MOV SRC ");
+    fb_append_str(data, DM_MSG_MOV_SRC);
     fb_append_char(data, slot_storage_prefix(slot_idx));
     fb_append_number(data, slot_idx);
+#if !DM_LOCALE_PLAIN
     fb_append_char(data, ']');
+#endif
     start_feedback(data, DM_STATE_MOVE_PENDING, -1);
 }
 
@@ -889,13 +1041,19 @@ static void feedback_moved(struct behavior_dynamic_macro_data *data, int src, in
 
     data->status_mode = false;
     fb_reset(data);
-    fb_append_str(data, "[DM MOV ");
+    fb_append_str(data, DM_MSG_MOV_DEST);
     fb_append_char(data, slot_storage_prefix(src));
     fb_append_number(data, src);
+#if DM_LOCALE_PLAIN
+    fb_append_str(data, " TO ");
+#else
     fb_append_str(data, "->");
+#endif
     fb_append_char(data, slot_storage_prefix(dst));
     fb_append_number(data, dst);
+#if !DM_LOCALE_PLAIN
     fb_append_char(data, ']');
+#endif
     start_feedback(data, DM_STATE_IDLE, -1);
 }
 
@@ -907,7 +1065,7 @@ static void feedback_move_cancelled(struct behavior_dynamic_macro_data *data) {
 
     data->status_mode = false;
     fb_reset(data);
-    fb_append_str(data, "[DM MOV CANCEL]");
+    fb_append_str(data, DM_MSG_MOV_CANCEL);
     start_feedback(data, DM_STATE_IDLE, -1);
 }
 
@@ -929,10 +1087,10 @@ static void feedback_chain_empty(struct behavior_dynamic_macro_data *data, int s
 
     data->status_mode = false;
     fb_reset(data);
-    fb_append_str(data, "[DM SLOT ");
+    fb_append_str(data, DM_MSG_SLOT);
     fb_append_char(data, slot_storage_prefix(slot_idx));
     fb_append_number(data, slot_idx);
-    fb_append_str(data, " EMPTY]");
+    fb_append_str(data, DM_MSG_EMPTY);
     start_feedback(data, DM_STATE_RECORDING, -1);
 }
 
