@@ -1600,7 +1600,7 @@ static void cmd_slot(struct behavior_dynamic_macro_data *data, int slot_idx) {
             }
 
             data->slots[slot_idx].event_count = 0;
-            feedback_deleted(data, slot_idx);
+            dm_feedback_deleted(data, slot_idx);
         }
         LOG_DBG("Slot %d cleared", slot_idx);
         break;
