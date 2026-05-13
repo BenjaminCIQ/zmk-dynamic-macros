@@ -87,8 +87,8 @@ struct behavior_dynamic_macro_data {
     int move_source_slot;
     int playback_slot;
     uint32_t playback_event;
-    struct k_timer playback_timer;
-    struct k_work playback_work;
+    struct k_timer emit_timer;
+    struct k_work emit_work;
     bool suppress_recording;
 #if DM_FEEDBACK_LEVEL > DM_FEEDBACK_OFF
     struct fb_event feedback_buf[FEEDBACK_BUF_LEN];
@@ -99,8 +99,6 @@ struct behavior_dynamic_macro_data {
     int feedback_post_save_slot;
     bool status_mode;
     int status_next_slot;
-    struct k_timer feedback_timer;
-    struct k_work feedback_work;
 #endif
 };
 

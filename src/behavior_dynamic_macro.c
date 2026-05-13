@@ -671,7 +671,7 @@ static void feedback_complete(struct behavior_dynamic_macro_data *data) {
         fb_reset(data);
         render_status_slot(data, data->status_next_slot);
         data->status_next_slot++;
-        k_timer_start(&data->feedback_timer, K_NO_WAIT, K_NO_WAIT);
+        k_timer_start(&data->emit_timer, K_NO_WAIT, K_NO_WAIT);
         return;
     }
 
@@ -696,48 +696,6 @@ static void feedback_complete(struct behavior_dynamic_macro_data *data) {
     }
 }
 
-static void feedback_work_handler(struct k_work *work) {
-    struct behavior_dynamic_macro_data *data =
-        CONTAINER_OF(work, struct behavior_dynamic_macro_data, feedback_work);
-
-    if (data->state != DM_STATE_TYPING_FEEDBACK) {
-        return;
-    }
-
-    if (data->feedback_pos >= data->feedback_len) {
-        feedback_complete(data);
-        return;
-    }
-
-    const struct fb_event *ev = &data->feedback_buf[data->feedback_pos];
-    struct zmk_keycode_state_changed kc = {
-        .usage_page = HID_USAGE_KEY,
-        .keycode = ev->keycode,
-        .implicit_modifiers = ev->mods,
-        .explicit_modifiers = 0,
-        .state = data->feedback_press_phase,
-        .timestamp = k_uptime_get(),
-    };
-
-    raise_zmk_keycode_state_changed(kc);
-
-    if (data->feedback_press_phase) {
-        data->feedback_press_phase = false;
-    } else {
-        data->feedback_press_phase = true;
-        data->feedback_pos++;
-    }
-
-    k_timer_start(&data->feedback_timer, K_MSEC(TAP_DELAY), K_NO_WAIT);
-}
-
-static void feedback_timer_handler(struct k_timer *timer) {
-    struct behavior_dynamic_macro_data *data =
-        CONTAINER_OF(timer, struct behavior_dynamic_macro_data, feedback_timer);
-
-    k_work_submit(&data->feedback_work);
-}
-
 static void start_feedback(struct behavior_dynamic_macro_data *data, enum dm_state return_state,
                            int post_save_slot) {
     data->feedback_return_state = return_state;
@@ -752,7 +710,7 @@ static void start_feedback(struct behavior_dynamic_macro_data *data, enum dm_sta
         return;
     }
 
-    k_timer_start(&data->feedback_timer, K_NO_WAIT, K_NO_WAIT);
+    k_timer_start(&data->emit_timer, K_NO_WAIT, K_NO_WAIT);
 }
 
 static void feedback_rec(struct behavior_dynamic_macro_data *data) {
@@ -1258,56 +1216,91 @@ static int delete_slot_from_storage(struct behavior_dynamic_macro_data *data, in
 #endif /* CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_PERSIST */
 
 /* -------------------------------------------------------------------------- */
-/*  Playback timer                                                            */
+/*  Unified emit pump (playback + feedback typing)                            */
 /* -------------------------------------------------------------------------- */
 
 /*
- * Dynamic macros record HID keycode events, not behavior bindings. Playback
- * raises the same raw events intentionally instead of using behavior_queue.
+ * Unified emit handler for both macro playback and feedback typing.
+ * Playback emits recorded dm_events directly; feedback emits fb_events
+ * with explicit press/release phases.
  */
-static void playback_work_handler(struct k_work *work) {
+static void emit_work_handler(struct k_work *work) {
     struct behavior_dynamic_macro_data *data =
-        CONTAINER_OF(work, struct behavior_dynamic_macro_data, playback_work);
+        CONTAINER_OF(work, struct behavior_dynamic_macro_data, emit_work);
 
-    if (data->state != DM_STATE_PLAYING || data->playback_slot < 0) {
+    if (data->state == DM_STATE_PLAYING) {
+        if (data->playback_slot < 0) {
+            return;
+        }
+
+        struct dm_slot *slot = &data->slots[data->playback_slot];
+        if (data->playback_event >= slot->event_count) {
+            data->state = DM_STATE_IDLE;
+            data->playback_slot = -1;
+            k_timer_stop(&data->emit_timer);
+            return;
+        }
+
+        const struct dm_event *ev = &slot->events[data->playback_event++];
+
+        struct zmk_keycode_state_changed kc = {
+            .usage_page = ev->usage_page,
+            .keycode = ev->keycode,
+            .implicit_modifiers = ev->implicit_mods,
+            .explicit_modifiers = ev->explicit_mods,
+            .state = ev->pressed,
+            .timestamp = k_uptime_get(),
+        };
+
+        data->suppress_recording = true;
+        raise_zmk_keycode_state_changed(kc);
+        data->suppress_recording = false;
+
+        if (data->playback_event >= slot->event_count) {
+            data->state = DM_STATE_IDLE;
+            data->playback_slot = -1;
+            k_timer_stop(&data->emit_timer);
+        }
         return;
     }
 
-    struct dm_slot *slot = &data->slots[data->playback_slot];
-    if (data->playback_event >= slot->event_count) {
-        data->state = DM_STATE_IDLE;
-        data->playback_slot = -1;
-        k_timer_stop(&data->playback_timer);
+#if DM_FEEDBACK_LEVEL > DM_FEEDBACK_OFF
+    if (data->state == DM_STATE_TYPING_FEEDBACK) {
+        if (data->feedback_pos >= data->feedback_len) {
+            feedback_complete(data);
+            return;
+        }
+
+        const struct fb_event *ev = &data->feedback_buf[data->feedback_pos];
+        struct zmk_keycode_state_changed kc = {
+            .usage_page = HID_USAGE_KEY,
+            .keycode = ev->keycode,
+            .implicit_modifiers = ev->mods,
+            .explicit_modifiers = 0,
+            .state = data->feedback_press_phase,
+            .timestamp = k_uptime_get(),
+        };
+
+        raise_zmk_keycode_state_changed(kc);
+
+        if (data->feedback_press_phase) {
+            data->feedback_press_phase = false;
+        } else {
+            data->feedback_press_phase = true;
+            data->feedback_pos++;
+        }
+
+        k_timer_start(&data->emit_timer, K_MSEC(TAP_DELAY), K_NO_WAIT);
         return;
     }
-
-    const struct dm_event *ev = &slot->events[data->playback_event++];
-
-    struct zmk_keycode_state_changed kc = {
-        .usage_page = ev->usage_page,
-        .keycode = ev->keycode,
-        .implicit_modifiers = ev->implicit_mods,
-        .explicit_modifiers = ev->explicit_mods,
-        .state = ev->pressed,
-        .timestamp = k_uptime_get(),
-    };
-
-    data->suppress_recording = true;
-    raise_zmk_keycode_state_changed(kc);
-    data->suppress_recording = false;
-
-    if (data->playback_event >= slot->event_count) {
-        data->state = DM_STATE_IDLE;
-        data->playback_slot = -1;
-        k_timer_stop(&data->playback_timer);
-    }
+#endif
 }
 
-static void playback_timer_handler(struct k_timer *timer) {
+static void emit_timer_handler(struct k_timer *timer) {
     struct behavior_dynamic_macro_data *data =
-        CONTAINER_OF(timer, struct behavior_dynamic_macro_data, playback_timer);
+        CONTAINER_OF(timer, struct behavior_dynamic_macro_data, emit_timer);
 
-    k_work_submit(&data->playback_work);
+    k_work_submit(&data->emit_work);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1508,7 +1501,7 @@ static void cmd_slot(struct behavior_dynamic_macro_data *data, int slot_idx) {
         data->playback_slot = slot_idx;
         data->playback_event = 0;
         LOG_DBG("Playing slot %d (%d events)", slot_idx, data->slots[slot_idx].event_count);
-        k_timer_start(&data->playback_timer, K_NO_WAIT, K_MSEC(TAP_DELAY));
+        k_timer_start(&data->emit_timer, K_NO_WAIT, K_MSEC(TAP_DELAY));
         break;
 
     default:
@@ -1639,14 +1632,12 @@ static int behavior_dynamic_macro_init(const struct device *dev) {
     data->playback_slot = -1;
 
     k_work_init_delayable(&data->assign_timeout_work, assign_timeout_handler);
-    k_work_init(&data->playback_work, playback_work_handler);
-    k_timer_init(&data->playback_timer, playback_timer_handler, NULL);
+    k_work_init(&data->emit_work, emit_work_handler);
+    k_timer_init(&data->emit_timer, emit_timer_handler, NULL);
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_PERSIST)
     dm_storage_init();
 #endif
 #if DM_FEEDBACK_LEVEL > DM_FEEDBACK_OFF
-    k_work_init(&data->feedback_work, feedback_work_handler);
-    k_timer_init(&data->feedback_timer, feedback_timer_handler, NULL);
     data->feedback_post_save_slot = -1;
 #endif
 
