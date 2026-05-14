@@ -22,6 +22,9 @@
 #include <dt-bindings/zmk/hid_usage_pages.h>
 #include <dt-bindings/zmk/dynamic_macros.h>
 #include <dm_internal.h>
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
+#include <zmk/events/dynamic_macro_state_changed.h>
+#endif
 
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
@@ -54,8 +57,8 @@ BUILD_ASSERT(MAX_SLOTS <= 64, "Dynamic macros support at most 64 total slots");
 
 #define DM_VALIDATE_CMD_RANGE(idx, layer)                                                         \
     COND_CODE_1(DM_IS_DM_BINDING(idx, layer),                                                     \
-                (BUILD_ASSERT(DT_PHA_BY_IDX(layer, bindings, idx, param1) <= DM_SLOT_RAM,         \
-                              "Dynamic macro param1 is not a valid command (expected 0-6)");),    \
+                (BUILD_ASSERT(DT_PHA_BY_IDX(layer, bindings, idx, param1) <= DM_PREVIEW,          \
+                              "Dynamic macro param1 is not a valid command (expected 0-7)");),    \
                 ())
 
 #define DM_VALIDATE_CMD_NO_PARAM2(idx, layer, command)                                            \
@@ -75,7 +78,8 @@ BUILD_ASSERT(MAX_SLOTS <= 64, "Dynamic macros support at most 64 total slots");
     DM_VALIDATE_SLOT_CMD(idx, layer, DM_SLOT_NVS, NVS_SLOTS,                                      \
                          "DM_SLOT_NVS index exceeds configured NVS dynamic macro slots")          \
     DM_VALIDATE_SLOT_CMD(idx, layer, DM_SLOT_RAM, RAM_SLOTS,                                      \
-                         "DM_SLOT_RAM index exceeds configured RAM dynamic macro slots")
+                         "DM_SLOT_RAM index exceeds configured RAM dynamic macro slots")          \
+    DM_VALIDATE_CMD_NO_PARAM2(idx, layer, DM_PREVIEW)
 
 #define DM_VALIDATE_KEYMAP_LAYER(layer)                                                           \
     COND_CODE_1(DT_NODE_HAS_PROP(layer, bindings),                                                \
@@ -118,6 +122,11 @@ static const struct behavior_parameter_value_metadata dm_param_slot_nvs[] = {
 #if RAM_SLOTS > 0
 static const struct behavior_parameter_value_metadata dm_param_slot_ram[] = {
     DM_COMMAND_VALUE("RAM Slot", DM_SLOT_RAM),
+};
+#endif
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
+static const struct behavior_parameter_value_metadata dm_param_preview[] = {
+    DM_COMMAND_VALUE("Preview", DM_PREVIEW),
 };
 #endif
 static const struct behavior_parameter_value_metadata dm_param_unused[] = {
@@ -191,6 +200,14 @@ static const struct behavior_parameter_metadata_set dm_parameter_metadata_sets[]
         .param1_values = dm_param_slot_ram,
         .param2_values_len = ARRAY_SIZE(dm_param_ram_slot_index),
         .param2_values = dm_param_ram_slot_index,
+    },
+#endif
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
+    {
+        .param1_values_len = ARRAY_SIZE(dm_param_preview),
+        .param1_values = dm_param_preview,
+        .param2_values_len = ARRAY_SIZE(dm_param_unused),
+        .param2_values = dm_param_unused,
     },
 #endif
 };
@@ -745,6 +762,57 @@ static int filled_slot_count(struct behavior_dynamic_macro_data *data) {
     return filled;
 }
 
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
+
+static int filled_nvs_slot_count(struct behavior_dynamic_macro_data *data) {
+    int filled = 0;
+
+    for (int i = 0; i < NVS_SLOTS; i++) {
+        if (!slot_is_empty(data, i)) {
+            filled++;
+        }
+    }
+
+    return filled;
+}
+
+static int filled_ram_slot_count(struct behavior_dynamic_macro_data *data) {
+    int filled = 0;
+
+    for (int i = NVS_SLOTS; i < MAX_SLOTS; i++) {
+        if (!slot_is_empty(data, i)) {
+            filled++;
+        }
+    }
+
+    return filled;
+}
+
+static void raise_dm_state_changed(struct behavior_dynamic_macro_data *data,
+                                   enum zmk_dynamic_macro_event_type event, int slot) {
+    enum zmk_dynamic_macro_state state;
+
+    switch (data->state) {
+    case DM_STATE_RECORDING:
+        state = ZMK_DYNAMIC_MACRO_STATE_RECORDING;
+        break;
+    case DM_STATE_PLAYING:
+        state = ZMK_DYNAMIC_MACRO_STATE_PLAYING;
+        break;
+    default:
+        state = ZMK_DYNAMIC_MACRO_STATE_IDLE;
+        break;
+    }
+
+    raise_zmk_dynamic_macro_state_changed((struct zmk_dynamic_macro_state_changed){
+        .state = state,
+        .event = event,
+        .slot = slot,
+        .slot_is_nvs = slot >= 0 ? slot_is_nvs(slot) : false,
+    });
+}
+#endif
+
 /*
  * Render status slot. For non-empty slots with preview, sets up streaming
  * and returns true (caller must handle streaming completion).
@@ -868,6 +936,9 @@ static void start_feedback(struct behavior_dynamic_macro_data *data, enum dm_sta
 }
 
 static void feedback_rec(struct behavior_dynamic_macro_data *data) {
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
+    raise_dm_state_changed(data, ZMK_DYNAMIC_MACRO_RECORDING_STARTED, -1);
+#endif
     if (!feedback_enabled(DM_FEEDBACK_BASIC)) {
         data->state = DM_STATE_RECORDING;
         return;
@@ -880,6 +951,9 @@ static void feedback_rec(struct behavior_dynamic_macro_data *data) {
 }
 
 static void feedback_stop(struct behavior_dynamic_macro_data *data) {
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
+    raise_dm_state_changed(data, ZMK_DYNAMIC_MACRO_RECORDING_STOPPED, -1);
+#endif
     if (!feedback_enabled(DM_FEEDBACK_BASIC)) {
         data->state = DM_STATE_PENDING_ASSIGN;
         k_work_reschedule(&data->assign_timeout_work,
@@ -895,6 +969,9 @@ static void feedback_stop(struct behavior_dynamic_macro_data *data) {
 
 static void feedback_saved(struct behavior_dynamic_macro_data *data, int slot_idx,
                            const struct dm_slot *slot) {
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
+    raise_dm_state_changed(data, ZMK_DYNAMIC_MACRO_SAVED, slot_idx);
+#endif
     if (!feedback_enabled(DM_FEEDBACK_BASIC)) {
         data->state = DM_STATE_IDLE;
         save_slot(data, slot_idx);
@@ -947,6 +1024,9 @@ static void feedback_slot_full(struct behavior_dynamic_macro_data *data, int slo
 }
 
 void dm_feedback_deleted(struct behavior_dynamic_macro_data *data, int slot_idx) {
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
+    raise_dm_state_changed(data, ZMK_DYNAMIC_MACRO_DELETED, slot_idx);
+#endif
     if (!feedback_enabled(DM_FEEDBACK_BASIC)) {
         data->state = DM_STATE_IDLE;
         return;
@@ -964,6 +1044,9 @@ void dm_feedback_deleted(struct behavior_dynamic_macro_data *data, int slot_idx)
 }
 
 void dm_feedback_delete_failed(struct behavior_dynamic_macro_data *data, int slot_idx) {
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
+    raise_dm_state_changed(data, ZMK_DYNAMIC_MACRO_ERROR_DELETE_FAILED, slot_idx);
+#endif
     if (!feedback_enabled(DM_FEEDBACK_ERROR)) {
         data->state = DM_STATE_IDLE;
         return;
@@ -979,6 +1062,9 @@ void dm_feedback_delete_failed(struct behavior_dynamic_macro_data *data, int slo
 }
 
 void dm_feedback_save_failed(struct behavior_dynamic_macro_data *data, int slot_idx) {
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
+    raise_dm_state_changed(data, ZMK_DYNAMIC_MACRO_ERROR_SAVE_FAILED, slot_idx);
+#endif
     if (!feedback_enabled(DM_FEEDBACK_ERROR) || data->state != DM_STATE_IDLE) {
         return;
     }
@@ -995,6 +1081,9 @@ void dm_feedback_save_failed(struct behavior_dynamic_macro_data *data, int slot_
 }
 
 void dm_feedback_save_queue_full(struct behavior_dynamic_macro_data *data, int slot_idx) {
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
+    raise_dm_state_changed(data, ZMK_DYNAMIC_MACRO_ERROR_QUEUE_FULL, slot_idx);
+#endif
     if (!feedback_enabled(DM_FEEDBACK_ERROR) || data->state != DM_STATE_IDLE) {
         return;
     }
@@ -1011,6 +1100,9 @@ void dm_feedback_save_queue_full(struct behavior_dynamic_macro_data *data, int s
 }
 
 void dm_feedback_delete_queue_full(struct behavior_dynamic_macro_data *data, int slot_idx) {
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
+    raise_dm_state_changed(data, ZMK_DYNAMIC_MACRO_ERROR_QUEUE_FULL, slot_idx);
+#endif
     if (!feedback_enabled(DM_FEEDBACK_ERROR)) {
         data->state = DM_STATE_IDLE;
         return;
@@ -1028,6 +1120,9 @@ void dm_feedback_delete_queue_full(struct behavior_dynamic_macro_data *data, int
 }
 
 static void feedback_slot_empty(struct behavior_dynamic_macro_data *data, int slot_idx) {
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
+    raise_dm_state_changed(data, ZMK_DYNAMIC_MACRO_ERROR_SLOT_EMPTY, slot_idx);
+#endif
     enum dm_state return_state =
         data->state == DM_STATE_MOVE_PENDING ? DM_STATE_MOVE_PENDING : DM_STATE_IDLE;
 
@@ -1050,6 +1145,9 @@ static void feedback_slot_empty(struct behavior_dynamic_macro_data *data, int sl
 }
 
 static void feedback_overflow(struct behavior_dynamic_macro_data *data) {
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
+    raise_dm_state_changed(data, ZMK_DYNAMIC_MACRO_ERROR_OVERFLOW, -1);
+#endif
     if (!feedback_enabled(DM_FEEDBACK_ERROR)) {
         data->state = DM_STATE_PENDING_ASSIGN;
         k_work_reschedule(&data->assign_timeout_work,
@@ -1155,6 +1253,9 @@ static void feedback_move_source_selected(struct behavior_dynamic_macro_data *da
 }
 
 static void feedback_moved(struct behavior_dynamic_macro_data *data, int src, int dst) {
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
+    raise_dm_state_changed(data, ZMK_DYNAMIC_MACRO_MOVED, dst);
+#endif
     if (!feedback_enabled(DM_FEEDBACK_BASIC)) {
         data->state = DM_STATE_IDLE;
         return;
@@ -1270,14 +1371,23 @@ static void feedback_chain_no_room(struct behavior_dynamic_macro_data *data, int
 #define ASSIGN_TIMEOUT K_MSEC(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_ASSIGN_TIMEOUT)
 
 static void feedback_rec(struct behavior_dynamic_macro_data *data) {
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
+    raise_dm_state_changed(data, ZMK_DYNAMIC_MACRO_RECORDING_STARTED, -1);
+#endif
     data->state = DM_STATE_RECORDING;
 }
 static void feedback_stop(struct behavior_dynamic_macro_data *data) {
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
+    raise_dm_state_changed(data, ZMK_DYNAMIC_MACRO_RECORDING_STOPPED, -1);
+#endif
     data->state = DM_STATE_PENDING_ASSIGN;
     k_work_reschedule(&data->assign_timeout_work, ASSIGN_TIMEOUT);
 }
 static void feedback_saved(struct behavior_dynamic_macro_data *data, int slot_idx,
                            const struct dm_slot *slot) {
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
+    raise_dm_state_changed(data, ZMK_DYNAMIC_MACRO_SAVED, slot_idx);
+#endif
     (void)slot;
     data->state = DM_STATE_IDLE;
     save_slot(data, slot_idx);
@@ -1290,26 +1400,44 @@ static void feedback_slot_full(struct behavior_dynamic_macro_data *data, int slo
     k_work_reschedule(&data->assign_timeout_work, ASSIGN_TIMEOUT);
 }
 void dm_feedback_deleted(struct behavior_dynamic_macro_data *data, int slot_idx) {
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
+    raise_dm_state_changed(data, ZMK_DYNAMIC_MACRO_DELETED, slot_idx);
+#endif
     (void)slot_idx;
     data->state = DM_STATE_IDLE;
 }
 void dm_feedback_delete_failed(struct behavior_dynamic_macro_data *data, int slot_idx) {
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
+    raise_dm_state_changed(data, ZMK_DYNAMIC_MACRO_ERROR_DELETE_FAILED, slot_idx);
+#endif
     (void)slot_idx;
     data->state = DM_STATE_IDLE;
 }
 void dm_feedback_save_failed(struct behavior_dynamic_macro_data *data, int slot_idx) {
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
+    raise_dm_state_changed(data, ZMK_DYNAMIC_MACRO_ERROR_SAVE_FAILED, slot_idx);
+#endif
     (void)data;
     (void)slot_idx;
 }
 void dm_feedback_save_queue_full(struct behavior_dynamic_macro_data *data, int slot_idx) {
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
+    raise_dm_state_changed(data, ZMK_DYNAMIC_MACRO_ERROR_QUEUE_FULL, slot_idx);
+#endif
     (void)data;
     (void)slot_idx;
 }
 void dm_feedback_delete_queue_full(struct behavior_dynamic_macro_data *data, int slot_idx) {
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
+    raise_dm_state_changed(data, ZMK_DYNAMIC_MACRO_ERROR_QUEUE_FULL, slot_idx);
+#endif
     (void)slot_idx;
     data->state = DM_STATE_IDLE;
 }
 static void feedback_slot_empty(struct behavior_dynamic_macro_data *data, int slot_idx) {
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
+    raise_dm_state_changed(data, ZMK_DYNAMIC_MACRO_ERROR_SLOT_EMPTY, slot_idx);
+#endif
     (void)slot_idx;
     if (data->state == DM_STATE_MOVE_PENDING) {
         k_work_reschedule(&data->assign_timeout_work, ASSIGN_TIMEOUT);
@@ -1318,6 +1446,9 @@ static void feedback_slot_empty(struct behavior_dynamic_macro_data *data, int sl
     data->state = DM_STATE_IDLE;
 }
 static void feedback_overflow(struct behavior_dynamic_macro_data *data) {
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
+    raise_dm_state_changed(data, ZMK_DYNAMIC_MACRO_ERROR_OVERFLOW, -1);
+#endif
     data->state = DM_STATE_PENDING_ASSIGN;
     k_work_reschedule(&data->assign_timeout_work, ASSIGN_TIMEOUT);
 }
@@ -1332,6 +1463,9 @@ static void feedback_move_source_selected(struct behavior_dynamic_macro_data *da
     data->state = DM_STATE_MOVE_PENDING;
 }
 static void feedback_moved(struct behavior_dynamic_macro_data *data, int src, int dst) {
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
+    raise_dm_state_changed(data, ZMK_DYNAMIC_MACRO_MOVED, dst);
+#endif
     (void)src;
     (void)dst;
     data->state = DM_STATE_IDLE;
@@ -1378,9 +1512,13 @@ static void emit_work_handler(struct k_work *work) {
 
         struct dm_slot *slot = &data->slots[data->playback_slot];
         if (data->playback_event >= slot->event_count) {
+            int finished_slot = data->playback_slot;
             data->state = DM_STATE_IDLE;
             data->playback_slot = -1;
             k_timer_stop(&data->emit_timer);
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
+            raise_dm_state_changed(data, ZMK_DYNAMIC_MACRO_PLAY_FINISHED, finished_slot);
+#endif
             return;
         }
 
@@ -1400,9 +1538,13 @@ static void emit_work_handler(struct k_work *work) {
         data->suppress_recording = false;
 
         if (data->playback_event >= slot->event_count) {
+            int finished_slot = data->playback_slot;
             data->state = DM_STATE_IDLE;
             data->playback_slot = -1;
             k_timer_stop(&data->emit_timer);
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
+            raise_dm_state_changed(data, ZMK_DYNAMIC_MACRO_PLAY_FINISHED, finished_slot);
+#endif
         }
         return;
     }
@@ -1478,8 +1620,12 @@ static void assign_timeout_handler(struct k_work *work) {
         CONTAINER_OF(delayable, struct behavior_dynamic_macro_data, assign_timeout_work);
 
     if (data->state == DM_STATE_PENDING_ASSIGN || data->state == DM_STATE_DELETE_PENDING ||
-        data->state == DM_STATE_MOVE_PENDING) {
-        LOG_DBG("Dynamic macro assign/delete timed out");
+        data->state == DM_STATE_MOVE_PENDING
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
+        || data->state == DM_STATE_PREVIEW_PENDING
+#endif
+    ) {
+        LOG_DBG("Dynamic macro assign/delete/preview timed out");
         data->move_source_slot = -1;
         data->state = DM_STATE_IDLE;
     }
@@ -1656,6 +1802,15 @@ static void cmd_slot(struct behavior_dynamic_macro_data *data, int slot_idx) {
         break;
     }
 
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
+    case DM_STATE_PREVIEW_PENDING:
+        k_work_cancel_delayable(&data->assign_timeout_work);
+        data->state = DM_STATE_IDLE;
+        raise_dm_state_changed(data, ZMK_DYNAMIC_MACRO_PREVIEW_READY, slot_idx);
+        LOG_DBG("Preview requested for slot %d", slot_idx);
+        break;
+#endif
+
     case DM_STATE_IDLE:
         if (slot_is_empty(data, slot_idx)) {
             LOG_DBG("Slot %d is empty, nothing to play", slot_idx);
@@ -1665,6 +1820,9 @@ static void cmd_slot(struct behavior_dynamic_macro_data *data, int slot_idx) {
         data->state = DM_STATE_PLAYING;
         data->playback_slot = slot_idx;
         data->playback_event = 0;
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
+        raise_dm_state_changed(data, ZMK_DYNAMIC_MACRO_PLAY_STARTED, slot_idx);
+#endif
         LOG_DBG("Playing slot %d (%d events)", slot_idx, data->slots[slot_idx].event_count);
         k_timer_start(&data->emit_timer, K_NO_WAIT, K_MSEC(TAP_DELAY));
         break;
@@ -1713,6 +1871,15 @@ static int on_keymap_binding_pressed(struct zmk_behavior_binding *binding,
         }
         cmd_slot(data, NVS_SLOTS + binding->param2);
         return ZMK_BEHAVIOR_OPAQUE;
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
+    case DM_PREVIEW:
+        if (data->state == DM_STATE_IDLE) {
+            data->state = DM_STATE_PREVIEW_PENDING;
+            k_work_reschedule(&data->assign_timeout_work,
+                              K_MSEC(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_ASSIGN_TIMEOUT));
+        }
+        return ZMK_BEHAVIOR_OPAQUE;
+#endif
     default:
         LOG_ERR("Unknown dynamic macro command: %d", binding->param1);
         return -ENOTSUP;
@@ -1737,7 +1904,8 @@ static const struct behavior_driver_api behavior_dynamic_macro_driver_api = {
 /* -------------------------------------------------------------------------- */
 
 #define DM_DEVICE(inst) DEVICE_DT_INST_GET(inst),
-static const struct device *dm_devices[] = {DT_INST_FOREACH_STATUS_OKAY(DM_DEVICE)};
+const struct device *dm_devices[] = {DT_INST_FOREACH_STATUS_OKAY(DM_DEVICE)};
+const size_t dm_devices_len = ARRAY_SIZE(dm_devices);
 
 static int dm_event_listener(const zmk_event_t *eh) {
     const struct zmk_keycode_state_changed *ev = as_zmk_keycode_state_changed(eh);
@@ -1828,5 +1996,155 @@ static int behavior_dynamic_macro_init(const struct device *dev) {
                             &behavior_dynamic_macro_driver_api);
 
 DT_INST_FOREACH_STATUS_OKAY(DM_INST)
+
+/* -------------------------------------------------------------------------- */
+/*  Query API for display widgets                                             */
+/* -------------------------------------------------------------------------- */
+
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
+
+static struct behavior_dynamic_macro_data *get_first_dm_data(void) {
+    if (dm_devices_len == 0) {
+        return NULL;
+    }
+    return dm_devices[0]->data;
+}
+
+bool dm_is_slot_empty(int slot_idx) {
+    if (slot_idx < 0 || slot_idx >= MAX_SLOTS) {
+        return true;
+    }
+    struct behavior_dynamic_macro_data *data = get_first_dm_data();
+    if (!data) {
+        return true;
+    }
+    return slot_is_empty(data, slot_idx);
+}
+
+const struct dm_event *dm_get_slot_events(int slot_idx, uint32_t *count) {
+    if (slot_idx < 0 || slot_idx >= MAX_SLOTS || !count) {
+        if (count) {
+            *count = 0;
+        }
+        return NULL;
+    }
+    struct behavior_dynamic_macro_data *data = get_first_dm_data();
+    if (!data) {
+        *count = 0;
+        return NULL;
+    }
+    if (slot_is_empty(data, slot_idx)) {
+        *count = 0;
+        return NULL;
+    }
+    *count = data->slots[slot_idx].event_count;
+    return data->slots[slot_idx].events;
+}
+
+int dm_get_preview_string(int slot_idx, char *buf, size_t len) {
+    if (!buf || len == 0) {
+        return 0;
+    }
+    buf[0] = '\0';
+
+    if (slot_idx < 0 || slot_idx >= MAX_SLOTS) {
+        return 0;
+    }
+
+    struct behavior_dynamic_macro_data *data = get_first_dm_data();
+    if (!data || slot_is_empty(data, slot_idx)) {
+        return 0;
+    }
+
+    const struct dm_slot *slot = &data->slots[slot_idx];
+    size_t pos = 0;
+    uint8_t active_mods = 0;
+
+    for (uint32_t i = 0; i < slot->event_count && pos < len - 1; i++) {
+        const struct dm_event *ev = &slot->events[i];
+
+        if (is_modifier_key(ev->usage_page, ev->keycode)) {
+            uint8_t mod_bit = mod_bits[ev->keycode - 0xE0];
+            if (ev->pressed) {
+                active_mods |= mod_bit;
+            } else {
+                active_mods &= ~mod_bit;
+            }
+            continue;
+        }
+
+        if (!ev->pressed) {
+            continue;
+        }
+
+        uint8_t mods = active_mods | ev->implicit_mods | ev->explicit_mods;
+        char c;
+        if (ev->usage_page == HID_USAGE_KEY &&
+            printable_char_for_keycode(ev->keycode, (mods & MOD_SHIFT_MASK) != 0, &c)) {
+            buf[pos++] = c;
+        } else {
+            const char *name = action_name(ev->usage_page, ev->keycode);
+            size_t name_len = strlen(name);
+            if (pos + name_len + 2 < len - 1) {
+                buf[pos++] = '<';
+                memcpy(&buf[pos], name, name_len);
+                pos += name_len;
+                buf[pos++] = '>';
+            }
+        }
+    }
+
+    buf[pos] = '\0';
+    return (int)pos;
+}
+
+int dm_get_used_nvs_slots(void) {
+    struct behavior_dynamic_macro_data *data = get_first_dm_data();
+    if (!data) {
+        return 0;
+    }
+    return filled_nvs_slot_count(data);
+}
+
+int dm_get_used_ram_slots(void) {
+    struct behavior_dynamic_macro_data *data = get_first_dm_data();
+    if (!data) {
+        return 0;
+    }
+    return filled_ram_slot_count(data);
+}
+
+int dm_get_total_nvs_slots(void) {
+    return NVS_SLOTS;
+}
+
+int dm_get_total_ram_slots(void) {
+    return RAM_SLOTS;
+}
+
+enum zmk_dynamic_macro_state dm_get_state(void) {
+    struct behavior_dynamic_macro_data *data = get_first_dm_data();
+    if (!data) {
+        return ZMK_DYNAMIC_MACRO_STATE_IDLE;
+    }
+    switch (data->state) {
+    case DM_STATE_RECORDING:
+        return ZMK_DYNAMIC_MACRO_STATE_RECORDING;
+    case DM_STATE_PLAYING:
+        return ZMK_DYNAMIC_MACRO_STATE_PLAYING;
+    default:
+        return ZMK_DYNAMIC_MACRO_STATE_IDLE;
+    }
+}
+
+uint32_t dm_get_recording_event_count(void) {
+    struct behavior_dynamic_macro_data *data = get_first_dm_data();
+    if (!data || data->state != DM_STATE_RECORDING) {
+        return 0;
+    }
+    return data->recording_buffer.event_count;
+}
+
+#endif /* CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS */
 
 #endif /* DT_HAS_COMPAT_STATUS_OKAY(DT_DRV_COMPAT) */

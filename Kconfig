@@ -130,4 +130,12 @@ config ZMK_BEHAVIOR_DYNAMIC_MACRO_STATUS_DETAIL
     default 3 if ZMK_BEHAVIOR_DYNAMIC_MACRO_STATUS_USED_PREVIEW
     default 4 if ZMK_BEHAVIOR_DYNAMIC_MACRO_STATUS_FULL
 
+config ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS
+    bool "Enable event notifications for display widgets"
+    default n
+    help
+      Broadcasts ZMK events on state changes (recording, playback, save, etc.)
+      for external display widgets to subscribe to. Also enables query API for
+      slot contents.
+
 endif
