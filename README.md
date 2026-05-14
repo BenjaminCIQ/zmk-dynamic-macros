@@ -12,6 +12,7 @@ A [ZMK](https://zmk.dev/) module for dynamic macro recording and playback. Recor
 - **Chain** existing macros into new recordings
 - **Status** output showing slot contents
 - **Locale support** for US, UK, German, and French keyboards
+- **Event system** for display widgets and custom integrations
 
 ## Setup
 
@@ -104,6 +105,7 @@ Press **STATE** to output slot info to the focused window.
 | `&dm DM_STATE 0`    | Output status                    |
 | `&dm DM_SLOT_NVS N` | NVS slot N (0 to NVS_SLOTS-1)    |
 | `&dm DM_SLOT_RAM N` | RAM slot N (0 to RAM_SLOTS-1)    |
+| `&dm DM_PREVIEW 0`  | Enter preview mode               |
 
 ## Kconfig Options
 
@@ -149,6 +151,29 @@ Non-US locales use plain messages (letters, digits, spaces only) with correct ke
 | `STATUS_USED`         | Used slots, no preview         |
 | `STATUS_USED_PREVIEW` | Used slots with preview        |
 | `STATUS_FULL`         | All slots (default for VERBOSE)|
+
+### Events
+
+| Option   | Default | Description                        |
+| -------- | ------- | ---------------------------------- |
+| `EVENTS` | n       | Enable event system for widgets    |
+
+## Event System
+
+For display widgets or custom integrations, enable the event system to receive notifications when macro state changes.
+
+Enable in `.conf`:
+
+```ini
+CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS=y
+```
+
+The event system provides:
+- **Events** for state changes (recording started/stopped, saved, deleted, playback, errors)
+- **Query API** to get current state, slot counts, and slot contents
+- **Preview mode** (`DM_PREVIEW`) to inspect slot contents on demand
+
+See [docs/event-api.md](docs/event-api.md) for full API reference, code examples, and integration guide.
 
 ## Notes
 
