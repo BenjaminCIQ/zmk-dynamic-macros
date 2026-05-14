@@ -54,6 +54,7 @@ enum dm_state {
     DM_STATE_PENDING_ASSIGN,
     DM_STATE_DELETE_PENDING,
     DM_STATE_MOVE_PENDING,
+    DM_STATE_PREVIEW_PENDING,
     DM_STATE_PLAYING,
     DM_STATE_TYPING_FEEDBACK,
 };
@@ -124,6 +125,9 @@ static inline bool slot_is_nvs(int slot_idx) {
 static inline bool slot_is_empty(struct behavior_dynamic_macro_data *data, int slot_idx) {
     return data->slots[slot_idx].event_count == 0 || atomic_test_bit(data->pending_delete, slot_idx);
 }
+
+extern const struct device *dm_devices[];
+extern const size_t dm_devices_len;
 
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_PERSIST)
 void dm_storage_init(void);

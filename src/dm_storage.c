@@ -54,8 +54,6 @@ static struct k_work_q dm_storage_work_q;
 static struct k_work dm_storage_work;
 static bool dm_storage_work_q_started;
 
-#define DM_DEVICE(inst) DEVICE_DT_INST_GET(inst),
-static const struct device *dm_devices[] = {DT_INST_FOREACH_STATUS_OKAY(DM_DEVICE)};
 
 static void settings_slot_key(struct behavior_dynamic_macro_data *data, int slot_idx, char *key,
                               size_t key_len) {
@@ -183,7 +181,7 @@ static bool parse_settings_slot_name(const char *name, struct behavior_dynamic_m
     const char *p = name;
     int parsed = 0;
 
-    for (size_t i = 0; i < ARRAY_SIZE(dm_devices); i++) {
+    for (size_t i = 0; i < dm_devices_len; i++) {
         const struct device *dev = dm_devices[i];
         const struct behavior_dynamic_macro_config *config = dev->config;
         size_t settings_name_len = strlen(config->settings_name);
@@ -295,7 +293,7 @@ static int dm_settings_export(int (*storage_func)(const char *name, const void *
                                                    size_t val_len)) {
     static uint8_t export_buf[sizeof(struct dm_slot_header) + MAX_EVENTS * sizeof(struct dm_event)];
 
-    for (size_t dev_idx = 0; dev_idx < ARRAY_SIZE(dm_devices); dev_idx++) {
+    for (size_t dev_idx = 0; dev_idx < dm_devices_len; dev_idx++) {
         const struct device *dev = dm_devices[dev_idx];
         struct behavior_dynamic_macro_data *data = dev->data;
 
