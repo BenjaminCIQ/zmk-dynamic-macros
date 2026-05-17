@@ -13,10 +13,6 @@
  * Expected: Recording discarded, state returns to IDLE
  */
 
-#include <behaviors.dtsi>
-#include <dt-bindings/zmk/keys.h>
-#include <dt-bindings/zmk/kscan_mock.h>
-#include <dt-bindings/zmk/dynamic_macros.h>
 #include "../behavior_keymap.dtsi"
 
 / {
@@ -24,10 +20,10 @@
         compatible = "zmk,keymap";
         default_layer {
             bindings = <
-                &dm DM_REC 0
-                &dm DM_STP 0
-                &dm DM_SLOT_NVS 0
-                &kp A
+                &dm DM_REC 0        /* 0,0 */
+                &dm DM_STP 0        /* 0,1 */
+                &dm DM_SLOT_NVS 0   /* 1,0 */
+                &kp A               /* 1,1 */
             >;
         };
     };
@@ -37,18 +33,18 @@
     events = <
         /* Start recording */
         ZMK_MOCK_PRESS(0,0,10)
-        ZMK_MOCK_RELEASE(0,0,20)
+        ZMK_MOCK_RELEASE(0,0,10)
 
         /* Record: A */
-        ZMK_MOCK_PRESS(0,3,100)
-        ZMK_MOCK_RELEASE(0,3,150)
+        ZMK_MOCK_PRESS(1,1,10)
+        ZMK_MOCK_RELEASE(1,1,10)
 
         /* Stop recording */
-        ZMK_MOCK_PRESS(0,1,200)
-        ZMK_MOCK_RELEASE(0,1,210)
+        ZMK_MOCK_PRESS(0,1,10)
+        ZMK_MOCK_RELEASE(0,1,10)
 
         /* Wait for timeout (10s+) then try to play - should be empty */
-        ZMK_MOCK_PRESS(0,2,15000)
-        ZMK_MOCK_RELEASE(0,2,15010)
+        ZMK_MOCK_PRESS(1,0,15000)
+        ZMK_MOCK_RELEASE(1,0,10)
     >;
 };

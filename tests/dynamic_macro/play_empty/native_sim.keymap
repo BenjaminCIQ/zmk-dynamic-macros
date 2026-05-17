@@ -10,10 +10,6 @@
  * Expected: No playback, error feedback (if enabled)
  */
 
-#include <behaviors.dtsi>
-#include <dt-bindings/zmk/keys.h>
-#include <dt-bindings/zmk/kscan_mock.h>
-#include <dt-bindings/zmk/dynamic_macros.h>
 #include "../behavior_keymap.dtsi"
 
 / {
@@ -21,8 +17,10 @@
         compatible = "zmk,keymap";
         default_layer {
             bindings = <
-                &dm DM_SLOT_NVS 0
-                &dm DM_SLOT_RAM 0
+                &dm DM_SLOT_NVS 0   /* 0,0 */
+                &dm DM_SLOT_RAM 0   /* 0,1 */
+                &none               /* 1,0 */
+                &none               /* 1,1 */
             >;
         };
     };
@@ -32,10 +30,10 @@
     events = <
         /* Try to play empty NVS slot */
         ZMK_MOCK_PRESS(0,0,100)
-        ZMK_MOCK_RELEASE(0,0,110)
+        ZMK_MOCK_RELEASE(0,0,10)
 
         /* Try to play empty RAM slot */
         ZMK_MOCK_PRESS(0,1,500)
-        ZMK_MOCK_RELEASE(0,1,510)
+        ZMK_MOCK_RELEASE(0,1,10)
     >;
 };

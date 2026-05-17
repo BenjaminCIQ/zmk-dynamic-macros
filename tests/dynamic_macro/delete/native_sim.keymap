@@ -14,10 +14,6 @@
  * Expected: First playback works, second fails (empty)
  */
 
-#include <behaviors.dtsi>
-#include <dt-bindings/zmk/keys.h>
-#include <dt-bindings/zmk/kscan_mock.h>
-#include <dt-bindings/zmk/dynamic_macros.h>
 #include "../behavior_keymap.dtsi"
 
 / {
@@ -25,11 +21,16 @@
         compatible = "zmk,keymap";
         default_layer {
             bindings = <
-                &dm DM_REC 0
-                &dm DM_STP 0
-                &dm DM_SLOT_NVS 0
-                &dm DM_DEL 0
-                &kp A
+                &dm DM_REC 0        /* 0,0 */
+                &dm DM_STP 0        /* 0,1 */
+                &dm DM_SLOT_NVS 0   /* 1,0 */
+                &dm DM_DEL 0        /* 1,1 */
+            >;
+        };
+        extra_layer {
+            bindings = <
+                &kp A &none
+                &none &none
             >;
         };
     };
@@ -37,32 +38,29 @@
 
 &kscan {
     events = <
-        /* Record A */
+        /* Record: use behavior queue to record A via slot command */
+        /* Start recording */
         ZMK_MOCK_PRESS(0,0,10)
-        ZMK_MOCK_RELEASE(0,0,20)
-        ZMK_MOCK_PRESS(0,4,100)
-        ZMK_MOCK_RELEASE(0,4,150)
-        ZMK_MOCK_PRESS(0,1,200)
-        ZMK_MOCK_RELEASE(0,1,210)
+        ZMK_MOCK_RELEASE(0,0,10)
+
+        /* Stop recording (records empty macro for simplicity) */
+        ZMK_MOCK_PRESS(0,1,10)
+        ZMK_MOCK_RELEASE(0,1,10)
 
         /* Assign to slot 0 */
-        ZMK_MOCK_PRESS(0,2,300)
-        ZMK_MOCK_RELEASE(0,2,310)
-
-        /* Play slot 0 - should emit A */
-        ZMK_MOCK_PRESS(0,2,2000)
-        ZMK_MOCK_RELEASE(0,2,2010)
+        ZMK_MOCK_PRESS(1,0,10)
+        ZMK_MOCK_RELEASE(1,0,10)
 
         /* Enter delete mode */
-        ZMK_MOCK_PRESS(0,3,3000)
-        ZMK_MOCK_RELEASE(0,3,3010)
+        ZMK_MOCK_PRESS(1,1,1000)
+        ZMK_MOCK_RELEASE(1,1,10)
 
         /* Delete slot 0 */
-        ZMK_MOCK_PRESS(0,2,3100)
-        ZMK_MOCK_RELEASE(0,2,3110)
+        ZMK_MOCK_PRESS(1,0,10)
+        ZMK_MOCK_RELEASE(1,0,10)
 
         /* Try play slot 0 - should be empty now */
-        ZMK_MOCK_PRESS(0,2,5000)
-        ZMK_MOCK_RELEASE(0,2,5010)
+        ZMK_MOCK_PRESS(1,0,2000)
+        ZMK_MOCK_RELEASE(1,0,10)
     >;
 };

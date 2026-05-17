@@ -5,29 +5,16 @@ description: |
   Dynamic Macro behavior for recording and playing back key sequences.
   param1 selects the command, param2 provides the slot index (for slot commands).
 
+  Commands (param1):
+    0 (DM_REC)      - Start recording
+    1 (DM_STP)      - Stop recording
+    2 (DM_DEL)      - Delete mode
+    3 (DM_STATE)    - Show status
+    4 (DM_MOV)      - Move mode
+    5 (DM_SLOT_NVS) - NVS slot (play/assign)
+    6 (DM_SLOT_RAM) - RAM slot (play/assign)
+    7 (DM_PREVIEW)  - Preview mode
+
 compatible: "zmk,behavior-dynamic-macro"
 
 include: two_param.yaml
-
-properties:
-  "#binding-cells":
-    const: 2
-
-child-binding:
-  description: Dynamic macro command binding
-  properties:
-    param1:
-      type: int
-      required: true
-      enum:
-        - 0  # DM_REC - Start recording
-        - 1  # DM_STP - Stop recording
-        - 2  # DM_DEL - Delete mode
-        - 3  # DM_STATE - Show status
-        - 4  # DM_MOV - Move mode
-        - 5  # DM_SLOT_NVS - NVS slot (play/assign)
-        - 6  # DM_SLOT_RAM - RAM slot (play/assign)
-        - 7  # DM_PREVIEW - Preview mode
-    param2:
-      type: int
-      required: true
