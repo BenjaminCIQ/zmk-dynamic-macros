@@ -1,4 +1,0 @@
-# sed patterns to extract relevant log lines
-s/.*hid_listener_keycode_//p
-s/.*behavior_dynamic_macro: //p
-s/.*timed out//p
