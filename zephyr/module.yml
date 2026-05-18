@@ -1,3 +1,4 @@
+name: zmk-dynamic-macros
 build:
   cmake: .
   kconfig: Kconfig
