@@ -820,6 +820,8 @@ static int filled_ram_slot_count(struct behavior_dynamic_macro_data *data) {
     return filled;
 }
 
+#endif /* CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS */
+
 /*
  * Render status slot. For non-empty slots with preview, sets up streaming
  * and returns true (caller must handle streaming completion).
@@ -1520,13 +1522,12 @@ static void emit_work_handler(struct k_work *work) {
 
         struct dm_slot *slot = &data->slots[data->playback_slot];
         if (data->playback_event >= slot->event_count) {
-            int finished_slot = data->playback_slot;
             data->state = DM_STATE_IDLE;
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
+            raise_dm_state_changed(data, ZMK_DYNAMIC_MACRO_PLAY_FINISHED, data->playback_slot);
+#endif
             data->playback_slot = -1;
             k_timer_stop(&data->emit_timer);
-#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
-            raise_dm_state_changed(data, ZMK_DYNAMIC_MACRO_PLAY_FINISHED, finished_slot);
-#endif
             return;
         }
 
@@ -1546,13 +1547,12 @@ static void emit_work_handler(struct k_work *work) {
         data->suppress_recording = false;
 
         if (data->playback_event >= slot->event_count) {
-            int finished_slot = data->playback_slot;
             data->state = DM_STATE_IDLE;
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
+            raise_dm_state_changed(data, ZMK_DYNAMIC_MACRO_PLAY_FINISHED, data->playback_slot);
+#endif
             data->playback_slot = -1;
             k_timer_stop(&data->emit_timer);
-#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
-            raise_dm_state_changed(data, ZMK_DYNAMIC_MACRO_PLAY_FINISHED, finished_slot);
-#endif
         } else {
             k_timer_start(&data->emit_timer, K_MSEC(TAP_DELAY), K_NO_WAIT);
         }
