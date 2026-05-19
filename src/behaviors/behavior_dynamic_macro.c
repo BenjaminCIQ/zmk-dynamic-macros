@@ -1890,6 +1890,17 @@ static int on_keymap_binding_pressed(struct zmk_behavior_binding *binding,
         }
         return ZMK_BEHAVIOR_OPAQUE;
 #endif
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_TEST_RELOAD)
+    case DM_TEST_RELOAD:
+        if (data->state != DM_STATE_IDLE) {
+            return ZMK_BEHAVIOR_OPAQUE;
+        }
+        LOG_DBG("Test reload: flushing storage and reloading from NVS");
+        dm_storage_flush();
+        dm_storage_test_reload();
+        LOG_DBG("Test reload: complete, NVS slots restored");
+        return ZMK_BEHAVIOR_OPAQUE;
+#endif
     default:
         LOG_ERR("Unknown dynamic macro command: %d", binding->param1);
         return -ENOTSUP;

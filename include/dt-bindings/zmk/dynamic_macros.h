@@ -14,3 +14,4 @@
 #define DM_SLOT_NVS 5
 #define DM_SLOT_RAM 6
 #define DM_PREVIEW  7
+#define DM_TEST_RELOAD  8

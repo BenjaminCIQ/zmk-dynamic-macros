@@ -133,6 +133,10 @@ extern const size_t dm_devices_len;
 void dm_storage_init(void);
 void dm_storage_save_slot(struct behavior_dynamic_macro_data *data, int slot_idx);
 int dm_storage_delete_slot(struct behavior_dynamic_macro_data *data, int slot_idx);
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_TEST_RELOAD)
+void dm_storage_flush(void);
+void dm_storage_test_reload(void);
+#endif
 #endif
 
 void dm_feedback_deleted(struct behavior_dynamic_macro_data *data, int slot_idx);

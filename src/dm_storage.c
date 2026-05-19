@@ -347,4 +347,29 @@ int dm_storage_delete_slot(struct behavior_dynamic_macro_data *data, int slot_id
     return enqueue_storage_op(data, DM_STORAGE_OP_DELETE, slot_idx, NULL);
 }
 
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_TEST_RELOAD)
+void dm_storage_flush(void) {
+    k_work_submit_to_queue(&dm_storage_work_q, &dm_storage_work);
+    k_sleep(K_MSEC(100));
+}
+
+void dm_storage_test_reload(void) {
+    for (size_t i = 0; i < dm_devices_len; i++) {
+        struct behavior_dynamic_macro_data *data = dm_devices[i]->data;
+        for (int j = 0; j < MAX_SLOTS; j++) {
+            memset(&data->slots[j], 0, sizeof(struct dm_slot));
+            atomic_clear_bit(data->pending_delete, j);
+            data->slot_generation[j] = 0;
+        }
+    }
+
+    int rc = settings_load();
+    if (rc) {
+        LOG_ERR("Test reload: settings_load failed: %d", rc);
+    } else {
+        LOG_DBG("Test reload: settings reloaded");
+    }
+}
+#endif
+
 #endif /* DT_HAS_COMPAT_STATUS_OKAY(DT_DRV_COMPAT) */

@@ -12,6 +12,7 @@ Test suite for ZMK dynamic macro behavior using native_posix simulation.
 | `delete` | Record, save, delete, verify empty | Delete functionality |
 | `move` | Move macro between slots | Move mode functionality |
 | `overflow` | Record >MAX_EVENTS | Buffer overflow handling |
+| `nvs_roundtrip` | Record, save to NVS, simulate reboot, play back | NVS save/load data integrity |
 
 ## Running Tests
 
@@ -48,4 +49,4 @@ Each test directory contains:
 - [ ] Add modifier key recording tests
 - [ ] Add multi-key sequence tests
 - [ ] Test feedback typing output
-- [ ] Test NVS persistence across simulated reboot
+- [x] Test NVS persistence across simulated reboot

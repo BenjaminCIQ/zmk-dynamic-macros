@@ -130,6 +130,15 @@ config ZMK_BEHAVIOR_DYNAMIC_MACRO_STATUS_DETAIL
     default 3 if ZMK_BEHAVIOR_DYNAMIC_MACRO_STATUS_USED_PREVIEW
     default 4 if ZMK_BEHAVIOR_DYNAMIC_MACRO_STATUS_FULL
 
+config ZMK_BEHAVIOR_DYNAMIC_MACRO_TEST_RELOAD
+    bool "Test-only: DM_TEST_RELOAD command to simulate NVS reboot"
+    default n
+    depends on ZMK_BEHAVIOR_DYNAMIC_MACRO_PERSIST
+    help
+      Adds a DM_TEST_RELOAD command that zeroes all slot data in RAM
+      and reloads from NVS settings, simulating a power cycle.
+      For testing only.
+
 config ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS
     bool "Enable event notifications for display widgets"
     default n
