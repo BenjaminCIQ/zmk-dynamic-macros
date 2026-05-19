@@ -57,8 +57,8 @@ BUILD_ASSERT(MAX_SLOTS <= 64, "Dynamic macros support at most 64 total slots");
 
 #define DM_VALIDATE_CMD_RANGE(idx, layer)                                                         \
     COND_CODE_1(DM_IS_DM_BINDING(idx, layer),                                                     \
-                (BUILD_ASSERT(DT_PHA_BY_IDX(layer, bindings, idx, param1) <= DM_PREVIEW,          \
-                              "Dynamic macro param1 is not a valid command (expected 0-7)");),    \
+                (BUILD_ASSERT(DT_PHA_BY_IDX(layer, bindings, idx, param1) <= DM_FEEDBACK_DEC,      \
+                              "Dynamic macro param1 is not a valid command (expected 0-9)");),    \
                 ())
 
 #define DM_VALIDATE_CMD_NO_PARAM2(idx, layer, command)                                            \
@@ -79,7 +79,9 @@ BUILD_ASSERT(MAX_SLOTS <= 64, "Dynamic macros support at most 64 total slots");
                          "DM_SLOT_NVS index exceeds configured NVS dynamic macro slots")          \
     DM_VALIDATE_SLOT_CMD(idx, layer, DM_SLOT_RAM, RAM_SLOTS,                                      \
                          "DM_SLOT_RAM index exceeds configured RAM dynamic macro slots")          \
-    DM_VALIDATE_CMD_NO_PARAM2(idx, layer, DM_PREVIEW)
+    DM_VALIDATE_CMD_NO_PARAM2(idx, layer, DM_PREVIEW)                                             \
+    DM_VALIDATE_CMD_NO_PARAM2(idx, layer, DM_FEEDBACK_INC)                                        \
+    DM_VALIDATE_CMD_NO_PARAM2(idx, layer, DM_FEEDBACK_DEC)
 
 #define DM_VALIDATE_KEYMAP_LAYER(layer)                                                           \
     COND_CODE_1(DT_NODE_HAS_PROP(layer, bindings),                                                \
@@ -127,6 +129,14 @@ static const struct behavior_parameter_value_metadata dm_param_slot_ram[] = {
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
 static const struct behavior_parameter_value_metadata dm_param_preview[] = {
     DM_COMMAND_VALUE("Preview", DM_PREVIEW),
+};
+#endif
+#if DM_TYPING_ENABLED
+static const struct behavior_parameter_value_metadata dm_param_feedback_inc[] = {
+    DM_COMMAND_VALUE("Feedback+", DM_FEEDBACK_INC),
+};
+static const struct behavior_parameter_value_metadata dm_param_feedback_dec[] = {
+    DM_COMMAND_VALUE("Feedback-", DM_FEEDBACK_DEC),
 };
 #endif
 static const struct behavior_parameter_value_metadata dm_param_unused[] = {
@@ -206,6 +216,20 @@ static const struct behavior_parameter_metadata_set dm_parameter_metadata_sets[]
     {
         .param1_values_len = ARRAY_SIZE(dm_param_preview),
         .param1_values = dm_param_preview,
+        .param2_values_len = ARRAY_SIZE(dm_param_unused),
+        .param2_values = dm_param_unused,
+    },
+#endif
+#if DM_TYPING_ENABLED
+    {
+        .param1_values_len = ARRAY_SIZE(dm_param_feedback_inc),
+        .param1_values = dm_param_feedback_inc,
+        .param2_values_len = ARRAY_SIZE(dm_param_unused),
+        .param2_values = dm_param_unused,
+    },
+    {
+        .param1_values_len = ARRAY_SIZE(dm_param_feedback_dec),
+        .param1_values = dm_param_feedback_dec,
         .param2_values_len = ARRAY_SIZE(dm_param_unused),
         .param2_values = dm_param_unused,
     },
@@ -295,8 +319,8 @@ struct hid_keycode {
     bool shift;
 };
 
-static bool feedback_enabled(int level) {
-    return DM_FEEDBACK_LEVEL >= level;
+static bool feedback_enabled_for(struct behavior_dynamic_macro_data *data, int level) {
+    return data->current_feedback_level >= level;
 }
 
 static bool status_enabled(int level) {
@@ -497,6 +521,7 @@ static void fb_append_str(struct behavior_dynamic_macro_data *data, const char *
 #define DM_MSG_SLOT_START ""
 #define DM_MSG_SLOT_END   ""
 #define DM_MSG_EVENTS    " EVENTS"
+#define DM_MSG_FB_PREFIX "DM FB "
 #else
 #define DM_MSG_REC       "[DM REC]"
 #define DM_MSG_STOP      "[DM STOP]"
@@ -519,6 +544,7 @@ static void fb_append_str(struct behavior_dynamic_macro_data *data, const char *
 #define DM_MSG_SLOT_START "["
 #define DM_MSG_SLOT_END   "]"
 #define DM_MSG_EVENTS    ""
+#define DM_MSG_FB_PREFIX "[DM FB:"
 #endif
 
 static void fb_append_number(struct behavior_dynamic_macro_data *data, int n) {
@@ -948,7 +974,7 @@ static void feedback_rec(struct behavior_dynamic_macro_data *data) {
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
     raise_dm_state_changed(data, ZMK_DYNAMIC_MACRO_RECORDING_STARTED, -1);
 #endif
-    if (!feedback_enabled(DM_FEEDBACK_BASIC)) {
+    if (!feedback_enabled_for(data, DM_FEEDBACK_BASIC)) {
         data->state = DM_STATE_RECORDING;
         return;
     }
@@ -963,7 +989,7 @@ static void feedback_stop(struct behavior_dynamic_macro_data *data) {
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
     raise_dm_state_changed(data, ZMK_DYNAMIC_MACRO_RECORDING_STOPPED, -1);
 #endif
-    if (!feedback_enabled(DM_FEEDBACK_BASIC)) {
+    if (!feedback_enabled_for(data, DM_FEEDBACK_BASIC)) {
         data->state = DM_STATE_PENDING_ASSIGN;
         k_work_reschedule(&data->assign_timeout_work,
                           K_MSEC(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_ASSIGN_TIMEOUT));
@@ -981,7 +1007,7 @@ static void feedback_saved(struct behavior_dynamic_macro_data *data, int slot_id
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
     raise_dm_state_changed(data, ZMK_DYNAMIC_MACRO_SAVED, slot_idx);
 #endif
-    if (!feedback_enabled(DM_FEEDBACK_BASIC)) {
+    if (!feedback_enabled_for(data, DM_FEEDBACK_BASIC)) {
         data->state = DM_STATE_IDLE;
         save_slot(data, slot_idx);
         return;
@@ -992,7 +1018,7 @@ static void feedback_saved(struct behavior_dynamic_macro_data *data, int slot_id
     fb_append_str(data, DM_MSG_SAVED);
     fb_append_char(data, slot_storage_prefix(slot_idx));
     fb_append_number(data, slot_idx);
-    if (feedback_enabled(DM_FEEDBACK_VERBOSE)) {
+    if (feedback_enabled_for(data, DM_FEEDBACK_VERBOSE)) {
         fb_append_str(data, DM_MSG_PREVIEW_START);
         data->preview_slot = slot;
         data->preview_idx = 0;
@@ -1012,7 +1038,7 @@ static void feedback_slot_full(struct behavior_dynamic_macro_data *data, int slo
     enum dm_state return_state =
         data->state == DM_STATE_MOVE_PENDING ? DM_STATE_MOVE_PENDING : DM_STATE_PENDING_ASSIGN;
 
-    if (!feedback_enabled(DM_FEEDBACK_BASIC)) {
+    if (!feedback_enabled_for(data, DM_FEEDBACK_BASIC)) {
         data->state = return_state;
         k_work_reschedule(&data->assign_timeout_work,
                           K_MSEC(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_ASSIGN_TIMEOUT));
@@ -1036,7 +1062,7 @@ void dm_feedback_deleted(struct behavior_dynamic_macro_data *data, int slot_idx)
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
     raise_dm_state_changed(data, ZMK_DYNAMIC_MACRO_DELETED, slot_idx);
 #endif
-    if (!feedback_enabled(DM_FEEDBACK_BASIC)) {
+    if (!feedback_enabled_for(data, DM_FEEDBACK_BASIC)) {
         data->state = DM_STATE_IDLE;
         return;
     }
@@ -1056,7 +1082,7 @@ void dm_feedback_delete_failed(struct behavior_dynamic_macro_data *data, int slo
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
     raise_dm_state_changed(data, ZMK_DYNAMIC_MACRO_ERROR_DELETE_FAILED, slot_idx);
 #endif
-    if (!feedback_enabled(DM_FEEDBACK_ERROR)) {
+    if (!feedback_enabled_for(data, DM_FEEDBACK_ERROR)) {
         data->state = DM_STATE_IDLE;
         return;
     }
@@ -1074,7 +1100,7 @@ void dm_feedback_save_failed(struct behavior_dynamic_macro_data *data, int slot_
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
     raise_dm_state_changed(data, ZMK_DYNAMIC_MACRO_ERROR_SAVE_FAILED, slot_idx);
 #endif
-    if (!feedback_enabled(DM_FEEDBACK_ERROR) || data->state != DM_STATE_IDLE) {
+    if (!feedback_enabled_for(data, DM_FEEDBACK_ERROR) || data->state != DM_STATE_IDLE) {
         return;
     }
 
@@ -1093,7 +1119,7 @@ void dm_feedback_save_queue_full(struct behavior_dynamic_macro_data *data, int s
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
     raise_dm_state_changed(data, ZMK_DYNAMIC_MACRO_ERROR_QUEUE_FULL, slot_idx);
 #endif
-    if (!feedback_enabled(DM_FEEDBACK_ERROR) || data->state != DM_STATE_IDLE) {
+    if (!feedback_enabled_for(data, DM_FEEDBACK_ERROR) || data->state != DM_STATE_IDLE) {
         return;
     }
 
@@ -1112,7 +1138,7 @@ void dm_feedback_delete_queue_full(struct behavior_dynamic_macro_data *data, int
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
     raise_dm_state_changed(data, ZMK_DYNAMIC_MACRO_ERROR_QUEUE_FULL, slot_idx);
 #endif
-    if (!feedback_enabled(DM_FEEDBACK_ERROR)) {
+    if (!feedback_enabled_for(data, DM_FEEDBACK_ERROR)) {
         data->state = DM_STATE_IDLE;
         return;
     }
@@ -1135,7 +1161,7 @@ static void feedback_slot_empty(struct behavior_dynamic_macro_data *data, int sl
     enum dm_state return_state =
         data->state == DM_STATE_MOVE_PENDING ? DM_STATE_MOVE_PENDING : DM_STATE_IDLE;
 
-    if (!feedback_enabled(DM_FEEDBACK_BASIC)) {
+    if (!feedback_enabled_for(data, DM_FEEDBACK_BASIC)) {
         data->state = return_state;
         if (return_state == DM_STATE_MOVE_PENDING) {
             k_work_reschedule(&data->assign_timeout_work,
@@ -1157,7 +1183,7 @@ static void feedback_overflow(struct behavior_dynamic_macro_data *data) {
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
     raise_dm_state_changed(data, ZMK_DYNAMIC_MACRO_ERROR_OVERFLOW, -1);
 #endif
-    if (!feedback_enabled(DM_FEEDBACK_ERROR)) {
+    if (!feedback_enabled_for(data, DM_FEEDBACK_ERROR)) {
         data->state = DM_STATE_PENDING_ASSIGN;
         k_work_reschedule(&data->assign_timeout_work,
                           K_MSEC(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_ASSIGN_TIMEOUT));
@@ -1233,7 +1259,7 @@ static void feedback_status(struct behavior_dynamic_macro_data *data) {
 }
 
 static void feedback_move_prompt(struct behavior_dynamic_macro_data *data) {
-    if (!feedback_enabled(DM_FEEDBACK_BASIC)) {
+    if (!feedback_enabled_for(data, DM_FEEDBACK_BASIC)) {
         data->state = DM_STATE_MOVE_PENDING;
         return;
     }
@@ -1245,7 +1271,7 @@ static void feedback_move_prompt(struct behavior_dynamic_macro_data *data) {
 }
 
 static void feedback_move_source_selected(struct behavior_dynamic_macro_data *data, int slot_idx) {
-    if (!feedback_enabled(DM_FEEDBACK_BASIC)) {
+    if (!feedback_enabled_for(data, DM_FEEDBACK_BASIC)) {
         data->state = DM_STATE_MOVE_PENDING;
         return;
     }
@@ -1265,7 +1291,7 @@ static void feedback_moved(struct behavior_dynamic_macro_data *data, int src, in
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
     raise_dm_state_changed(data, ZMK_DYNAMIC_MACRO_MOVED, dst);
 #endif
-    if (!feedback_enabled(DM_FEEDBACK_BASIC)) {
+    if (!feedback_enabled_for(data, DM_FEEDBACK_BASIC)) {
         data->state = DM_STATE_IDLE;
         return;
     }
@@ -1289,7 +1315,7 @@ static void feedback_moved(struct behavior_dynamic_macro_data *data, int src, in
 }
 
 static void feedback_move_cancelled(struct behavior_dynamic_macro_data *data) {
-    if (!feedback_enabled(DM_FEEDBACK_BASIC)) {
+    if (!feedback_enabled_for(data, DM_FEEDBACK_BASIC)) {
         data->state = DM_STATE_IDLE;
         return;
     }
@@ -1316,7 +1342,7 @@ static void feedback_chain_insert(struct behavior_dynamic_macro_data *data, int 
 }
 
 static void feedback_chain_empty(struct behavior_dynamic_macro_data *data, int slot_idx) {
-    if (!feedback_enabled(DM_FEEDBACK_BASIC)) {
+    if (!feedback_enabled_for(data, DM_FEEDBACK_BASIC)) {
         data->state = DM_STATE_RECORDING;
         return;
     }
@@ -1331,7 +1357,7 @@ static void feedback_chain_empty(struct behavior_dynamic_macro_data *data, int s
 }
 
 static void feedback_chain_no_room(struct behavior_dynamic_macro_data *data, int slot_idx) {
-    if (!feedback_enabled(DM_FEEDBACK_BASIC)) {
+    if (!feedback_enabled_for(data, DM_FEEDBACK_BASIC)) {
         data->state = DM_STATE_RECORDING;
         return;
     }
@@ -1698,6 +1724,43 @@ static void cmd_status(struct behavior_dynamic_macro_data *data) {
     feedback_status(data);
 }
 
+#if DM_TYPING_ENABLED
+static const char *feedback_level_name(uint8_t level) {
+    switch (level) {
+    case DM_FEEDBACK_ERROR:   return "ERROR";
+    case DM_FEEDBACK_BASIC:   return "BASIC";
+    case DM_FEEDBACK_VERBOSE: return "VERBOSE";
+    default:                  return "?";
+    }
+}
+
+static void cmd_feedback_adjust(struct behavior_dynamic_macro_data *data, int direction) {
+    if (data->state != DM_STATE_IDLE) {
+        return;
+    }
+
+    int new_level = (int)data->current_feedback_level + direction;
+    if (new_level < DM_FEEDBACK_ERROR) {
+        new_level = DM_FEEDBACK_ERROR;
+    }
+    if (new_level > DM_FEEDBACK_VERBOSE) {
+        new_level = DM_FEEDBACK_VERBOSE;
+    }
+
+    data->current_feedback_level = (uint8_t)new_level;
+    dm_storage_save_feedback_level(data);
+
+    data->status_mode = false;
+    fb_reset(data);
+    fb_append_str(data, DM_MSG_FB_PREFIX);
+    fb_append_str(data, feedback_level_name(data->current_feedback_level));
+#if !DM_LOCALE_PLAIN
+    fb_append_char(data, ']');
+#endif
+    start_feedback(data, DM_STATE_IDLE, -1);
+}
+#endif
+
 static void cmd_slot(struct behavior_dynamic_macro_data *data, int slot_idx) {
     if (slot_idx < 0 || slot_idx >= MAX_SLOTS) {
         LOG_ERR("Invalid slot index: %d", slot_idx);
@@ -1890,6 +1953,14 @@ static int on_keymap_binding_pressed(struct zmk_behavior_binding *binding,
         }
         return ZMK_BEHAVIOR_OPAQUE;
 #endif
+#if DM_TYPING_ENABLED
+    case DM_FEEDBACK_INC:
+        cmd_feedback_adjust(data, 1);
+        return ZMK_BEHAVIOR_OPAQUE;
+    case DM_FEEDBACK_DEC:
+        cmd_feedback_adjust(data, -1);
+        return ZMK_BEHAVIOR_OPAQUE;
+#endif
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_TEST_RELOAD)
     case DM_TEST_RELOAD:
         if (data->state != DM_STATE_IDLE) {
@@ -1995,6 +2066,7 @@ static int behavior_dynamic_macro_init(const struct device *dev) {
     dm_storage_init();
 #endif
 #if DM_TYPING_ENABLED
+    data->current_feedback_level = DM_FEEDBACK_LEVEL;
     data->feedback_post_save_slot = -1;
     data->status_current_slot = -1;
     data->preview_done = true;

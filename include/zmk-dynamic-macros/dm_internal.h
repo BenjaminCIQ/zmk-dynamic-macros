@@ -101,6 +101,7 @@ struct behavior_dynamic_macro_data {
     struct k_work emit_work;
     bool suppress_recording;
 #if DM_TYPING_ENABLED
+    uint8_t current_feedback_level;
     struct fb_event ring[FB_RING_SIZE];
     uint8_t ring_head;
     uint8_t ring_tail;
@@ -136,6 +137,13 @@ int dm_storage_delete_slot(struct behavior_dynamic_macro_data *data, int slot_id
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_TEST_RELOAD)
 void dm_storage_flush(void);
 void dm_storage_test_reload(void);
+#endif
+#if DM_TYPING_ENABLED
+void dm_storage_save_feedback_level(struct behavior_dynamic_macro_data *data);
+#endif
+#else
+#if DM_TYPING_ENABLED
+static inline void dm_storage_save_feedback_level(struct behavior_dynamic_macro_data *data) {}
 #endif
 #endif
 

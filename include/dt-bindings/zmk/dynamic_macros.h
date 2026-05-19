@@ -13,5 +13,7 @@
 #define DM_MOV      4
 #define DM_SLOT_NVS 5
 #define DM_SLOT_RAM 6
-#define DM_PREVIEW  7
-#define DM_TEST_RELOAD  8
+#define DM_PREVIEW      7
+#define DM_FEEDBACK_INC 8
+#define DM_FEEDBACK_DEC 9
+#define DM_TEST_RELOAD  10

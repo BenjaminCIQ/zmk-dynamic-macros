@@ -62,6 +62,15 @@ static void settings_slot_key(struct behavior_dynamic_macro_data *data, int slot
     snprintf(key, key_len, "dm/%s/slot/%d", config->settings_name, slot_idx);
 }
 
+#if DM_TYPING_ENABLED
+static void settings_feedback_key(struct behavior_dynamic_macro_data *data, char *key,
+                                  size_t key_len) {
+    const struct behavior_dynamic_macro_config *config = data->dev->config;
+
+    snprintf(key, key_len, "dm/%s/fblevel", config->settings_name);
+}
+#endif
+
 /*
  * Threading model:
  *
@@ -176,11 +185,8 @@ static int enqueue_storage_op(struct behavior_dynamic_macro_data *data, enum dm_
     return 0;
 }
 
-static bool parse_settings_slot_name(const char *name, struct behavior_dynamic_macro_data **data,
-                                     int *slot_idx) {
-    const char *p = name;
-    int parsed = 0;
-
+static const char *parse_settings_device(const char *name,
+                                          struct behavior_dynamic_macro_data **data) {
     for (size_t i = 0; i < dm_devices_len; i++) {
         const struct device *dev = dm_devices[i];
         const struct behavior_dynamic_macro_config *config = dev->config;
@@ -192,11 +198,18 @@ static bool parse_settings_slot_name(const char *name, struct behavior_dynamic_m
         }
 
         *data = dev->data;
-        p = name + settings_name_len + 1;
-        break;
+        return name + settings_name_len + 1;
     }
 
-    if (*data == NULL || strncmp(p, "slot/", strlen("slot/")) != 0) {
+    return NULL;
+}
+
+static bool parse_settings_slot_name(const char *name, struct behavior_dynamic_macro_data **data,
+                                     int *slot_idx) {
+    const char *p = parse_settings_device(name, data);
+    int parsed = 0;
+
+    if (p == NULL || strncmp(p, "slot/", strlen("slot/")) != 0) {
         return false;
     }
     p += strlen("slot/");
@@ -225,6 +238,24 @@ static int dm_settings_set(const char *name, size_t len, settings_read_cb read_c
     static uint8_t load_buf[sizeof(struct dm_slot_header) + MAX_EVENTS * sizeof(struct dm_event)];
     struct behavior_dynamic_macro_data *data = NULL;
     int slot_idx = -1;
+
+#if DM_TYPING_ENABLED
+    {
+        struct behavior_dynamic_macro_data *fb_data = NULL;
+        const char *suffix = parse_settings_device(name, &fb_data);
+
+        if (fb_data != NULL && strcmp(suffix, "fblevel") == 0) {
+            uint8_t level = 0;
+            int rc = read_cb(cb_arg, &level, sizeof(level));
+            if (rc == sizeof(level) && level >= DM_FEEDBACK_ERROR &&
+                level <= DM_FEEDBACK_VERBOSE) {
+                fb_data->current_feedback_level = level;
+                LOG_DBG("Loaded feedback level: %u", level);
+            }
+            return 0;
+        }
+    }
+#endif
 
     if (!parse_settings_slot_name(name, &data, &slot_idx)) {
         return -ENOENT;
@@ -324,6 +355,18 @@ static int dm_settings_export(int (*storage_func)(const char *name, const void *
                 return rc;
             }
         }
+
+#if DM_TYPING_ENABLED
+        if (data->current_feedback_level != DM_FEEDBACK_LEVEL) {
+            char key[64];
+            settings_feedback_key(data, key, sizeof(key));
+            uint8_t level = data->current_feedback_level;
+            int rc = storage_func(key, &level, sizeof(level));
+            if (rc) {
+                return rc;
+            }
+        }
+#endif
     }
     return 0;
 }
@@ -368,6 +411,19 @@ void dm_storage_test_reload(void) {
         LOG_ERR("Test reload: settings_load failed: %d", rc);
     } else {
         LOG_DBG("Test reload: settings reloaded");
+    }
+}
+#endif
+
+#if DM_TYPING_ENABLED
+void dm_storage_save_feedback_level(struct behavior_dynamic_macro_data *data) {
+    char key[64];
+    settings_feedback_key(data, key, sizeof(key));
+
+    uint8_t level = data->current_feedback_level;
+    int rc = settings_save_one(key, &level, sizeof(level));
+    if (rc) {
+        LOG_ERR("Failed to save feedback level: %d", rc);
     }
 }
 #endif
