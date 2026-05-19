@@ -57,8 +57,8 @@ BUILD_ASSERT(MAX_SLOTS <= 64, "Dynamic macros support at most 64 total slots");
 
 #define DM_VALIDATE_CMD_RANGE(idx, layer)                                                         \
     COND_CODE_1(DM_IS_DM_BINDING(idx, layer),                                                     \
-                (BUILD_ASSERT(DT_PHA_BY_IDX(layer, bindings, idx, param1) <= DM_FEEDBACK_DEC,      \
-                              "Dynamic macro param1 is not a valid command (expected 0-9)");),    \
+                (BUILD_ASSERT(DT_PHA_BY_IDX(layer, bindings, idx, param1) <= DM_TEST_RELOAD,      \
+                              "Dynamic macro param1 is not a valid command (expected 0-10)");),   \
                 ())
 
 #define DM_VALIDATE_CMD_NO_PARAM2(idx, layer, command)                                            \
@@ -81,7 +81,8 @@ BUILD_ASSERT(MAX_SLOTS <= 64, "Dynamic macros support at most 64 total slots");
                          "DM_SLOT_RAM index exceeds configured RAM dynamic macro slots")          \
     DM_VALIDATE_CMD_NO_PARAM2(idx, layer, DM_PREVIEW)                                             \
     DM_VALIDATE_CMD_NO_PARAM2(idx, layer, DM_FEEDBACK_INC)                                        \
-    DM_VALIDATE_CMD_NO_PARAM2(idx, layer, DM_FEEDBACK_DEC)
+    DM_VALIDATE_CMD_NO_PARAM2(idx, layer, DM_FEEDBACK_DEC)                                       \
+    DM_VALIDATE_CMD_NO_PARAM2(idx, layer, DM_TEST_RELOAD)
 
 #define DM_VALIDATE_KEYMAP_LAYER(layer)                                                           \
     COND_CODE_1(DT_NODE_HAS_PROP(layer, bindings),                                                \
