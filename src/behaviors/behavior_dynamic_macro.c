@@ -975,7 +975,7 @@ static void feedback_rec(struct behavior_dynamic_macro_data *data) {
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
     raise_dm_state_changed(data, ZMK_DYNAMIC_MACRO_RECORDING_STARTED, -1);
 #endif
-    if (!feedback_enabled_for(data, DM_FEEDBACK_BASIC)) {
+    if (!feedback_enabled_for(data, DM_FEEDBACK_COMMAND)) {
         data->state = DM_STATE_RECORDING;
         return;
     }
@@ -990,7 +990,7 @@ static void feedback_stop(struct behavior_dynamic_macro_data *data) {
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
     raise_dm_state_changed(data, ZMK_DYNAMIC_MACRO_RECORDING_STOPPED, -1);
 #endif
-    if (!feedback_enabled_for(data, DM_FEEDBACK_BASIC)) {
+    if (!feedback_enabled_for(data, DM_FEEDBACK_COMMAND)) {
         data->state = DM_STATE_PENDING_ASSIGN;
         k_work_reschedule(&data->assign_timeout_work,
                           K_MSEC(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_ASSIGN_TIMEOUT));
@@ -1008,7 +1008,7 @@ static void feedback_saved(struct behavior_dynamic_macro_data *data, int slot_id
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
     raise_dm_state_changed(data, ZMK_DYNAMIC_MACRO_SAVED, slot_idx);
 #endif
-    if (!feedback_enabled_for(data, DM_FEEDBACK_BASIC)) {
+    if (!feedback_enabled_for(data, DM_FEEDBACK_COMMAND)) {
         data->state = DM_STATE_IDLE;
         save_slot(data, slot_idx);
         return;
@@ -1039,7 +1039,7 @@ static void feedback_slot_full(struct behavior_dynamic_macro_data *data, int slo
     enum dm_state return_state =
         data->state == DM_STATE_MOVE_PENDING ? DM_STATE_MOVE_PENDING : DM_STATE_PENDING_ASSIGN;
 
-    if (!feedback_enabled_for(data, DM_FEEDBACK_BASIC)) {
+    if (!feedback_enabled_for(data, DM_FEEDBACK_COMMAND)) {
         data->state = return_state;
         k_work_reschedule(&data->assign_timeout_work,
                           K_MSEC(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_ASSIGN_TIMEOUT));
@@ -1063,7 +1063,7 @@ void dm_feedback_deleted(struct behavior_dynamic_macro_data *data, int slot_idx)
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
     raise_dm_state_changed(data, ZMK_DYNAMIC_MACRO_DELETED, slot_idx);
 #endif
-    if (!feedback_enabled_for(data, DM_FEEDBACK_BASIC)) {
+    if (!feedback_enabled_for(data, DM_FEEDBACK_COMMAND)) {
         data->state = DM_STATE_IDLE;
         return;
     }
@@ -1260,7 +1260,7 @@ static void feedback_status(struct behavior_dynamic_macro_data *data) {
 }
 
 static void feedback_move_prompt(struct behavior_dynamic_macro_data *data) {
-    if (!feedback_enabled_for(data, DM_FEEDBACK_BASIC)) {
+    if (!feedback_enabled_for(data, DM_FEEDBACK_COMMAND)) {
         data->state = DM_STATE_MOVE_PENDING;
         return;
     }
@@ -1272,7 +1272,7 @@ static void feedback_move_prompt(struct behavior_dynamic_macro_data *data) {
 }
 
 static void feedback_move_source_selected(struct behavior_dynamic_macro_data *data, int slot_idx) {
-    if (!feedback_enabled_for(data, DM_FEEDBACK_BASIC)) {
+    if (!feedback_enabled_for(data, DM_FEEDBACK_COMMAND)) {
         data->state = DM_STATE_MOVE_PENDING;
         return;
     }
@@ -1292,7 +1292,7 @@ static void feedback_moved(struct behavior_dynamic_macro_data *data, int src, in
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
     raise_dm_state_changed(data, ZMK_DYNAMIC_MACRO_MOVED, dst);
 #endif
-    if (!feedback_enabled_for(data, DM_FEEDBACK_BASIC)) {
+    if (!feedback_enabled_for(data, DM_FEEDBACK_COMMAND)) {
         data->state = DM_STATE_IDLE;
         return;
     }
@@ -1316,7 +1316,7 @@ static void feedback_moved(struct behavior_dynamic_macro_data *data, int src, in
 }
 
 static void feedback_move_cancelled(struct behavior_dynamic_macro_data *data) {
-    if (!feedback_enabled_for(data, DM_FEEDBACK_BASIC)) {
+    if (!feedback_enabled_for(data, DM_FEEDBACK_COMMAND)) {
         data->state = DM_STATE_IDLE;
         return;
     }
@@ -1358,7 +1358,7 @@ static void feedback_chain_empty(struct behavior_dynamic_macro_data *data, int s
 }
 
 static void feedback_chain_no_room(struct behavior_dynamic_macro_data *data, int slot_idx) {
-    if (!feedback_enabled_for(data, DM_FEEDBACK_BASIC)) {
+    if (!feedback_enabled_for(data, DM_FEEDBACK_COMMAND)) {
         data->state = DM_STATE_RECORDING;
         return;
     }
@@ -1729,6 +1729,7 @@ static void cmd_status(struct behavior_dynamic_macro_data *data) {
 static const char *feedback_level_name(uint8_t level) {
     switch (level) {
     case DM_FEEDBACK_ERROR:   return "ERROR";
+    case DM_FEEDBACK_COMMAND: return "COMMAND";
     case DM_FEEDBACK_BASIC:   return "BASIC";
     case DM_FEEDBACK_VERBOSE: return "VERBOSE";
     default:                  return "?";

@@ -128,6 +128,7 @@ All options prefixed with `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_`.
 | ------------------ | -------------------------------- |
 | `FEEDBACK_OFF`     | No typed feedback                |
 | `FEEDBACK_ERROR`   | Errors only                      |
+| `FEEDBACK_COMMAND` | Confirmations, no empty slot msgs|
 | `FEEDBACK_BASIC`   | Short confirmations              |
 | `FEEDBACK_VERBOSE` | Full previews (default)          |
 
