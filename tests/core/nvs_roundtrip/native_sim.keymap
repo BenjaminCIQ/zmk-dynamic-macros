@@ -4,41 +4,36 @@
 #include <behaviors/dynamic_macro.dtsi>
 #include <dt-bindings/zmk/dynamic_macros.h>
 
+&kscan {
+    rows = <4>;
+    columns = <2>;
+    exit-after;
+    events = <
+        /* REC */
+        ZMK_MOCK_PRESS(0,0,10)
+        ZMK_MOCK_RELEASE(0,0,10)
+        /* A (recorded) */
+        ZMK_MOCK_PRESS(3,0,10)
+        ZMK_MOCK_RELEASE(3,0,10)
+        /* B (recorded) */
+        ZMK_MOCK_PRESS(3,1,10)
+        ZMK_MOCK_RELEASE(3,1,10)
+        /* STP */
+        ZMK_MOCK_PRESS(0,1,10)
+        ZMK_MOCK_RELEASE(0,1,10)
+        /* SLOT_NVS 0 (assign) */
+        ZMK_MOCK_PRESS(1,0,500)
+        ZMK_MOCK_RELEASE(1,0,10)
+        /* TEST_RELOAD (flush NVS, zero RAM, reload from NVS) */
+        ZMK_MOCK_PRESS(2,1,10)
+        ZMK_MOCK_RELEASE(2,1,10)
+        /* SLOT_NVS 0 (play restored macro) */
+        ZMK_MOCK_PRESS(1,0,2000)
+        ZMK_MOCK_RELEASE(1,0,10)
+    >;
+};
+
 / {
-    chosen {
-        zmk,kscan = &kscan;
-    };
-
-    kscan: kscan {
-        compatible = "zmk,kscan-mock";
-        rows = <4>;
-        columns = <2>;
-        exit-after;
-        events = <
-            /* REC */
-            ZMK_MOCK_PRESS(0,0,10)
-            ZMK_MOCK_RELEASE(0,0,10)
-            /* A (recorded) */
-            ZMK_MOCK_PRESS(3,0,10)
-            ZMK_MOCK_RELEASE(3,0,10)
-            /* B (recorded) */
-            ZMK_MOCK_PRESS(3,1,10)
-            ZMK_MOCK_RELEASE(3,1,10)
-            /* STP */
-            ZMK_MOCK_PRESS(0,1,10)
-            ZMK_MOCK_RELEASE(0,1,10)
-            /* SLOT_NVS 0 (assign) */
-            ZMK_MOCK_PRESS(1,0,500)
-            ZMK_MOCK_RELEASE(1,0,10)
-            /* TEST_RELOAD (flush NVS, zero RAM, reload from NVS) */
-            ZMK_MOCK_PRESS(2,1,10)
-            ZMK_MOCK_RELEASE(2,1,10)
-            /* SLOT_NVS 0 (play restored macro) */
-            ZMK_MOCK_PRESS(1,0,2000)
-            ZMK_MOCK_RELEASE(1,0,10)
-        >;
-    };
-
     keymap {
         compatible = "zmk,keymap";
         default_layer {
