@@ -103,8 +103,13 @@ static struct hid_keycode ascii_to_hid(char c) {
         return (struct hid_keycode){.keycode = 0x30, .shift = false};
     case '\'':
         return (struct hid_keycode){.keycode = 0x34, .shift = false};
+#if DM_LOCALE == DM_LOCALE_UK
+    case '"':
+        return (struct hid_keycode){.keycode = 0x1F, .shift = true};
+#else
     case '"':
         return (struct hid_keycode){.keycode = 0x34, .shift = true};
+#endif
     case ':':
         return (struct hid_keycode){.keycode = 0x33, .shift = true};
     case ';':
@@ -131,10 +136,17 @@ static struct hid_keycode ascii_to_hid(char c) {
         return (struct hid_keycode){.keycode = 0x38, .shift = true};
     case '!':
         return (struct hid_keycode){.keycode = 0x1E, .shift = true};
+#if DM_LOCALE == DM_LOCALE_UK
+    case '@':
+        return (struct hid_keycode){.keycode = 0x34, .shift = true};
+    case '#':
+        return (struct hid_keycode){.keycode = 0x32, .shift = false};
+#else
     case '@':
         return (struct hid_keycode){.keycode = 0x1F, .shift = true};
     case '#':
         return (struct hid_keycode){.keycode = 0x20, .shift = true};
+#endif
     case '$':
         return (struct hid_keycode){.keycode = 0x21, .shift = true};
     case '%':
@@ -153,6 +165,16 @@ static struct hid_keycode ascii_to_hid(char c) {
         return (struct hid_keycode){.keycode = 0x2F, .shift = true};
     case '}':
         return (struct hid_keycode){.keycode = 0x30, .shift = true};
+#if DM_LOCALE == DM_LOCALE_UK
+    case '\\':
+        return (struct hid_keycode){.keycode = 0x64, .shift = false};
+    case '|':
+        return (struct hid_keycode){.keycode = 0x64, .shift = true};
+    case '`':
+        return (struct hid_keycode){.keycode = 0x35, .shift = false};
+    case '~':
+        return (struct hid_keycode){.keycode = 0x32, .shift = true};
+#else
     case '\\':
         return (struct hid_keycode){.keycode = 0x31, .shift = false};
     case '|':
@@ -161,6 +183,7 @@ static struct hid_keycode ascii_to_hid(char c) {
         return (struct hid_keycode){.keycode = 0x35, .shift = false};
     case '~':
         return (struct hid_keycode){.keycode = 0x35, .shift = true};
+#endif
 #endif
     default:
         return (struct hid_keycode){.keycode = 0x2C, .shift = false}; /* space for unknown */

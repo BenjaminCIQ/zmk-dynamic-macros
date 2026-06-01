@@ -81,7 +81,7 @@ config ZMK_BEHAVIOR_DYNAMIC_MACRO_LOCALE_US
     bool "US QWERTY (full punctuation)"
 
 config ZMK_BEHAVIOR_DYNAMIC_MACRO_LOCALE_UK
-    bool "UK QWERTY (plain mode)"
+    bool "UK QWERTY (full punctuation)"
 
 config ZMK_BEHAVIOR_DYNAMIC_MACRO_LOCALE_DE
     bool "German QWERTZ (plain mode)"
@@ -109,7 +109,7 @@ config ZMK_BEHAVIOR_DYNAMIC_MACRO_FEEDBACK_STYLE_FULL
 
 config ZMK_BEHAVIOR_DYNAMIC_MACRO_FEEDBACK_STYLE_ARROW
     bool "Arrow grammar (>*, >N3, -N3)"
-    depends on ZMK_BEHAVIOR_DYNAMIC_MACRO_LOCALE_US
+    depends on ZMK_BEHAVIOR_DYNAMIC_MACRO_LOCALE_US || ZMK_BEHAVIOR_DYNAMIC_MACRO_LOCALE_UK
 
 endchoice
 

@@ -181,22 +181,22 @@ When enabled, feedback text is automatically erased by emitting backspace keycod
 | Option      | Description                        |
 | ----------- | ---------------------------------- |
 | `LOCALE_US` | US QWERTY, full punctuation (default) |
-| `LOCALE_UK` | UK QWERTY, plain mode              |
+| `LOCALE_UK` | UK QWERTY, full punctuation          |
 | `LOCALE_DE` | German QWERTZ, plain mode          |
 | `LOCALE_FR` | French AZERTY, plain mode          |
 
-Feedback works by typing HID keycodes into the focused application. Punctuation characters like `[`, `]`, `:`, `'` occupy different physical keys on each keyboard layout — a US bracket keycode produces a different character on a German or French host. Non-US locales therefore use plain mode (letters, digits, spaces only) to avoid garbled output. Letter and digit mappings are adjusted per locale (e.g. Y/Z swap for German QWERTZ, AZERTY positions for French).
+Feedback works by typing HID keycodes into the focused application. Punctuation characters like `[`, `]`, `:`, `'` occupy different physical keys on each keyboard layout — a US bracket keycode produces a different character on a German or French host. DE and FR locales therefore use plain mode (letters, digits, spaces only) to avoid garbled output. UK uses full punctuation with correct mappings for the 6 keys that differ from US (`"`, `@`, `#`, `~`, `\`, `|`). Letter and digit mappings are adjusted per locale (e.g. Y/Z swap for German QWERTZ, AZERTY positions for French).
 
 #### Locale Feature Matrix
 
 | Feature | US | UK | DE | FR |
 | ------- | -- | -- | -- | -- |
-| FULL style punctuation (`[DM SAVED N3]`) | Yes | No (plain) | No (plain) | No (plain) |
-| ARROW style | Yes | No | No | No |
+| FULL style punctuation (`[DM SAVED N3]`) | Yes | Yes | No (plain) | No (plain) |
+| ARROW style | Yes | Yes | No | No |
 | Preview rendering (printable chars) | Accurate | US layout assumed | US layout assumed | US layout assumed |
 | Feedback level adjustment | Yes | Yes | Yes | Yes |
 | Auto-erase | Yes | Yes | Yes | Yes |
-| Status output | Full | Plain | Plain | Plain |
+| Status output | Full | Full | Plain | Plain |
 
 ### Status Detail
 
