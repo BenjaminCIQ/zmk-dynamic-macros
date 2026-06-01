@@ -523,6 +523,7 @@ static void fb_append_str(struct behavior_dynamic_macro_data *data, const char *
 #define DM_MSG_SLOT_END   ""
 #define DM_MSG_EVENTS    " EVENTS"
 #define DM_MSG_FB_PREFIX "DM FB "
+#define DM_MSG_CLOSE     ""
 #else
 #define DM_MSG_REC       "[DM REC]"
 #define DM_MSG_STOP      "[DM STOP]"
@@ -546,6 +547,7 @@ static void fb_append_str(struct behavior_dynamic_macro_data *data, const char *
 #define DM_MSG_SLOT_END   "]"
 #define DM_MSG_EVENTS    ""
 #define DM_MSG_FB_PREFIX "[DM FB:"
+#define DM_MSG_CLOSE     "]"
 #endif
 
 static void fb_append_number(struct behavior_dynamic_macro_data *data, int n) {
@@ -1028,9 +1030,7 @@ static void feedback_saved(struct behavior_dynamic_macro_data *data, int slot_id
         data->needs_suffix = true;
         render_slot_contents_stream(data);
     } else {
-#if !DM_LOCALE_PLAIN
-        fb_append_char(data, ']');
-#endif
+        fb_append_str(data, DM_MSG_CLOSE);
     }
     start_feedback(data, DM_STATE_IDLE, slot_idx);
 }
@@ -1073,9 +1073,7 @@ void dm_feedback_deleted(struct behavior_dynamic_macro_data *data, int slot_idx)
     fb_append_str(data, DM_MSG_DEL);
     fb_append_char(data, slot_storage_prefix(slot_idx));
     fb_append_number(data, slot_idx);
-#if !DM_LOCALE_PLAIN
-    fb_append_str(data, "]");
-#endif
+    fb_append_str(data, DM_MSG_CLOSE);
     start_feedback(data, DM_STATE_IDLE, -1);
 }
 
@@ -1110,9 +1108,7 @@ void dm_feedback_save_failed(struct behavior_dynamic_macro_data *data, int slot_
     fb_append_str(data, DM_MSG_SAVE_FAIL);
     fb_append_char(data, slot_storage_prefix(slot_idx));
     fb_append_number(data, slot_idx);
-#if !DM_LOCALE_PLAIN
-    fb_append_char(data, ']');
-#endif
+    fb_append_str(data, DM_MSG_CLOSE);
     start_feedback(data, DM_STATE_IDLE, -1);
 }
 
@@ -1129,9 +1125,7 @@ void dm_feedback_save_queue_full(struct behavior_dynamic_macro_data *data, int s
     fb_append_str(data, DM_MSG_SAVE_FULL);
     fb_append_char(data, slot_storage_prefix(slot_idx));
     fb_append_number(data, slot_idx);
-#if !DM_LOCALE_PLAIN
-    fb_append_char(data, ']');
-#endif
+    fb_append_str(data, DM_MSG_CLOSE);
     start_feedback(data, DM_STATE_IDLE, -1);
 }
 
@@ -1149,9 +1143,7 @@ void dm_feedback_delete_queue_full(struct behavior_dynamic_macro_data *data, int
     fb_append_str(data, DM_MSG_DEL_FULL);
     fb_append_char(data, slot_storage_prefix(slot_idx));
     fb_append_number(data, slot_idx);
-#if !DM_LOCALE_PLAIN
-    fb_append_char(data, ']');
-#endif
+    fb_append_str(data, DM_MSG_CLOSE);
     start_feedback(data, DM_STATE_IDLE, -1);
 }
 
@@ -1275,9 +1267,7 @@ static void feedback_move_source_selected(struct behavior_dynamic_macro_data *da
     fb_append_str(data, DM_MSG_MOV_SRC);
     fb_append_char(data, slot_storage_prefix(slot_idx));
     fb_append_number(data, slot_idx);
-#if !DM_LOCALE_PLAIN
-    fb_append_char(data, ']');
-#endif
+    fb_append_str(data, DM_MSG_CLOSE);
     start_feedback(data, DM_STATE_MOVE_PENDING, -1);
 }
 
@@ -1302,9 +1292,7 @@ static void feedback_moved(struct behavior_dynamic_macro_data *data, int src, in
 #endif
     fb_append_char(data, slot_storage_prefix(dst));
     fb_append_number(data, dst);
-#if !DM_LOCALE_PLAIN
-    fb_append_char(data, ']');
-#endif
+    fb_append_str(data, DM_MSG_CLOSE);
     start_feedback(data, DM_STATE_IDLE, -1);
 }
 
@@ -1589,9 +1577,7 @@ static void emit_work_handler(struct k_work *work) {
                 if (data->needs_suffix) {
                     /* feedback_saved suffix */
                     fb_append_str(data, DM_MSG_PREVIEW_END);
-#if !DM_LOCALE_PLAIN
-                    fb_append_char(data, ']');
-#endif
+                    fb_append_str(data, DM_MSG_CLOSE);
                     data->needs_suffix = false;
                 } else if (data->status_mode && data->status_current_slot >= 0) {
                     /* status slot suffix */
@@ -1749,9 +1735,7 @@ static void cmd_feedback_adjust(struct behavior_dynamic_macro_data *data, int di
     fb_reset(data);
     fb_append_str(data, DM_MSG_FB_PREFIX);
     fb_append_str(data, feedback_level_name(data->current_feedback_level));
-#if !DM_LOCALE_PLAIN
-    fb_append_char(data, ']');
-#endif
+    fb_append_str(data, DM_MSG_CLOSE);
     start_feedback(data, DM_STATE_IDLE, -1);
 }
 #endif
@@ -2153,7 +2137,7 @@ int dm_get_preview_string(int slot_idx, char *buf, size_t len) {
         const struct dm_event *ev = &slot->events[i];
 
         if (is_modifier_key(ev->usage_page, ev->keycode)) {
-            uint8_t mod_bit = mod_bits[ev->keycode - 0xE0];
+            uint8_t mod_bit = 1 << (ev->keycode - 0xE0);
             if (ev->pressed) {
                 active_mods |= mod_bit;
             } else {
@@ -2173,11 +2157,38 @@ int dm_get_preview_string(int slot_idx, char *buf, size_t len) {
             buf[pos++] = c;
         } else {
             const char *name = action_name(ev->usage_page, ev->keycode);
-            size_t name_len = strlen(name);
-            if (pos + name_len + 2 < len - 1) {
+            size_t needed = 2; /* < and > */
+            bool has_mod = false;
+            for (int m = 0; m < 8; m++) {
+                if (mods & (1 << m)) {
+                    needed += strlen(mod_names[m]) + (has_mod ? 1 : 0);
+                    has_mod = true;
+                }
+            }
+            if (has_mod) {
+                needed += 1; /* separator before action name */
+            }
+            needed += strlen(name);
+            if (pos + needed < len - 1) {
                 buf[pos++] = '<';
-                memcpy(&buf[pos], name, name_len);
-                pos += name_len;
+                bool first = true;
+                for (int m = 0; m < 8; m++) {
+                    if (mods & (1 << m)) {
+                        if (!first) {
+                            buf[pos++] = '+';
+                        }
+                        size_t ml = strlen(mod_names[m]);
+                        memcpy(&buf[pos], mod_names[m], ml);
+                        pos += ml;
+                        first = false;
+                    }
+                }
+                if (has_mod) {
+                    buf[pos++] = '+';
+                }
+                size_t nl = strlen(name);
+                memcpy(&buf[pos], name, nl);
+                pos += nl;
                 buf[pos++] = '>';
             }
         }
