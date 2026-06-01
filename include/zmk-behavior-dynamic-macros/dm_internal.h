@@ -107,6 +107,8 @@ struct behavior_dynamic_macro_data {
     bool suppress_recording;
 #if DM_TYPING_ENABLED
     uint8_t current_feedback_level;
+    uint8_t current_feedback_style;
+    bool auto_erase_enabled;
     struct fb_event ring[FB_RING_SIZE];
     uint8_t ring_head;
     uint8_t ring_tail;

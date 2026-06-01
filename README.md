@@ -117,6 +117,8 @@ Press **STATE** to output slot info to the focused window.
 | `&dm DM_PREVIEW 0`  | Enter preview mode (requires EVENTS) |
 | `&dm DM_FEEDBACK_INC 0` | Increase feedback level        |
 | `&dm DM_FEEDBACK_DEC 0` | Decrease feedback level        |
+| `&dm DM_STYLE_TOGGLE 0` | Toggle FULL / ARROW style (US/UK locale only) |
+| `&dm DM_ERASE_TOGGLE 0` | Toggle auto-erase on / off     |
 
 ## Kconfig Options
 

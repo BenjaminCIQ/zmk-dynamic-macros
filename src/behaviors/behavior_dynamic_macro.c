@@ -60,7 +60,7 @@ BUILD_ASSERT(MAX_SLOTS <= 64, "Dynamic macros support at most 64 total slots");
 #define DM_VALIDATE_CMD_RANGE(idx, layer)                                                         \
     COND_CODE_1(DM_IS_DM_BINDING(idx, layer),                                                     \
                 (BUILD_ASSERT(DT_PHA_BY_IDX(layer, bindings, idx, param1) <= DM_TEST_RELOAD,      \
-                              "Dynamic macro param1 is not a valid command (expected 0-10)");),   \
+                              "Dynamic macro param1 is not a valid command (expected 0-12)");),   \
                 ())
 
 #define DM_VALIDATE_CMD_NO_PARAM2(idx, layer, command)                                            \
@@ -84,6 +84,8 @@ BUILD_ASSERT(MAX_SLOTS <= 64, "Dynamic macros support at most 64 total slots");
     DM_VALIDATE_CMD_NO_PARAM2(idx, layer, DM_PREVIEW)                                             \
     DM_VALIDATE_CMD_NO_PARAM2(idx, layer, DM_FEEDBACK_INC)                                        \
     DM_VALIDATE_CMD_NO_PARAM2(idx, layer, DM_FEEDBACK_DEC)                                       \
+    DM_VALIDATE_CMD_NO_PARAM2(idx, layer, DM_STYLE_TOGGLE)                                       \
+    DM_VALIDATE_CMD_NO_PARAM2(idx, layer, DM_ERASE_TOGGLE)                                       \
     DM_VALIDATE_CMD_NO_PARAM2(idx, layer, DM_TEST_RELOAD)
 
 #define DM_VALIDATE_KEYMAP_LAYER(layer)                                                           \
@@ -705,6 +707,12 @@ static int on_keymap_binding_pressed(struct zmk_behavior_binding *binding,
     case DM_FEEDBACK_DEC:
         cmd_feedback_adjust(data, -1);
         return ZMK_BEHAVIOR_OPAQUE;
+    case DM_STYLE_TOGGLE:
+        cmd_style_toggle(data);
+        return ZMK_BEHAVIOR_OPAQUE;
+    case DM_ERASE_TOGGLE:
+        cmd_erase_toggle(data);
+        return ZMK_BEHAVIOR_OPAQUE;
 #endif
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_TEST_RELOAD)
     case DM_TEST_RELOAD:
@@ -819,6 +827,8 @@ static int behavior_dynamic_macro_init(const struct device *dev) {
 #endif
 #if DM_TYPING_ENABLED
     data->current_feedback_level = DM_FEEDBACK_LEVEL;
+    data->current_feedback_style = DM_FEEDBACK_STYLE;
+    data->auto_erase_enabled = IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_FEEDBACK_AUTO_ERASE);
     data->feedback_post_save_slot = -1;
     data->status_current_slot = -1;
     data->preview_done = true;

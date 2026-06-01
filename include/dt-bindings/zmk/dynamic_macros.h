@@ -16,4 +16,6 @@
 #define DM_PREVIEW      7
 #define DM_FEEDBACK_INC 8
 #define DM_FEEDBACK_DEC 9
-#define DM_TEST_RELOAD  10
+#define DM_STYLE_TOGGLE 10
+#define DM_ERASE_TOGGLE 11
+#define DM_TEST_RELOAD  12

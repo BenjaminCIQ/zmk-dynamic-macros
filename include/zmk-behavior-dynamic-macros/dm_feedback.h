@@ -36,6 +36,8 @@ void dm_feedback_delete_queue_full(struct behavior_dynamic_macro_data *data, int
 
 #if DM_TYPING_ENABLED
 void cmd_feedback_adjust(struct behavior_dynamic_macro_data *data, int direction);
+void cmd_style_toggle(struct behavior_dynamic_macro_data *data);
+void cmd_erase_toggle(struct behavior_dynamic_macro_data *data);
 #endif
 
 /* Emit handler support: called from emit_work_handler in core */

@@ -151,6 +151,21 @@ static void dm_storage_work_handler(struct k_work *work) {
             if (rc) {
                 LOG_ERR("Failed to save feedback level: %d", rc);
             }
+
+            const struct behavior_dynamic_macro_config *cfg = op.data->dev->config;
+            snprintf(key, sizeof(key), "dm/%s/fbstyle", cfg->settings_name);
+            uint8_t style = op.data->current_feedback_style;
+            rc = settings_save_one(key, &style, sizeof(style));
+            if (rc) {
+                LOG_ERR("Failed to save feedback style: %d", rc);
+            }
+
+            snprintf(key, sizeof(key), "dm/%s/fberase", cfg->settings_name);
+            uint8_t erase = (uint8_t)op.data->auto_erase_enabled;
+            rc = settings_save_one(key, &erase, sizeof(erase));
+            if (rc) {
+                LOG_ERR("Failed to save auto-erase setting: %d", rc);
+            }
             continue;
         }
 #endif
@@ -317,6 +332,27 @@ static int dm_settings_set(const char *name, size_t len, settings_read_cb read_c
             }
             return 0;
         }
+
+        if (fb_data != NULL && strcmp(suffix, "fbstyle") == 0) {
+            uint8_t style = 0;
+            int rc = read_cb(cb_arg, &style, sizeof(style));
+            if (rc == sizeof(style) &&
+                (style == DM_STYLE_FULL || (!DM_LOCALE_PLAIN && style == DM_STYLE_ARROW))) {
+                fb_data->current_feedback_style = style;
+                LOG_DBG("Loaded feedback style: %u", style);
+            }
+            return 0;
+        }
+
+        if (fb_data != NULL && strcmp(suffix, "fberase") == 0) {
+            uint8_t erase = 0;
+            int rc = read_cb(cb_arg, &erase, sizeof(erase));
+            if (rc == sizeof(erase)) {
+                fb_data->auto_erase_enabled = (bool)erase;
+                LOG_DBG("Loaded auto-erase: %u", erase);
+            }
+            return 0;
+        }
     }
 #endif
 
@@ -427,6 +463,31 @@ static int dm_settings_export(int (*storage_func)(const char *name, const void *
             int rc = storage_func(key, &level, sizeof(level));
             if (rc) {
                 return rc;
+            }
+        }
+
+        if (data->current_feedback_style != DM_FEEDBACK_STYLE) {
+            char key[64];
+            const struct behavior_dynamic_macro_config *cfg = data->dev->config;
+            snprintf(key, sizeof(key), "dm/%s/fbstyle", cfg->settings_name);
+            uint8_t style = data->current_feedback_style;
+            int rc = storage_func(key, &style, sizeof(style));
+            if (rc) {
+                return rc;
+            }
+        }
+
+        {
+            bool default_erase = IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_FEEDBACK_AUTO_ERASE);
+            if ((bool)data->auto_erase_enabled != default_erase) {
+                char key[64];
+                const struct behavior_dynamic_macro_config *cfg = data->dev->config;
+                snprintf(key, sizeof(key), "dm/%s/fberase", cfg->settings_name);
+                uint8_t erase = (uint8_t)data->auto_erase_enabled;
+                int rc = storage_func(key, &erase, sizeof(erase));
+                if (rc) {
+                    return rc;
+                }
             }
         }
 #endif
