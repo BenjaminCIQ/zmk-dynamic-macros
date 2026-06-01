@@ -69,7 +69,7 @@ struct zmk_dynamic_macro_state_changed {
 ## Subscribing to Events
 
 ```c
-#include <zmk/events/dynamic_macro_state_changed.h>
+#include <zmk-behaviour-dynamic-macros/events/dynamic_macro_state_changed.h>
 
 static int my_macro_listener(const zmk_event_t *eh) {
     const struct zmk_dynamic_macro_state_changed *ev = as_zmk_dynamic_macro_state_changed(eh);
@@ -226,7 +226,7 @@ Query functions read shared state. In ZMK's cooperative threading model, this is
 ## Example: Display Widget
 
 ```c
-#include <zmk/events/dynamic_macro_state_changed.h>
+#include <zmk-behaviour-dynamic-macros/events/dynamic_macro_state_changed.h>
 
 static void update_macro_display(void) {
     enum zmk_dynamic_macro_state state = dm_get_state();

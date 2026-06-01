@@ -12,7 +12,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/settings/settings.h>
 
-#include <zmk-dynamic-macros/dm_internal.h>
+#include <zmk-behaviour-dynamic-macros/dm_internal.h>
 
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
