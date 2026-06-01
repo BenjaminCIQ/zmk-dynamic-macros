@@ -150,7 +150,7 @@ All options prefixed with `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_`.
 | `FEEDBACK_STYLE_FULL`  | Full text (default): `[DM SAVED N3]` |
 | `FEEDBACK_STYLE_ARROW` | Compact ASCII: `>N3` (US locale only) |
 
-ARROW uses single punctuation marks with fixed roles: `>` success, `-` delete, `!` error, `?` empty, `%` full, `<>` move, `>>` transfer, `*` record, `.` stop.
+ARROW uses single punctuation marks with fixed roles: `>` success, `-` delete, `!` error, `?` empty, `%` full, `<>` move, `>>` transfer, `*` record, `.` stop. See [docs/arrow-cheatsheet.md](docs/arrow-cheatsheet.md) for the full message reference.
 
 | Operation | FULL | ARROW |
 | --------- | ---- | ----- |
