@@ -12,8 +12,8 @@
 #include <zephyr/kernel.h>
 #include <zephyr/settings/settings.h>
 
-#include <zmk-behaviour-dynamic-macros/dm_internal.h>
-#include <zmk-behaviour-dynamic-macros/dm_feedback.h>
+#include <zmk-behavior-dynamic-macros/dm_internal.h>
+#include <zmk-behavior-dynamic-macros/dm_feedback.h>
 
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 

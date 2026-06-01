@@ -21,10 +21,10 @@
 #include <zmk/keymap.h>
 #include <dt-bindings/zmk/hid_usage_pages.h>
 #include <dt-bindings/zmk/dynamic_macros.h>
-#include <zmk-behaviour-dynamic-macros/dm_internal.h>
-#include <zmk-behaviour-dynamic-macros/dm_feedback.h>
+#include <zmk-behavior-dynamic-macros/dm_internal.h>
+#include <zmk-behavior-dynamic-macros/dm_feedback.h>
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
-#include <zmk-behaviour-dynamic-macros/events/dynamic_macro_state_changed.h>
+#include <zmk-behavior-dynamic-macros/events/dynamic_macro_state_changed.h>
 #endif
 
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);

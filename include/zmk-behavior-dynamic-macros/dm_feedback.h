@@ -7,7 +7,7 @@
 #ifndef DM_FEEDBACK_H
 #define DM_FEEDBACK_H
 
-#include <zmk-behaviour-dynamic-macros/dm_internal.h>
+#include <zmk-behavior-dynamic-macros/dm_internal.h>
 
 /* Feedback functions called from command handlers */
 void feedback_rec(struct behavior_dynamic_macro_data *data);
