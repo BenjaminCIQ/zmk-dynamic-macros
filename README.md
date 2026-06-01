@@ -14,6 +14,15 @@ A [ZMK](https://zmk.dev/) module for dynamic macro recording and playback. Recor
 - **Locale support** for US, UK, German, and French keyboards
 - **Event system** for display widgets and custom integrations
 
+## Use Cases
+
+| Use Case | Description |
+| --- | --- |
+| **Text snippets** | Store email addresses, sign-offs, code snippets and other boilerplate in NVS slots for instant single-keypress replay — no companion app or OS text expander needed |
+| **On-the-fly macro layers** | Dedicate a layer as a macro bank or scatter slot keys across existing layers. Record, replace and reorganise macros live, promoting RAM slots to NVS once keepers are identified |
+| **Shortcut-heavy apps** | Map a layer as a macro pad for CAD, video editing, or similar workflows. Use RAM slots for session-only sequences and NVS slots for frequent shortcuts — no reflash when switching contexts, or new frequent shortcuts identified |
+| **Layout prototyping** | Test key placement without reflashing by recording sequences into RAM slots. Especially useful given that macro creation and editing is not currently supported in ZMK Studio |
+
 ## Setup
 
 ### 1. Add to west.yml
@@ -180,9 +189,8 @@ See [docs/event-api.md](docs/event-api.md) for full API reference, code examples
 
 ### Storage
 
-- NVS slots persist; RAM slots are lost on reboot
-- Storage uses ~520 bytes per full slot
-- Format includes version header; incompatible upgrades clear saved macros
+- **RAM:** each slot index (`NVS_SLOTS + RAM_SLOTS`) reserves a full in-memory buffer — `4 + MAX_EVENTS × 8` bytes (~520 B at default 64 events), whether empty or not, plus one recording buffer. Example: 8 NVS + 8 RAM → (16 + 1) × ~520 B ≈ 8.8 KB. RAM slot contents are lost on reboot; NVS slots are loaded back from flash into the same buffers.
+- **NVS (flash):** only written when you save to an NVS slot — `8` byte header + `8` bytes × event count (not padded to `MAX_EVENTS`). Empty slots use no flash entry. Max ~520 B per saved slot at default settings. Shares ZMK settings partition; format version in header — incompatible upgrades clear saved macros.
 
 ### Feedback
 
