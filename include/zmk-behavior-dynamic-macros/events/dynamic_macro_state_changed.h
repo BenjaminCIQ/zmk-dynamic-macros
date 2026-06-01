@@ -7,6 +7,7 @@
 
 #include <zephyr/kernel.h>
 #include <zmk/event_manager.h>
+#include <zmk-behavior-dynamic-macros/dm_event.h>
 
 enum zmk_dynamic_macro_state {
     ZMK_DYNAMIC_MACRO_STATE_IDLE,
@@ -40,8 +41,6 @@ struct zmk_dynamic_macro_state_changed {
 };
 
 ZMK_EVENT_DECLARE(zmk_dynamic_macro_state_changed);
-
-struct dm_event;
 
 int dm_get_preview_string(int slot_idx, char *buf, size_t len);
 const struct dm_event *dm_get_slot_events(int slot_idx, uint32_t *count);

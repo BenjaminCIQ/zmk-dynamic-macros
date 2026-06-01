@@ -62,14 +62,7 @@ enum dm_state {
     DM_STATE_TYPING_FEEDBACK,
 };
 
-struct dm_event {
-    uint16_t usage_page;
-    uint16_t keycode;
-    uint8_t implicit_mods;
-    uint8_t explicit_mods;
-    uint8_t pressed;
-    uint8_t _reserved;
-} __packed;
+#include <zmk-behavior-dynamic-macros/dm_event.h>
 
 struct dm_slot {
     uint32_t event_count;
