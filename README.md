@@ -248,17 +248,20 @@ Feedback messages and status output use the `N`/`R` prefix with the internal ind
 
 ### Feedback Examples
 
-Sample output at each feedback level (US locale, FULL style). ARROW equivalents in parentheses:
+Sample output per feedback level (US locale). VERBOSE adds previews to save messages; lower levels show the same text but for fewer events.
 
-| Operation | VERBOSE | BASIC | COMMAND | ERROR |
-| --------- | ------- | ----- | ------- | ----- |
-| Record | `[DM REC]` (`>*`) | `[DM REC]` (`>*`) | `[DM REC]` (`>*`) | — |
-| Stop | `[DM STOP]` (`>.`) | `[DM STOP]` (`>.`) | `[DM STOP]` (`>.`) | — |
-| Save to N0 | `[DM SAVED N0: 'Hello']` (`>N0:'Hello'`) | `[DM SAVED N0]` (`>N0`) | `[DM SAVED N0]` (`>N0`) | — |
-| Delete N0 | `[DM DEL N0]` (`-N0`) | `[DM DEL N0]` (`-N0`) | `[DM DEL N0]` (`-N0`) | — |
-| Play empty | `[DM SLOT N0: -]` (`?N0`) | `[DM SLOT N0: -]` (`?N0`) | — | — |
-| Buffer full | `[DM FULL]` (`!%`) | `[DM FULL]` (`!%`) | `[DM FULL]` (`!%`) | `[DM FULL]` (`!%`) |
-| Save failed | — | — | — | `[DM SAVE FAILED N0]` (`!>N0`) |
+| Operation | FULL | ARROW | VERBOSE | BASIC | COMMAND | ERROR |
+| --------- | ---- | ----- | :-----: | :---: | :-----: | :---: |
+| Record | `[DM REC]` | `>*` | x | x | x | |
+| Stop | `[DM STOP]` | `>.` | x | x | x | |
+| Save to N0 | `[DM SAVED N0]` | `>N0` | x | x | x | |
+| Save (verbose) | `[DM SAVED N0: 'Hello']` | `>N0:'Hello'` | x | | | |
+| Delete N0 | `[DM DEL N0]` | `-N0` | x | x | x | |
+| Play empty | `[DM SLOT N0: -]` | `?N0` | x | x | | |
+| Slot full | `[DM SLOT N0 FULL]` | `>N0%` | x | x | x | |
+| Buffer overflow | `[DM FULL]` | `!%` | x | x | x | x |
+| Save failed | `[DM SAVE FAILED N0]` | `!>N0` | | | | x |
+| Queue full | `[DM SAVE QUEUE FULL N0]` | `!>%N0` | | | | x |
 
 Feedback level can be adjusted at runtime with `DM_FEEDBACK_INC` / `DM_FEEDBACK_DEC` (persisted across reboots). The minimum runtime level is ERROR — OFF is only available at build time.
 
