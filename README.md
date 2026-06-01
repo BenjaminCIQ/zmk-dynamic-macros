@@ -97,7 +97,7 @@ Press a non-empty **slot key** to play.
 
 ### Chaining
 
-While recording, press a non-empty slot key to inline its contents. The chained events are copied, not referenced.
+While recording, press a non-empty slot key to inline its contents. The chained events are copied into the recording buffer, not referenced — the original slot is unchanged and can be independently deleted or overwritten afterwards.
 
 ### Status
 
@@ -114,7 +114,9 @@ Press **STATE** to output slot info to the focused window.
 | `&dm DM_STATE 0`    | Output status                    |
 | `&dm DM_SLOT_NVS N` | NVS slot N (0 to NVS_SLOTS-1)    |
 | `&dm DM_SLOT_RAM N` | RAM slot N (0 to RAM_SLOTS-1)    |
-| `&dm DM_PREVIEW 0`  | Enter preview mode               |
+| `&dm DM_PREVIEW 0`  | Enter preview mode (requires EVENTS) |
+| `&dm DM_FEEDBACK_INC 0` | Increase feedback level        |
+| `&dm DM_FEEDBACK_DEC 0` | Decrease feedback level        |
 
 ## Kconfig Options
 
@@ -152,6 +154,15 @@ All options prefixed with `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_`.
 
 Non-US locales use plain messages (letters, digits, spaces only) with correct key mappings.
 
+#### Locale Feature Matrix
+
+| Feature | US | UK | DE | FR |
+| ------- | -- | -- | -- | -- |
+| Feedback punctuation (`[DM SAVED N3]`) | Yes | No (plain) | No (plain) | No (plain) |
+| Preview rendering (printable chars) | Accurate | US layout assumed | US layout assumed | US layout assumed |
+| Feedback level adjustment | Yes | Yes | Yes | Yes |
+| Status output | Full | Plain | Plain | Plain |
+
 ### Status Detail
 
 | Option                | Description                    |
@@ -187,10 +198,43 @@ See [docs/event-api.md](docs/event-api.md) for full API reference, code examples
 
 ## Notes
 
+### Slot Numbering
+
+NVS and RAM slots use separate index spaces in bindings but share a single internal array:
+
+| Binding | Internal Index | Label |
+| ------- | -------------- | ----- |
+| `&dm DM_SLOT_NVS 0` | 0 | N0 |
+| `&dm DM_SLOT_NVS 7` | 7 | N7 |
+| `&dm DM_SLOT_RAM 0` | 8 (= NVS_SLOTS) | R8 |
+| `&dm DM_SLOT_RAM 7` | 15 | R15 |
+
+Feedback messages and status output use the `N`/`R` prefix with the internal index (e.g. `N0`, `R8`). The binding index is always relative to the slot type.
+
+### Feedback Examples
+
+Sample output at each feedback level for common operations (US locale):
+
+| Operation | VERBOSE | BASIC | COMMAND | ERROR |
+| --------- | ------- | ----- | ------- | ----- |
+| Record | `[DM REC]` | `[DM REC]` | `[DM REC]` | — |
+| Stop | `[DM STOP]` | `[DM STOP]` | `[DM STOP]` | — |
+| Save to N0 | `[DM SAVED N0: 'Hello']` | `[DM SAVED N0]` | `[DM SAVED N0]` | — |
+| Delete N0 | `[DM DEL N0]` | `[DM DEL N0]` | `[DM DEL N0]` | — |
+| Play empty | `[DM SLOT N0: -]` | `[DM SLOT N0: -]` | — | — |
+| Buffer full | `[DM FULL]` | `[DM FULL]` | `[DM FULL]` | `[DM FULL]` |
+| Save failed | — | — | — | `[DM SAVE FAILED N0]` |
+
+Feedback level can be adjusted at runtime with `DM_FEEDBACK_INC` / `DM_FEEDBACK_DEC` (persisted across reboots). The minimum runtime level is ERROR — OFF is only available at build time.
+
 ### Storage
 
 - **RAM:** each slot index (`NVS_SLOTS + RAM_SLOTS`) reserves a full in-memory buffer — `4 + MAX_EVENTS × 8` bytes (~520 B at default 64 events), whether empty or not, plus one recording buffer. Example: 8 NVS + 8 RAM → (16 + 1) × ~520 B ≈ 8.8 KB. RAM slot contents are lost on reboot; NVS slots are loaded back from flash into the same buffers.
 - **NVS (flash):** only written when you save to an NVS slot — `8` byte header + `8` bytes × event count (not padded to `MAX_EVENTS`). Empty slots use no flash entry. Max ~520 B per saved slot at default settings. Shares ZMK settings partition; format version in header — incompatible upgrades clear saved macros.
+
+### Flash Wear
+
+NVS slots write to flash on every save and delete. ZMK's NVS implementation includes wear leveling, but flash has finite write endurance (typically 10,000+ cycles). For macros you change frequently, prefer RAM slots and promote to NVS only once stable.
 
 ### Feedback
 
@@ -199,6 +243,22 @@ Typed feedback goes to the focused application. Use a text editor when testing s
 ### Split Keyboards
 
 Runs on central half only. Both halves' keystrokes are captured during recording.
+
+### Troubleshooting
+
+| Symptom | Cause | Fix |
+| ------- | ----- | --- |
+| `[DM FULL]` during recording | Recording buffer reached MAX_EVENTS | Increase `MAX_EVENTS` or record a shorter sequence. The partial recording can still be saved. |
+| `[DM SAVE FAILED N0]` | NVS write error | Check flash health. Settings partition may be full — reduce NVS_SLOTS or MAX_EVENTS. |
+| `[DM SAVE QUEUE FULL N0]` | Too many storage operations queued | Wait a moment and retry. Occurs when rapidly saving/deleting multiple NVS slots. |
+| Slot shows occupied but was deleted | NVS delete still in progress | The slot is marked pending-delete and will clear shortly. It cannot be played or assigned during this time. |
+| Feedback not appearing | Feedback level set to OFF | Press `DM_FEEDBACK_INC` to raise the level, or set `FEEDBACK_VERBOSE` in .conf. |
+| Wrong characters in feedback | Non-US locale with US punctuation | Non-US locales use plain mode. Set `LOCALE_US` for full punctuation output. |
+| Macro plays wrong keys | Recorded on different layer/layout | Macros record HID keycodes, not physical positions. Replay on the same layout used during recording. |
+
+### Compatibility
+
+Requires ZMK main branch. Tested with Zephyr 4.1+.
 
 ## License
 

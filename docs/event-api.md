@@ -178,7 +178,7 @@ Writes a human-readable preview of slot contents to buffer.
 - `buf`: Output buffer
 - `len`: Buffer size
 
-**Returns:** Number of characters written, or negative on error.
+**Returns:** Number of characters written, or 0 if slot is empty/invalid.
 
 **Example output:** `"Hello World"` or `"Ctrl+C Ctrl+V"`
 
@@ -194,7 +194,7 @@ Returns pointer to raw event array for a slot.
 - `slot_idx`: Slot index
 - `count`: Output parameter, receives event count
 
-**Returns:** Pointer to event array, or NULL if slot empty/invalid.
+**Returns:** Pointer to event array, or NULL if slot empty/invalid. The returned pointer points directly into the slot buffer and is only valid until the next macro operation (save, delete, or move) on that slot. Copy the data if you need it to persist.
 
 **Event structure:**
 ```c
