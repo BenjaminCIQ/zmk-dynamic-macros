@@ -1,0 +1,45 @@
+#include <dt-bindings/zmk/keys.h>
+#include <behaviors.dtsi>
+#include <dt-bindings/zmk/kscan_mock.h>
+#include <behaviors/dynamic_macro.dtsi>
+#include <dt-bindings/zmk/dynamic_macros.h>
+
+&kscan {
+    rows = <4>;
+    columns = <2>;
+    exit-after;
+    events = <
+        /* DM_FEEDBACK_DEC: BASIC -> ERROR (types "[DM FB:ERROR]") */
+        ZMK_MOCK_PRESS(3,0,10)
+        ZMK_MOCK_RELEASE(3,0,2000)
+        /* Record A then stop, assign to slot 0 — at ERROR level, no confirmation feedback */
+        ZMK_MOCK_PRESS(0,0,10)
+        ZMK_MOCK_RELEASE(0,0,10)
+        ZMK_MOCK_PRESS(2,0,10)
+        ZMK_MOCK_RELEASE(2,0,10)
+        ZMK_MOCK_PRESS(0,1,10)
+        ZMK_MOCK_RELEASE(0,1,10)
+        ZMK_MOCK_PRESS(1,0,10)
+        ZMK_MOCK_RELEASE(1,0,2000)
+        /* DM_FEEDBACK_INC: ERROR -> BASIC (types "[DM FB:BASIC]") */
+        ZMK_MOCK_PRESS(3,1,10)
+        ZMK_MOCK_RELEASE(3,1,2000)
+        /* Play slot 0 */
+        ZMK_MOCK_PRESS(1,0,2000)
+        ZMK_MOCK_RELEASE(1,0,10)
+    >;
+};
+
+/ {
+    keymap {
+        compatible = "zmk,keymap";
+        default_layer {
+            bindings = <
+                &dm DM_REC 0           &dm DM_STP 0
+                &dm DM_SLOT_RAM 0      &dm DM_SLOT_RAM 1
+                &kp A                  &kp B
+                &dm DM_FEEDBACK_DEC 0  &dm DM_FEEDBACK_INC 0
+            >;
+        };
+    };
+};

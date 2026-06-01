@@ -1,0 +1,34 @@
+#include <dt-bindings/zmk/keys.h>
+#include <behaviors.dtsi>
+#include <dt-bindings/zmk/kscan_mock.h>
+#include <behaviors/dynamic_macro.dtsi>
+#include <dt-bindings/zmk/dynamic_macros.h>
+
+&kscan {
+    rows = <3>;
+    columns = <2>;
+    exit-after;
+    events = <
+        /* DM_ERASE_TOGGLE: ON -> OFF (auto-erase enabled by conf, toggle turns it off) */
+        /* Types ">FB:ERASE OFF" */
+        ZMK_MOCK_PRESS(2,0,10)
+        ZMK_MOCK_RELEASE(2,0,2000)
+        /* DM_ERASE_TOGGLE again: OFF -> ON */
+        /* Types ">FB:ERASE ON" */
+        ZMK_MOCK_PRESS(2,0,10)
+        ZMK_MOCK_RELEASE(2,0,2000)
+    >;
+};
+
+/ {
+    keymap {
+        compatible = "zmk,keymap";
+        default_layer {
+            bindings = <
+                &dm DM_REC 0          &dm DM_STP 0
+                &dm DM_SLOT_RAM 0     &dm DM_SLOT_RAM 1
+                &dm DM_ERASE_TOGGLE 0 &none
+            >;
+        };
+    };
+};
