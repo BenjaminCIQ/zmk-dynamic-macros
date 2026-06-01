@@ -1015,6 +1015,11 @@ void feedback_chain_insert(struct behavior_dynamic_macro_data *data, int slot_id
                            const struct dm_slot *slot) {
     (void)slot_idx;
 
+    if (!feedback_enabled_for(data, DM_FEEDBACK_VERBOSE)) {
+        data->state = DM_STATE_RECORDING;
+        return;
+    }
+
     data->status_mode = false;
     fb_reset(data);
     data->preview_slot = slot;
