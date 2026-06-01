@@ -143,6 +143,39 @@ All options prefixed with `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_`.
 | `FEEDBACK_BASIC`   | Short confirmations              |
 | `FEEDBACK_VERBOSE` | Full previews (default)          |
 
+### Feedback Style
+
+| Option             | Description                      |
+| ------------------ | -------------------------------- |
+| `FEEDBACK_STYLE_FULL`  | Full text (default): `[DM SAVED N3]` |
+| `FEEDBACK_STYLE_ARROW` | Compact ASCII: `>N3` (US locale only) |
+
+ARROW uses single punctuation marks with fixed roles: `>` success, `-` delete, `!` error, `?` empty, `%` full, `<>` move, `>>` transfer, `*` record, `.` stop.
+
+| Operation | FULL | ARROW |
+| --------- | ---- | ----- |
+| Record | `[DM REC]` | `>*` |
+| Stop | `[DM STOP]` | `>.` |
+| Saved to N0 | `[DM SAVED N0]` | `>N0` |
+| Saved (verbose) | `[DM SAVED N0: 'Hello']` | `>N0:'Hello'` |
+| Deleted N0 | `[DM DEL N0]` | `-N0` |
+| Slot empty | `[DM SLOT N0: -]` | `?N0` |
+| Slot full | `[DM SLOT N0 FULL]` | `>N0%` |
+| Buffer overflow | `[DM FULL]` | `!%` |
+| Save failed | `[DM SAVE FAILED N0]` | `!>N0` |
+| Move prompt | `[DM MOV]` | `<>` |
+| Move done | `[DM MOV N0->N1]` | `>N0>>N1` |
+| Status | `[DM 2/8 NVS:0-7 RAM:8-15]` | `==2/8 N0-7 R8-15` |
+
+### Auto-Erase
+
+| Option             | Default | Description                      |
+| ------------------ | ------- | -------------------------------- |
+| `FEEDBACK_AUTO_ERASE` | n    | Delete feedback after display    |
+| `FEEDBACK_ERASE_DELAY`| 1500 | ms before erasing (500-10000)    |
+
+When enabled, feedback text is automatically erased by emitting backspace keycodes after the configured delay. If you type before the delay expires, the erase is cancelled. Multi-line status output is excluded. Pairs well with ARROW style's short output.
+
 ### Locale
 
 | Option      | Description                        |
@@ -152,15 +185,17 @@ All options prefixed with `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_`.
 | `LOCALE_DE` | German QWERTZ, plain mode          |
 | `LOCALE_FR` | French AZERTY, plain mode          |
 
-Non-US locales use plain messages (letters, digits, spaces only) with correct key mappings.
+Feedback works by typing HID keycodes into the focused application. Punctuation characters like `[`, `]`, `:`, `'` occupy different physical keys on each keyboard layout — a US bracket keycode produces a different character on a German or French host. Non-US locales therefore use plain mode (letters, digits, spaces only) to avoid garbled output. Letter and digit mappings are adjusted per locale (e.g. Y/Z swap for German QWERTZ, AZERTY positions for French).
 
 #### Locale Feature Matrix
 
 | Feature | US | UK | DE | FR |
 | ------- | -- | -- | -- | -- |
-| Feedback punctuation (`[DM SAVED N3]`) | Yes | No (plain) | No (plain) | No (plain) |
+| FULL style punctuation (`[DM SAVED N3]`) | Yes | No (plain) | No (plain) | No (plain) |
+| ARROW style | Yes | No | No | No |
 | Preview rendering (printable chars) | Accurate | US layout assumed | US layout assumed | US layout assumed |
 | Feedback level adjustment | Yes | Yes | Yes | Yes |
+| Auto-erase | Yes | Yes | Yes | Yes |
 | Status output | Full | Plain | Plain | Plain |
 
 ### Status Detail
@@ -213,17 +248,17 @@ Feedback messages and status output use the `N`/`R` prefix with the internal ind
 
 ### Feedback Examples
 
-Sample output at each feedback level for common operations (US locale):
+Sample output at each feedback level (US locale, FULL style). ARROW equivalents in parentheses:
 
 | Operation | VERBOSE | BASIC | COMMAND | ERROR |
 | --------- | ------- | ----- | ------- | ----- |
-| Record | `[DM REC]` | `[DM REC]` | `[DM REC]` | — |
-| Stop | `[DM STOP]` | `[DM STOP]` | `[DM STOP]` | — |
-| Save to N0 | `[DM SAVED N0: 'Hello']` | `[DM SAVED N0]` | `[DM SAVED N0]` | — |
-| Delete N0 | `[DM DEL N0]` | `[DM DEL N0]` | `[DM DEL N0]` | — |
-| Play empty | `[DM SLOT N0: -]` | `[DM SLOT N0: -]` | — | — |
-| Buffer full | `[DM FULL]` | `[DM FULL]` | `[DM FULL]` | `[DM FULL]` |
-| Save failed | — | — | — | `[DM SAVE FAILED N0]` |
+| Record | `[DM REC]` (`>*`) | `[DM REC]` (`>*`) | `[DM REC]` (`>*`) | — |
+| Stop | `[DM STOP]` (`>.`) | `[DM STOP]` (`>.`) | `[DM STOP]` (`>.`) | — |
+| Save to N0 | `[DM SAVED N0: 'Hello']` (`>N0:'Hello'`) | `[DM SAVED N0]` (`>N0`) | `[DM SAVED N0]` (`>N0`) | — |
+| Delete N0 | `[DM DEL N0]` (`-N0`) | `[DM DEL N0]` (`-N0`) | `[DM DEL N0]` (`-N0`) | — |
+| Play empty | `[DM SLOT N0: -]` (`?N0`) | `[DM SLOT N0: -]` (`?N0`) | — | — |
+| Buffer full | `[DM FULL]` (`!%`) | `[DM FULL]` (`!%`) | `[DM FULL]` (`!%`) | `[DM FULL]` (`!%`) |
+| Save failed | — | — | — | `[DM SAVE FAILED N0]` (`!>N0`) |
 
 Feedback level can be adjusted at runtime with `DM_FEEDBACK_INC` / `DM_FEEDBACK_DEC` (persisted across reboots). The minimum runtime level is ERROR — OFF is only available at build time.
 
