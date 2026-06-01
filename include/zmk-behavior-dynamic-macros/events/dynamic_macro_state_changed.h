@@ -43,6 +43,7 @@ struct zmk_dynamic_macro_state_changed {
 ZMK_EVENT_DECLARE(zmk_dynamic_macro_state_changed);
 
 int dm_get_preview_string(int slot_idx, char *buf, size_t len);
+/* Returned pointer is valid only until the next macro operation on this slot. */
 const struct dm_event *dm_get_slot_events(int slot_idx, uint32_t *count);
 bool dm_is_slot_empty(int slot_idx);
 int dm_get_used_nvs_slots(void);

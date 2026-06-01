@@ -1,0 +1,21 @@
+#include "../behavior_keymap.dtsi"
+
+&kscan {
+    events = <
+        /* REC (triggers ">*" feedback) */
+        ZMK_MOCK_PRESS(0,0,10)
+        ZMK_MOCK_RELEASE(0,0,2000)
+        /* A (recorded) */
+        ZMK_MOCK_PRESS(2,0,10)
+        ZMK_MOCK_RELEASE(2,0,10)
+        /* STP (triggers ">." feedback) */
+        ZMK_MOCK_PRESS(0,1,10)
+        ZMK_MOCK_RELEASE(0,1,2000)
+        /* SLOT_RAM 0 (assign, triggers ">R8" feedback) */
+        ZMK_MOCK_PRESS(1,0,10)
+        ZMK_MOCK_RELEASE(1,0,2000)
+        /* SLOT_RAM 0 (play) */
+        ZMK_MOCK_PRESS(1,0,2000)
+        ZMK_MOCK_RELEASE(1,0,10)
+    >;
+};
