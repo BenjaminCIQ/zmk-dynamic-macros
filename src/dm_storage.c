@@ -33,6 +33,9 @@ BUILD_ASSERT(sizeof(struct dm_slot_header) == 8, "dm_slot_header must be 8 bytes
 enum dm_storage_op_type {
     DM_STORAGE_OP_SAVE,
     DM_STORAGE_OP_DELETE,
+#if DM_TYPING_ENABLED
+    DM_STORAGE_OP_SAVE_FEEDBACK,
+#endif
 };
 
 struct dm_storage_op {
@@ -93,6 +96,19 @@ static void dm_storage_work_handler(struct k_work *work) {
     static uint8_t save_buf[sizeof(struct dm_slot_header) + MAX_EVENTS * sizeof(struct dm_event)];
 
     while (k_msgq_get(&dm_storage_msgq, &op, K_NO_WAIT) == 0) {
+#if DM_TYPING_ENABLED
+        if (op.type == DM_STORAGE_OP_SAVE_FEEDBACK) {
+            char key[64];
+            settings_feedback_key(op.data, key, sizeof(key));
+            uint8_t level = op.data->current_feedback_level;
+            int rc = settings_save_one(key, &level, sizeof(level));
+            if (rc) {
+                LOG_ERR("Failed to save feedback level: %d", rc);
+            }
+            continue;
+        }
+#endif
+
         char key[64];
         settings_slot_key(op.data, op.slot_idx, key, sizeof(key));
 
@@ -417,14 +433,18 @@ void dm_storage_test_reload(void) {
 
 #if DM_TYPING_ENABLED
 void dm_storage_save_feedback_level(struct behavior_dynamic_macro_data *data) {
-    char key[64];
-    settings_feedback_key(data, key, sizeof(key));
+    struct dm_storage_op op = {
+        .type = DM_STORAGE_OP_SAVE_FEEDBACK,
+        .data = data,
+    };
 
-    uint8_t level = data->current_feedback_level;
-    int rc = settings_save_one(key, &level, sizeof(level));
+    int rc = k_msgq_put(&dm_storage_msgq, &op, K_NO_WAIT);
     if (rc) {
-        LOG_ERR("Failed to save feedback level: %d", rc);
+        LOG_ERR("Storage queue full, failed to enqueue feedback level save: %d", rc);
+        return;
     }
+
+    k_work_submit_to_queue(&dm_storage_work_q, &dm_storage_work);
 }
 #endif
 
