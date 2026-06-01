@@ -49,6 +49,15 @@
 #endif
 #define DM_LOCALE_PLAIN (DM_LOCALE != DM_LOCALE_US)
 
+#define DM_STYLE_FULL  0
+#define DM_STYLE_ARROW 1
+#if DM_TYPING_ENABLED
+#define DM_FEEDBACK_STYLE CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_FEEDBACK_STYLE
+#else
+#define DM_FEEDBACK_STYLE DM_STYLE_FULL
+#endif
+#define DM_STYLE_IS_ARROW (DM_FEEDBACK_STYLE == DM_STYLE_ARROW)
+
 enum dm_state {
     DM_STATE_IDLE = 0,
     DM_STATE_RECORDING,
@@ -112,6 +121,11 @@ struct behavior_dynamic_macro_data {
     uint8_t preview_mods;
     bool preview_done;
     bool needs_suffix;
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_FEEDBACK_AUTO_ERASE)
+    uint16_t erase_char_count;
+    struct k_work_delayable erase_work;
+    bool erase_pending;
+#endif
 #endif
 };
 

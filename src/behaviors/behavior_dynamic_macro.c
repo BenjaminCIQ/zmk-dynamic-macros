@@ -404,6 +404,11 @@ static void emit_work_handler(struct k_work *work) {
 
         if (data->feedback_press_phase) {
             data->feedback_press_phase = false;
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_FEEDBACK_AUTO_ERASE)
+            if (ev->keycode != 0x28) {
+                data->erase_char_count++;
+            }
+#endif
         } else {
             data->feedback_press_phase = true;
             /* Advance tail after both press and release */
@@ -753,6 +758,13 @@ static int dm_event_listener(const zmk_event_t *eh) {
         }
     }
 
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_FEEDBACK_AUTO_ERASE)
+    for (size_t i = 0; i < ARRAY_SIZE(dm_devices); i++) {
+        struct behavior_dynamic_macro_data *data = dm_devices[i]->data;
+        dm_feedback_cancel_erase(data);
+    }
+#endif
+
     for (size_t i = 0; i < ARRAY_SIZE(dm_devices); i++) {
         struct behavior_dynamic_macro_data *data = dm_devices[i]->data;
 
@@ -810,6 +822,9 @@ static int behavior_dynamic_macro_init(const struct device *dev) {
     data->feedback_post_save_slot = -1;
     data->status_current_slot = -1;
     data->preview_done = true;
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_FEEDBACK_AUTO_ERASE)
+    dm_feedback_erase_init(data);
+#endif
 #endif
 
     LOG_DBG("Dynamic macro behavior initialized (%d slots, %d max events)",

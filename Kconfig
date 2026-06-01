@@ -99,6 +99,41 @@ config ZMK_BEHAVIOR_DYNAMIC_MACRO_LOCALE
     default 3 if ZMK_BEHAVIOR_DYNAMIC_MACRO_LOCALE_FR
     default 0
 
+choice ZMK_BEHAVIOR_DYNAMIC_MACRO_FEEDBACK_STYLE_CHOICE
+    prompt "Typed feedback style"
+    default ZMK_BEHAVIOR_DYNAMIC_MACRO_FEEDBACK_STYLE_FULL
+    depends on !ZMK_BEHAVIOR_DYNAMIC_MACRO_FEEDBACK_OFF
+
+config ZMK_BEHAVIOR_DYNAMIC_MACRO_FEEDBACK_STYLE_FULL
+    bool "Full text ([DM REC], [DM SAVED N3])"
+
+config ZMK_BEHAVIOR_DYNAMIC_MACRO_FEEDBACK_STYLE_ARROW
+    bool "Arrow grammar (>*, >N3, -N3)"
+    depends on ZMK_BEHAVIOR_DYNAMIC_MACRO_LOCALE_US
+
+endchoice
+
+config ZMK_BEHAVIOR_DYNAMIC_MACRO_FEEDBACK_STYLE
+    int
+    default 0 if ZMK_BEHAVIOR_DYNAMIC_MACRO_FEEDBACK_STYLE_FULL
+    default 1 if ZMK_BEHAVIOR_DYNAMIC_MACRO_FEEDBACK_STYLE_ARROW
+    default 0
+
+config ZMK_BEHAVIOR_DYNAMIC_MACRO_FEEDBACK_AUTO_ERASE
+    bool "Auto-erase feedback after display"
+    default n
+    depends on !ZMK_BEHAVIOR_DYNAMIC_MACRO_FEEDBACK_OFF
+    help
+      Automatically delete typed feedback output after a configurable delay
+      by emitting backspace keycodes. Cancelled if user types before the
+      delay expires. Multi-line status output is excluded.
+
+config ZMK_BEHAVIOR_DYNAMIC_MACRO_FEEDBACK_ERASE_DELAY
+    int "Auto-erase delay in ms"
+    default 1500
+    range 500 10000
+    depends on ZMK_BEHAVIOR_DYNAMIC_MACRO_FEEDBACK_AUTO_ERASE
+
 choice ZMK_BEHAVIOR_DYNAMIC_MACRO_STATUS_DETAIL_CHOICE
     prompt "Status key output detail"
     default ZMK_BEHAVIOR_DYNAMIC_MACRO_STATUS_FULL if ZMK_BEHAVIOR_DYNAMIC_MACRO_FEEDBACK_VERBOSE

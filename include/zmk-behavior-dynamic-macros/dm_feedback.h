@@ -69,4 +69,9 @@ int filled_ram_slot_count(struct behavior_dynamic_macro_data *data);
 
 #endif /* DM_TYPING_ENABLED */
 
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_FEEDBACK_AUTO_ERASE)
+void dm_feedback_erase_init(struct behavior_dynamic_macro_data *data);
+void dm_feedback_cancel_erase(struct behavior_dynamic_macro_data *data);
+#endif
+
 #endif /* DM_FEEDBACK_H */
