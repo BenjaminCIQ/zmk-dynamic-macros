@@ -1204,7 +1204,7 @@ static void feedback_status(struct behavior_dynamic_macro_data *data) {
     }
 
     data->status_mode = status_enabled(DM_STATUS_USED) && MAX_SLOTS > 0;
-    data->status_next_slot = 1;
+    data->status_next_slot = 0;
     fb_reset(data);
 #if DM_LOCALE_PLAIN
     fb_append_str(data, "DM ");
@@ -1249,13 +1249,6 @@ static void feedback_status(struct behavior_dynamic_macro_data *data) {
 #else
     fb_append_char(data, '\n');
 #endif
-    if (data->status_mode) {
-        bool show_preview = status_enabled(DM_STATUS_USED_PREVIEW);
-        bool show_all = status_enabled(DM_STATUS_FULL);
-        if (show_all || !slot_is_empty(data, 0)) {
-            render_status_slot(data, 0, show_preview);
-        }
-    }
     start_feedback(data, DM_STATE_IDLE, -1);
 }
 
