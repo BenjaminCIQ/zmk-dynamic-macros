@@ -130,6 +130,10 @@ static inline bool slot_is_empty(struct behavior_dynamic_macro_data *data, int s
     return data->slots[slot_idx].event_count == 0 || atomic_test_bit(data->pending_delete, slot_idx);
 }
 
+static inline char slot_storage_prefix(int slot_idx) {
+    return slot_is_nvs(slot_idx) ? 'N' : 'R';
+}
+
 extern const struct device *dm_devices[];
 extern const size_t dm_devices_len;
 
@@ -150,10 +154,12 @@ static inline void dm_storage_save_feedback_level(struct behavior_dynamic_macro_
 #endif
 #endif
 
-void dm_feedback_deleted(struct behavior_dynamic_macro_data *data, int slot_idx);
-void dm_feedback_delete_failed(struct behavior_dynamic_macro_data *data, int slot_idx);
-void dm_feedback_save_failed(struct behavior_dynamic_macro_data *data, int slot_idx);
-void dm_feedback_save_queue_full(struct behavior_dynamic_macro_data *data, int slot_idx);
-void dm_feedback_delete_queue_full(struct behavior_dynamic_macro_data *data, int slot_idx);
+void dm_save_slot(struct behavior_dynamic_macro_data *data, int slot_idx);
+int dm_delete_slot_from_storage(struct behavior_dynamic_macro_data *data, int slot_idx);
+
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
+void dm_raise_state_changed(struct behavior_dynamic_macro_data *data,
+                            int event, int slot);
+#endif
 
 #endif /* DM_INTERNAL_H */
