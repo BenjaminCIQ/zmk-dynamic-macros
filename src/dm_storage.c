@@ -58,6 +58,48 @@ static struct k_work_q dm_storage_work_q;
 static struct k_work dm_storage_work;
 static bool dm_storage_work_q_started;
 
+enum dm_deferred_fb_type {
+    DM_DEFERRED_FB_NONE,
+    DM_DEFERRED_FB_SAVE_FAILED,
+    DM_DEFERRED_FB_DELETE_FAILED,
+    DM_DEFERRED_FB_DELETED,
+};
+
+static struct {
+    struct k_work work;
+    struct behavior_dynamic_macro_data *data;
+    int slot_idx;
+    enum dm_deferred_fb_type type;
+} dm_deferred_fb;
+
+static void dm_deferred_fb_handler(struct k_work *work) {
+    struct behavior_dynamic_macro_data *data = dm_deferred_fb.data;
+    int slot_idx = dm_deferred_fb.slot_idx;
+
+    switch (dm_deferred_fb.type) {
+    case DM_DEFERRED_FB_SAVE_FAILED:
+        dm_feedback_save_failed(data, slot_idx);
+        break;
+    case DM_DEFERRED_FB_DELETE_FAILED:
+        dm_feedback_delete_failed(data, slot_idx);
+        break;
+    case DM_DEFERRED_FB_DELETED:
+        dm_feedback_deleted(data, slot_idx);
+        break;
+    default:
+        break;
+    }
+    dm_deferred_fb.type = DM_DEFERRED_FB_NONE;
+}
+
+static void schedule_deferred_fb(enum dm_deferred_fb_type type,
+                                 struct behavior_dynamic_macro_data *data, int slot_idx) {
+    dm_deferred_fb.type = type;
+    dm_deferred_fb.data = data;
+    dm_deferred_fb.slot_idx = slot_idx;
+    k_work_submit(&dm_deferred_fb.work);
+}
+
 
 static void settings_slot_key(struct behavior_dynamic_macro_data *data, int slot_idx, char *key,
                               size_t key_len) {
@@ -91,6 +133,9 @@ static void settings_feedback_key(struct behavior_dynamic_macro_data *data, char
  *   atomic_clear_bit happens after memset completes.
  * - Save operations read slot data via op.slot copy in message queue, not
  *   directly from data->slots[]
+ * - Feedback calls are deferred to the system work queue via k_work_submit()
+ *   to avoid manipulating main-thread state (ring buffer, timers, state
+ *   machine) from this thread.
  */
 static void dm_storage_work_handler(struct k_work *work) {
     static struct dm_storage_op op;
@@ -128,7 +173,7 @@ static void dm_storage_work_handler(struct k_work *work) {
             int rc = settings_save_one(key, save_buf, data_size);
             if (rc) {
                 LOG_ERR("Failed to save dynamic macro slot %d: %d", op.slot_idx, rc);
-                dm_feedback_save_failed(op.data, op.slot_idx);
+                schedule_deferred_fb(DM_DEFERRED_FB_SAVE_FAILED, op.data, op.slot_idx);
             } else {
                 LOG_DBG("Saved dynamic macro slot %d (%u events)", op.slot_idx,
                         (unsigned int)op.slot.event_count);
@@ -144,7 +189,7 @@ static void dm_storage_work_handler(struct k_work *work) {
                 atomic_clear_bit(op.data->pending_delete, op.slot_idx);
             }
             if (op.data->state == DM_STATE_IDLE) {
-                dm_feedback_delete_failed(op.data, op.slot_idx);
+                schedule_deferred_fb(DM_DEFERRED_FB_DELETE_FAILED, op.data, op.slot_idx);
             }
             continue;
         }
@@ -154,7 +199,7 @@ static void dm_storage_work_handler(struct k_work *work) {
             memset(&op.data->slots[op.slot_idx], 0, sizeof(struct dm_slot));
             atomic_clear_bit(op.data->pending_delete, op.slot_idx);
             if (op.data->state == DM_STATE_IDLE) {
-                dm_feedback_deleted(op.data, op.slot_idx);
+                schedule_deferred_fb(DM_DEFERRED_FB_DELETED, op.data, op.slot_idx);
             }
         }
 
@@ -168,6 +213,7 @@ void dm_storage_init(void) {
     }
 
     k_work_init(&dm_storage_work, dm_storage_work_handler);
+    k_work_init(&dm_deferred_fb.work, dm_deferred_fb_handler);
     k_work_queue_start(&dm_storage_work_q, dm_storage_work_q_stack,
                        K_KERNEL_STACK_SIZEOF(dm_storage_work_q_stack),
                        DM_STORAGE_PRIORITY, NULL);
