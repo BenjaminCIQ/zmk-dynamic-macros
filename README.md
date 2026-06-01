@@ -274,6 +274,8 @@ Feedback level can be adjusted at runtime with `DM_FEEDBACK_INC` / `DM_FEEDBACK_
 
 NVS slots write to flash on every save and delete. ZMK's NVS implementation includes wear leveling, but flash has finite write endurance (typically 10,000+ cycles). For macros you change frequently, prefer RAM slots and promote to NVS only once stable.
 
+For perspective, reflashing firmware writes the entire firmware partition (hundreds of KB) which also wears flash. Saving a dynamic macro to NVS writes only ~520 bytes — far less wear than reflashing the firmware just to add a single static macro.
+
 ### Feedback
 
 Typed feedback goes to the focused application. Use a text editor when testing status output.
