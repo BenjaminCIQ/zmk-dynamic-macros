@@ -260,8 +260,8 @@ Sample output per feedback level (US locale). VERBOSE adds previews to save mess
 | Play empty | `[DM SLOT N0: -]` | `?N0` | x | x | | |
 | Slot full | `[DM SLOT N0 FULL]` | `>N0%` | x | x | x | |
 | Buffer overflow | `[DM FULL]` | `!%` | x | x | x | x |
-| Save failed | `[DM SAVE FAILED N0]` | `!>N0` | | | | x |
-| Queue full | `[DM SAVE QUEUE FULL N0]` | `!>%N0` | | | | x |
+| Save failed | `[DM SAVE FAILED N0]` | `!>N0` | x | x | x | x |
+| Queue full | `[DM SAVE QUEUE FULL N0]` | `!>%N0` | x | x | x | x |
 
 Feedback level can be adjusted at runtime with `DM_FEEDBACK_INC` / `DM_FEEDBACK_DEC` (persisted across reboots). The minimum runtime level is ERROR — OFF is only available at build time.
 
