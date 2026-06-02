@@ -105,6 +105,8 @@ Press **STATE** to output slot info to the focused window.
 
 ## Bindings Reference
 
+See [docs/keycodes.md](docs/keycodes.md) for the full binding reference including command descriptions, param2 rules, feedback output, and per-command requirements.
+
 | Binding             | Action                           |
 | ------------------- | -------------------------------- |
 | `&dm DM_REC 0`      | Start recording                  |
@@ -115,10 +117,10 @@ Press **STATE** to output slot info to the focused window.
 | `&dm DM_SLOT_NVS N` | NVS slot N (0 to NVS_SLOTS-1)    |
 | `&dm DM_SLOT_RAM N` | RAM slot N (0 to RAM_SLOTS-1)    |
 | `&dm DM_PREVIEW 0`  | Enter preview mode (requires EVENTS) |
-| `&dm DM_FEEDBACK_INC 0` | Increase feedback level        |
-| `&dm DM_FEEDBACK_DEC 0` | Decrease feedback level        |
-| `&dm DM_STYLE_TOGGLE 0` | Toggle FULL / ARROW style (US/UK locale only) |
-| `&dm DM_ERASE_TOGGLE 0` | Toggle auto-erase on / off     |
+| `&dm DM_FEEDBACK_INC 0` | Increase feedback verbosity (persisted) |
+| `&dm DM_FEEDBACK_DEC 0` | Decrease feedback verbosity (persisted) |
+| `&dm DM_STYLE_TOGGLE 0` | Toggle FULL / ARROW style (US/UK only, persisted) |
+| `&dm DM_ERASE_TOGGLE 0` | Toggle auto-erase on / off (persisted)     |
 
 ## Kconfig Options
 
