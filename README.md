@@ -103,6 +103,19 @@ While recording, press a non-empty slot key to inline its contents. The chained 
 
 Press **STATE** to output slot info to the focused window.
 
+### Runtime Settings
+
+Three bindings adjust feedback behaviour on the fly without reflashing. All changes are persisted across reboots and only take effect when idle (not recording or in a pending mode).
+
+| Binding | Action |
+| ------- | ------ |
+| `&dm DM_FEEDBACK_INC 0` | Increase verbosity one step: ERROR → BASIC → COMMAND → VERBOSE |
+| `&dm DM_FEEDBACK_DEC 0` | Decrease verbosity one step (minimum at runtime is ERROR; OFF requires build config) |
+| `&dm DM_STYLE_TOGGLE 0` | Toggle FULL / ARROW feedback style (US and UK locales only) |
+| `&dm DM_ERASE_TOGGLE 0` | Toggle auto-erase on / off |
+
+Each press types a short confirmation in the current style — for example `[DM VERBOSE]` or `>ARROW` — so you always know the new active setting.
+
 ## Bindings Reference
 
 | Binding             | Action                           |
