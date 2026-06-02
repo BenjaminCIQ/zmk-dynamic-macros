@@ -103,20 +103,9 @@ While recording, press a non-empty slot key to inline its contents. The chained 
 
 Press **STATE** to output slot info to the focused window.
 
-### Runtime Settings
-
-Three bindings adjust feedback behaviour on the fly without reflashing. All changes are persisted across reboots and only take effect when idle (not recording or in a pending mode).
-
-| Binding | Action |
-| ------- | ------ |
-| `&dm DM_FEEDBACK_INC 0` | Increase verbosity one step: ERROR → BASIC → COMMAND → VERBOSE |
-| `&dm DM_FEEDBACK_DEC 0` | Decrease verbosity one step (minimum at runtime is ERROR; OFF requires build config) |
-| `&dm DM_STYLE_TOGGLE 0` | Toggle FULL / ARROW feedback style (US and UK locales only) |
-| `&dm DM_ERASE_TOGGLE 0` | Toggle auto-erase on / off |
-
-Each press types a short confirmation in the current style — for example `[DM VERBOSE]` or `>ARROW` — so you always know the new active setting.
-
 ## Bindings Reference
+
+See [docs/keycodes.md](docs/keycodes.md) for the full binding reference including command descriptions, param2 rules, feedback output, and per-command requirements.
 
 | Binding             | Action                           |
 | ------------------- | -------------------------------- |
@@ -128,10 +117,10 @@ Each press types a short confirmation in the current style — for example `[DM 
 | `&dm DM_SLOT_NVS N` | NVS slot N (0 to NVS_SLOTS-1)    |
 | `&dm DM_SLOT_RAM N` | RAM slot N (0 to RAM_SLOTS-1)    |
 | `&dm DM_PREVIEW 0`  | Enter preview mode (requires EVENTS) |
-| `&dm DM_FEEDBACK_INC 0` | Increase feedback level        |
-| `&dm DM_FEEDBACK_DEC 0` | Decrease feedback level        |
-| `&dm DM_STYLE_TOGGLE 0` | Toggle FULL / ARROW style (US/UK locale only) |
-| `&dm DM_ERASE_TOGGLE 0` | Toggle auto-erase on / off     |
+| `&dm DM_FEEDBACK_INC 0` | Increase feedback verbosity (persisted) |
+| `&dm DM_FEEDBACK_DEC 0` | Decrease feedback verbosity (persisted) |
+| `&dm DM_STYLE_TOGGLE 0` | Toggle FULL / ARROW style (US/UK only, persisted) |
+| `&dm DM_ERASE_TOGGLE 0` | Toggle auto-erase on / off (persisted)     |
 
 ## Kconfig Options
 
