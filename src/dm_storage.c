@@ -45,6 +45,11 @@ struct dm_storage_op {
     int slot_idx;
     uint32_t generation;
     struct dm_slot slot;
+#if DM_TYPING_ENABLED
+    uint8_t feedback_level;
+    uint8_t feedback_style;
+    uint8_t auto_erase;
+#endif
 };
 
 #define DM_STORAGE_STACK_SIZE  1024
@@ -147,23 +152,20 @@ static void dm_storage_work_handler(struct k_work *work) {
         if (op.type == DM_STORAGE_OP_SAVE_FEEDBACK) {
             char key[64];
             settings_feedback_key(op.data, key, sizeof(key));
-            uint8_t level = op.data->current_feedback_level;
-            int rc = settings_save_one(key, &level, sizeof(level));
+            int rc = settings_save_one(key, &op.feedback_level, sizeof(op.feedback_level));
             if (rc) {
                 LOG_ERR("Failed to save feedback level: %d", rc);
             }
 
             const struct behavior_dynamic_macro_config *cfg = op.data->dev->config;
             snprintf(key, sizeof(key), "dm/%s/fbstyle", cfg->settings_name);
-            uint8_t style = op.data->current_feedback_style;
-            rc = settings_save_one(key, &style, sizeof(style));
+            rc = settings_save_one(key, &op.feedback_style, sizeof(op.feedback_style));
             if (rc) {
                 LOG_ERR("Failed to save feedback style: %d", rc);
             }
 
             snprintf(key, sizeof(key), "dm/%s/fberase", cfg->settings_name);
-            uint8_t erase = (uint8_t)op.data->auto_erase_enabled;
-            rc = settings_save_one(key, &erase, sizeof(erase));
+            rc = settings_save_one(key, &op.auto_erase, sizeof(op.auto_erase));
             if (rc) {
                 LOG_ERR("Failed to save auto-erase setting: %d", rc);
             }
@@ -238,12 +240,11 @@ void dm_storage_init(void) {
 
 static int enqueue_storage_op(struct behavior_dynamic_macro_data *data, enum dm_storage_op_type type,
                               int slot_idx, const struct dm_slot *slot) {
-    struct dm_storage_op op = {
-        .type = type,
-        .data = data,
-        .slot_idx = slot_idx,
-        .generation = data->slot_generation[slot_idx],
-    };
+    struct dm_storage_op op = {0};
+    op.type = type;
+    op.data = data;
+    op.slot_idx = slot_idx;
+    op.generation = data->slot_generation[slot_idx];
 
     if (slot != NULL) {
         memcpy(&op.slot, slot, sizeof(op.slot));
@@ -545,6 +546,9 @@ void dm_storage_save_feedback_level(struct behavior_dynamic_macro_data *data) {
     struct dm_storage_op op = {
         .type = DM_STORAGE_OP_SAVE_FEEDBACK,
         .data = data,
+        .feedback_level = data->current_feedback_level,
+        .feedback_style = data->current_feedback_style,
+        .auto_erase = (uint8_t)data->auto_erase_enabled,
     };
 
     int rc = k_msgq_put(&dm_storage_msgq, &op, K_NO_WAIT);
