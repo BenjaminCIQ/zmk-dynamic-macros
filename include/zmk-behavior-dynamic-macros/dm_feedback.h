@@ -59,6 +59,9 @@ void dm_feedback_preview_suffix(struct behavior_dynamic_macro_data *data);
 bool printable_char_for_keycode(uint32_t keycode, bool shifted, char *out);
 bool is_modifier_key(uint16_t usage_page, uint32_t keycode);
 const char *action_name(uint16_t usage_page, uint32_t keycode);
+uint8_t token_size(uint8_t mods, uint16_t usage_page, uint32_t keycode);
+size_t render_token_to_buf(char *buf, size_t pos, size_t len,
+                           uint8_t mods, uint16_t usage_page, uint32_t keycode);
 
 extern const char *mod_names[];
 

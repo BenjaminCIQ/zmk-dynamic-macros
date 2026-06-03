@@ -613,7 +613,7 @@ static const uint8_t mod_bits[] = {0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x8
 const char *mod_names[] = {"LCTL", "LSFT", "LALT", "LGUI",
                            "RCTL", "RSFT", "RALT", "RGUI"};
 
-static uint8_t token_size(uint8_t mods, uint16_t usage_page, uint32_t keycode) {
+uint8_t token_size(uint8_t mods, uint16_t usage_page, uint32_t keycode) {
     uint8_t size = 0;
 #if !DM_LOCALE_PLAIN
     size += 2; /* < and > */
@@ -670,6 +670,45 @@ static void render_action_token(struct behavior_dynamic_macro_data *data, uint8_
 #if !DM_LOCALE_PLAIN
     fb_append_char(data, '>');
 #endif
+}
+
+size_t render_token_to_buf(char *buf, size_t pos, size_t len,
+                           uint8_t mods, uint16_t usage_page, uint32_t keycode) {
+#if !DM_LOCALE_PLAIN
+    buf[pos++] = '<';
+#endif
+    bool first = true;
+    for (int i = 0; i < 8; i++) {
+        if (mods & mod_bits[i]) {
+            if (!first) {
+#if DM_LOCALE_PLAIN
+                buf[pos++] = ' ';
+#else
+                buf[pos++] = '+';
+#endif
+            }
+            size_t ml = strlen(mod_names[i]);
+            memcpy(&buf[pos], mod_names[i], ml);
+            pos += ml;
+            first = false;
+        }
+    }
+    if (!first) {
+#if DM_LOCALE_PLAIN
+        buf[pos++] = ' ';
+#else
+        buf[pos++] = '+';
+#endif
+    }
+    const char *name = action_name(usage_page, keycode);
+    size_t nl = strlen(name);
+    memcpy(&buf[pos], name, nl);
+    pos += nl;
+#if !DM_LOCALE_PLAIN
+    buf[pos++] = '>';
+#endif
+    (void)len;
+    return pos;
 }
 
 bool render_slot_contents_stream(struct behavior_dynamic_macro_data *data) {

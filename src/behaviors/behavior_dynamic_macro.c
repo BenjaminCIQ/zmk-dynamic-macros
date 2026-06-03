@@ -950,40 +950,9 @@ int dm_get_preview_string(int slot_idx, char *buf, size_t len) {
             printable_char_for_keycode(ev->keycode, (mods & MOD_SHIFT_MASK) != 0, &c)) {
             buf[pos++] = c;
         } else {
-            const char *name = action_name(ev->usage_page, ev->keycode);
-            size_t needed = 2; /* < and > */
-            bool has_mod = false;
-            for (int m = 0; m < 8; m++) {
-                if (mods & (1 << m)) {
-                    needed += strlen(mod_names[m]) + (has_mod ? 1 : 0);
-                    has_mod = true;
-                }
-            }
-            if (has_mod) {
-                needed += 1; /* separator before action name */
-            }
-            needed += strlen(name);
+            size_t needed = token_size(mods, ev->usage_page, ev->keycode);
             if (pos + needed < len) {
-                buf[pos++] = '<';
-                bool first = true;
-                for (int m = 0; m < 8; m++) {
-                    if (mods & (1 << m)) {
-                        if (!first) {
-                            buf[pos++] = '+';
-                        }
-                        size_t ml = strlen(mod_names[m]);
-                        memcpy(&buf[pos], mod_names[m], ml);
-                        pos += ml;
-                        first = false;
-                    }
-                }
-                if (has_mod) {
-                    buf[pos++] = '+';
-                }
-                size_t nl = strlen(name);
-                memcpy(&buf[pos], name, nl);
-                pos += nl;
-                buf[pos++] = '>';
+                pos = render_token_to_buf(buf, pos, len, mods, ev->usage_page, ev->keycode);
             }
         }
     }
