@@ -369,7 +369,7 @@ static void emit_work_handler(struct k_work *work) {
     }
 
 #if DM_TYPING_ENABLED
-    if (data->state == DM_STATE_TYPING_FEEDBACK) {
+    if (data->state == DM_STATE_TYPING_FEEDBACK || data->state == DM_STATE_TYPING_ERASE) {
         /* Refill ring from streaming preview if needed */
         if (ring_empty(data) && !data->preview_done) {
             bool more = render_slot_contents_stream(data);
@@ -456,7 +456,8 @@ static void assign_timeout_handler(struct k_work *work) {
 /* -------------------------------------------------------------------------- */
 
 static void cmd_record(struct behavior_dynamic_macro_data *data) {
-    if (data->state == DM_STATE_PLAYING || data->state == DM_STATE_TYPING_FEEDBACK) {
+    if (data->state == DM_STATE_PLAYING || data->state == DM_STATE_TYPING_FEEDBACK ||
+        data->state == DM_STATE_TYPING_ERASE) {
         return;
     }
 
@@ -660,6 +661,10 @@ static int on_keymap_binding_pressed(struct zmk_behavior_binding *binding,
                                      struct zmk_behavior_binding_event event) {
     const struct device *dev = zmk_behavior_get_binding(binding->behavior_dev);
     struct behavior_dynamic_macro_data *data = dev->data;
+
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_FEEDBACK_AUTO_ERASE)
+    dm_feedback_cancel_erase(data);
+#endif
 
     switch (binding->param1) {
     case DM_REC:

@@ -69,6 +69,7 @@ enum dm_state {
 #endif
     DM_STATE_PLAYING,
     DM_STATE_TYPING_FEEDBACK,
+    DM_STATE_TYPING_ERASE,
 };
 
 #include <zmk-behavior-dynamic-macros/dm_event.h>
