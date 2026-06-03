@@ -961,7 +961,7 @@ int dm_get_preview_string(int slot_idx, char *buf, size_t len) {
                 needed += 1; /* separator before action name */
             }
             needed += strlen(name);
-            if (pos + needed < len - 1) {
+            if (pos + needed < len) {
                 buf[pos++] = '<';
                 bool first = true;
                 for (int m = 0; m < 8; m++) {
