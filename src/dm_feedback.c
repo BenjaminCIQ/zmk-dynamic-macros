@@ -1283,11 +1283,16 @@ static void erase_work_handler(struct k_work *work) {
 
     /* Emit backspaces via the ring+timer path so each gets TAP_DELAY spacing,
      * avoiding host-side key-repeat coalescing from a tight burst.
-     * Use DM_STATE_TYPING_ERASE so a concurrent keypress can abort mid-sequence. */
+     * Use DM_STATE_TYPING_ERASE so a concurrent keypress can abort mid-sequence.
+     * Emit in batches of FB_RING_SIZE-1 if count exceeds ring capacity. */
     fb_reset(data);
-    uint16_t capped = MIN(count, (uint16_t)(FB_RING_SIZE - 1));
-    for (uint16_t i = 0; i < capped; i++) {
+    uint16_t batch = MIN(count, (uint16_t)(FB_RING_SIZE - 1));
+    for (uint16_t i = 0; i < batch; i++) {
         fb_append_hid(data, 0x2A, 0);
+    }
+    if (count > batch) {
+        data->erase_char_count = count - batch;
+        data->erase_pending = true;
     }
     start_feedback(data, DM_STATE_IDLE, -1);
     data->state = DM_STATE_TYPING_ERASE;
