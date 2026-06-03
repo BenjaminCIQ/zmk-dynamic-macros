@@ -457,7 +457,8 @@ static void assign_timeout_handler(struct k_work *work) {
 
 static void cmd_record(struct behavior_dynamic_macro_data *data) {
     if (data->state == DM_STATE_PLAYING || data->state == DM_STATE_TYPING_FEEDBACK ||
-        data->state == DM_STATE_TYPING_ERASE) {
+        data->state == DM_STATE_TYPING_ERASE || data->state == DM_STATE_DELETE_PENDING ||
+        data->state == DM_STATE_MOVE_PENDING) {
         return;
     }
 
