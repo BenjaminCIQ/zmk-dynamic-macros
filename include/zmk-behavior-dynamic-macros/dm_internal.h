@@ -81,6 +81,8 @@ struct dm_slot {
 
 #if DM_TYPING_ENABLED
 #define FB_RING_SIZE 64
+BUILD_ASSERT((FB_RING_SIZE & (FB_RING_SIZE - 1)) == 0 && FB_RING_SIZE <= 256,
+             "FB_RING_SIZE must be a power of two <= 256");
 
 struct fb_event {
     uint16_t keycode;

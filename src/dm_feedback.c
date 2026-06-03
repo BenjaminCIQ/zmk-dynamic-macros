@@ -219,6 +219,7 @@ bool ring_empty(struct behavior_dynamic_macro_data *data) {
 
 static void fb_push(struct behavior_dynamic_macro_data *data, uint16_t keycode, uint8_t mods) {
     data->ring[data->ring_head] = (struct fb_event){.keycode = keycode, .mods = mods};
+    /* Mask keeps head/tail in [0, FB_RING_SIZE-1]; ring arithmetic depends on this invariant. */
     data->ring_head = (data->ring_head + 1) & (FB_RING_SIZE - 1);
 }
 
