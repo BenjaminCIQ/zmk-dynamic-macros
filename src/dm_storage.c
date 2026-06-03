@@ -59,45 +59,46 @@ static struct k_work dm_storage_work;
 static bool dm_storage_work_q_started;
 
 enum dm_deferred_fb_type {
-    DM_DEFERRED_FB_NONE,
     DM_DEFERRED_FB_SAVE_FAILED,
     DM_DEFERRED_FB_DELETE_FAILED,
     DM_DEFERRED_FB_DELETED,
 };
 
-static struct {
-    struct k_work work;
+struct dm_deferred_fb_entry {
     struct behavior_dynamic_macro_data *data;
     int slot_idx;
     enum dm_deferred_fb_type type;
-} dm_deferred_fb;
+};
+
+static struct k_work dm_deferred_fb_work;
+K_MSGQ_DEFINE(dm_deferred_fb_msgq, sizeof(struct dm_deferred_fb_entry), DM_STORAGE_QUEUE_LEN, 4);
 
 static void dm_deferred_fb_handler(struct k_work *work) {
-    struct behavior_dynamic_macro_data *data = dm_deferred_fb.data;
-    int slot_idx = dm_deferred_fb.slot_idx;
+    struct dm_deferred_fb_entry entry;
 
-    switch (dm_deferred_fb.type) {
-    case DM_DEFERRED_FB_SAVE_FAILED:
-        dm_feedback_save_failed(data, slot_idx);
-        break;
-    case DM_DEFERRED_FB_DELETE_FAILED:
-        dm_feedback_delete_failed(data, slot_idx);
-        break;
-    case DM_DEFERRED_FB_DELETED:
-        dm_feedback_deleted(data, slot_idx);
-        break;
-    default:
-        break;
+    while (k_msgq_get(&dm_deferred_fb_msgq, &entry, K_NO_WAIT) == 0) {
+        switch (entry.type) {
+        case DM_DEFERRED_FB_SAVE_FAILED:
+            dm_feedback_save_failed(entry.data, entry.slot_idx);
+            break;
+        case DM_DEFERRED_FB_DELETE_FAILED:
+            dm_feedback_delete_failed(entry.data, entry.slot_idx);
+            break;
+        case DM_DEFERRED_FB_DELETED:
+            dm_feedback_deleted(entry.data, entry.slot_idx);
+            break;
+        }
     }
-    dm_deferred_fb.type = DM_DEFERRED_FB_NONE;
 }
 
 static void schedule_deferred_fb(enum dm_deferred_fb_type type,
                                  struct behavior_dynamic_macro_data *data, int slot_idx) {
-    dm_deferred_fb.type = type;
-    dm_deferred_fb.data = data;
-    dm_deferred_fb.slot_idx = slot_idx;
-    k_work_submit(&dm_deferred_fb.work);
+    struct dm_deferred_fb_entry entry = {.type = type, .data = data, .slot_idx = slot_idx};
+    if (k_msgq_put(&dm_deferred_fb_msgq, &entry, K_NO_WAIT) != 0) {
+        LOG_ERR("Deferred feedback queue full, notification dropped");
+        return;
+    }
+    k_work_submit(&dm_deferred_fb_work);
 }
 
 
@@ -228,7 +229,7 @@ void dm_storage_init(void) {
     }
 
     k_work_init(&dm_storage_work, dm_storage_work_handler);
-    k_work_init(&dm_deferred_fb.work, dm_deferred_fb_handler);
+    k_work_init(&dm_deferred_fb_work, dm_deferred_fb_handler);
     k_work_queue_start(&dm_storage_work_q, dm_storage_work_q_stack,
                        K_KERNEL_STACK_SIZEOF(dm_storage_work_q_stack),
                        DM_STORAGE_PRIORITY, NULL);
