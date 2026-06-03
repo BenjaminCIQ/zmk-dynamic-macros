@@ -61,6 +61,9 @@ K_MSGQ_DEFINE(dm_storage_msgq, sizeof(struct dm_storage_op), DM_STORAGE_QUEUE_LE
 
 static struct k_work_q dm_storage_work_q;
 static struct k_work dm_storage_work;
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_TEST_RELOAD)
+static K_SEM_DEFINE(dm_storage_flush_sem, 0, 1);
+#endif
 static bool dm_storage_work_q_started;
 
 enum dm_deferred_fb_type {
@@ -223,6 +226,9 @@ static void dm_storage_work_handler(struct k_work *work) {
 
         LOG_DBG("Deleted dynamic macro slot %d from storage", op.slot_idx);
     }
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_TEST_RELOAD)
+    k_sem_give(&dm_storage_flush_sem);
+#endif
 }
 
 void dm_storage_init(void) {
@@ -518,8 +524,9 @@ int dm_storage_delete_slot(struct behavior_dynamic_macro_data *data, int slot_id
 
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_TEST_RELOAD)
 void dm_storage_flush(void) {
+    k_sem_reset(&dm_storage_flush_sem);
     k_work_submit_to_queue(&dm_storage_work_q, &dm_storage_work);
-    k_sleep(K_MSEC(100));
+    k_sem_take(&dm_storage_flush_sem, K_FOREVER);
 }
 
 void dm_storage_test_reload(void) {
