@@ -84,18 +84,25 @@ K_MSGQ_DEFINE(dm_deferred_fb_msgq, sizeof(struct dm_deferred_fb_entry), DM_STORA
 static void dm_deferred_fb_handler(struct k_work *work) {
     struct dm_deferred_fb_entry entry;
 
-    while (k_msgq_get(&dm_deferred_fb_msgq, &entry, K_NO_WAIT) == 0) {
-        switch (entry.type) {
-        case DM_DEFERRED_FB_SAVE_FAILED:
-            dm_feedback_save_failed(entry.data, entry.slot_idx);
-            break;
-        case DM_DEFERRED_FB_DELETE_FAILED:
-            dm_feedback_delete_failed(entry.data, entry.slot_idx);
-            break;
-        case DM_DEFERRED_FB_DELETED:
-            dm_feedback_deleted(entry.data, entry.slot_idx);
-            break;
-        }
+    if (k_msgq_get(&dm_deferred_fb_msgq, &entry, K_NO_WAIT) != 0) {
+        return;
+    }
+
+    switch (entry.type) {
+    case DM_DEFERRED_FB_SAVE_FAILED:
+        dm_feedback_save_failed(entry.data, entry.slot_idx);
+        break;
+    case DM_DEFERRED_FB_DELETE_FAILED:
+        dm_feedback_delete_failed(entry.data, entry.slot_idx);
+        break;
+    case DM_DEFERRED_FB_DELETED:
+        dm_feedback_deleted(entry.data, entry.slot_idx);
+        break;
+    }
+
+    /* Resubmit if more entries are waiting so each gets its own emit sequence. */
+    if (k_msgq_num_used_get(&dm_deferred_fb_msgq) > 0) {
+        k_work_submit(&dm_deferred_fb_work);
     }
 }
 
