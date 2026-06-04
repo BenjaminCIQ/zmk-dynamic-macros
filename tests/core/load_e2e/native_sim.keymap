@@ -6,23 +6,26 @@
 
 /* End-to-end load test: 4 RAM slots, MAX_EVENTS=20, all slots filled to capacity.
  *
- * Key layout (8 rows x 2 cols):
- *   (0,0)=REC      (0,1)=STP
+ * Key layout (10 rows x 2 cols):
+ *   (0,0)=REC       (0,1)=STP
  *   (1,0)=SLOT_RAM0 (1,1)=SLOT_RAM1
  *   (2,0)=SLOT_RAM2 (2,1)=SLOT_RAM3
- *   (3,0)=A        (3,1)=B
- *   (4,0)=LSHFT    (4,1)=LCTRL
- *   (5,0)=Z        (5,1)=LEFT
- *   (6,0)=RIGHT    (6,1)=UP
- *   (7,0)=DOWN     (7,1)=MOV
- *   Note: DEL uses row 8 — added as a 9th row
- *   (8,0)=DEL      (8,1)=none
+ *   (3,0)=A         (3,1)=B
+ *   (4,0)=LSHFT     (4,1)=LCTRL
+ *   (5,0)=Z         (5,1)=LEFT
+ *   (6,0)=RIGHT     (6,1)=UP
+ *   (7,0)=DOWN      (7,1)=MOV
+ *   (8,0)=DEL       (8,1)=H
+ *   (9,0)=E         (9,1)=L
+ *   (10,0)=O        (10,1)=BSPC
+ *   (11,0)=COMMA    (11,1)=SPACE
  *
- * Sequences (each = 20 events):
- *   slot 0: LEFT RIGHT UP DOWN LEFT RIGHT UP DOWN LEFT RIGHT  (10x arrow = 20)
- *   slot 1: Shift+A Shift+B Ctrl+Z Shift+A LEFT RIGHT        (4+4+4+4+2+2 = 20)
- *   slot 2: A B LEFT Shift+A RIGHT Ctrl+Z UP DOWN            (2+2+2+4+2+4+2+2 = 20)
- *   slot 3 (via move from slot 1, then re-record slot 1):
+ * Sequences (each exactly 20 events):
+ *   slot 0: LEFT RIGHT UP DOWN LEFT RIGHT UP DOWN LEFT RIGHT   (10x arrow tap = 20)
+ *   slot 1: Shift+A Shift+B Ctrl+Z Shift+A LEFT RIGHT         (4+4+4+4+2+2 = 20)
+ *   slot 2: "Helo<BS>lo, " — types Hello, with a backspace correction
+ *           Shift+H(4) e(2) l(2) o(2) BS(2) l(2) o(2) ,(2) SPACE(2) = 20
+ *   slot 3 (moved from slot 1, slot 1 re-recorded):
  *     slot 1 re-record: Ctrl+Z Ctrl+Z Ctrl+Z Shift+A Shift+B  (4+4+4+4+4 = 20)
  *
  * Flow:
@@ -33,34 +36,34 @@
  *   Phase 5: delete slot 2, play slot 2 (empty), play slot 3 (intact) */
 
 &kscan {
-    rows = <9>;
+    rows = <12>;
     columns = <2>;
     exit-after;
     events = <
         /* ===== Phase 1: record slots 0, 1, 2 ===== */
 
-        /* Record slot 0: LEFT RIGHT UP DOWN LEFT RIGHT UP DOWN LEFT RIGHT (20 events) */
+        /* Record slot 0: LEFT RIGHT UP DOWN x2 + LEFT RIGHT (20 events) */
         ZMK_MOCK_PRESS(0,0,10)
         ZMK_MOCK_RELEASE(0,0,10)
-        ZMK_MOCK_PRESS(5,1,10)   /* LEFT */
+        ZMK_MOCK_PRESS(5,1,10)    /* LEFT */
         ZMK_MOCK_RELEASE(5,1,10)
-        ZMK_MOCK_PRESS(6,0,10)   /* RIGHT */
+        ZMK_MOCK_PRESS(6,0,10)    /* RIGHT */
         ZMK_MOCK_RELEASE(6,0,10)
-        ZMK_MOCK_PRESS(6,1,10)   /* UP */
+        ZMK_MOCK_PRESS(6,1,10)    /* UP */
         ZMK_MOCK_RELEASE(6,1,10)
-        ZMK_MOCK_PRESS(7,0,10)   /* DOWN */
+        ZMK_MOCK_PRESS(7,0,10)    /* DOWN */
         ZMK_MOCK_RELEASE(7,0,10)
-        ZMK_MOCK_PRESS(5,1,10)   /* LEFT */
+        ZMK_MOCK_PRESS(5,1,10)    /* LEFT */
         ZMK_MOCK_RELEASE(5,1,10)
-        ZMK_MOCK_PRESS(6,0,10)   /* RIGHT */
+        ZMK_MOCK_PRESS(6,0,10)    /* RIGHT */
         ZMK_MOCK_RELEASE(6,0,10)
-        ZMK_MOCK_PRESS(6,1,10)   /* UP */
+        ZMK_MOCK_PRESS(6,1,10)    /* UP */
         ZMK_MOCK_RELEASE(6,1,10)
-        ZMK_MOCK_PRESS(7,0,10)   /* DOWN */
+        ZMK_MOCK_PRESS(7,0,10)    /* DOWN */
         ZMK_MOCK_RELEASE(7,0,10)
-        ZMK_MOCK_PRESS(5,1,10)   /* LEFT */
+        ZMK_MOCK_PRESS(5,1,10)    /* LEFT */
         ZMK_MOCK_RELEASE(5,1,10)
-        ZMK_MOCK_PRESS(6,0,10)   /* RIGHT */
+        ZMK_MOCK_PRESS(6,0,10)    /* RIGHT */
         ZMK_MOCK_RELEASE(6,0,10)
         ZMK_MOCK_PRESS(0,1,10)
         ZMK_MOCK_RELEASE(0,1,10)
@@ -70,54 +73,54 @@
         /* Record slot 1: Shift+A Shift+B Ctrl+Z Shift+A LEFT RIGHT (20 events) */
         ZMK_MOCK_PRESS(0,0,10)
         ZMK_MOCK_RELEASE(0,0,10)
-        ZMK_MOCK_PRESS(4,0,10)   /* Shift down */
-        ZMK_MOCK_PRESS(3,0,10)   /* A */
+        ZMK_MOCK_PRESS(4,0,10)    /* Shift down */
+        ZMK_MOCK_PRESS(3,0,10)    /* A */
         ZMK_MOCK_RELEASE(3,0,10)
-        ZMK_MOCK_RELEASE(4,0,10) /* Shift up */
-        ZMK_MOCK_PRESS(4,0,10)   /* Shift down */
-        ZMK_MOCK_PRESS(3,1,10)   /* B */
+        ZMK_MOCK_RELEASE(4,0,10)  /* Shift up */
+        ZMK_MOCK_PRESS(4,0,10)    /* Shift down */
+        ZMK_MOCK_PRESS(3,1,10)    /* B */
         ZMK_MOCK_RELEASE(3,1,10)
-        ZMK_MOCK_RELEASE(4,0,10) /* Shift up */
-        ZMK_MOCK_PRESS(4,1,10)   /* Ctrl down */
-        ZMK_MOCK_PRESS(5,0,10)   /* Z */
+        ZMK_MOCK_RELEASE(4,0,10)  /* Shift up */
+        ZMK_MOCK_PRESS(4,1,10)    /* Ctrl down */
+        ZMK_MOCK_PRESS(5,0,10)    /* Z */
         ZMK_MOCK_RELEASE(5,0,10)
-        ZMK_MOCK_RELEASE(4,1,10) /* Ctrl up */
-        ZMK_MOCK_PRESS(4,0,10)   /* Shift down */
-        ZMK_MOCK_PRESS(3,0,10)   /* A */
+        ZMK_MOCK_RELEASE(4,1,10)  /* Ctrl up */
+        ZMK_MOCK_PRESS(4,0,10)    /* Shift down */
+        ZMK_MOCK_PRESS(3,0,10)    /* A */
         ZMK_MOCK_RELEASE(3,0,10)
-        ZMK_MOCK_RELEASE(4,0,10) /* Shift up */
-        ZMK_MOCK_PRESS(5,1,10)   /* LEFT */
+        ZMK_MOCK_RELEASE(4,0,10)  /* Shift up */
+        ZMK_MOCK_PRESS(5,1,10)    /* LEFT */
         ZMK_MOCK_RELEASE(5,1,10)
-        ZMK_MOCK_PRESS(6,0,10)   /* RIGHT */
+        ZMK_MOCK_PRESS(6,0,10)    /* RIGHT */
         ZMK_MOCK_RELEASE(6,0,10)
         ZMK_MOCK_PRESS(0,1,10)
         ZMK_MOCK_RELEASE(0,1,10)
         ZMK_MOCK_PRESS(1,1,10)
         ZMK_MOCK_RELEASE(1,1,10)
 
-        /* Record slot 2: A B LEFT Shift+A RIGHT Ctrl+Z UP DOWN (20 events) */
+        /* Record slot 2: "Helo<BS>lo, " — Shift+H e l o BS l o , SPACE (20 events) */
         ZMK_MOCK_PRESS(0,0,10)
         ZMK_MOCK_RELEASE(0,0,10)
-        ZMK_MOCK_PRESS(3,0,10)   /* A */
-        ZMK_MOCK_RELEASE(3,0,10)
-        ZMK_MOCK_PRESS(3,1,10)   /* B */
-        ZMK_MOCK_RELEASE(3,1,10)
-        ZMK_MOCK_PRESS(5,1,10)   /* LEFT */
-        ZMK_MOCK_RELEASE(5,1,10)
-        ZMK_MOCK_PRESS(4,0,10)   /* Shift down */
-        ZMK_MOCK_PRESS(3,0,10)   /* A */
-        ZMK_MOCK_RELEASE(3,0,10)
-        ZMK_MOCK_RELEASE(4,0,10) /* Shift up */
-        ZMK_MOCK_PRESS(6,0,10)   /* RIGHT */
-        ZMK_MOCK_RELEASE(6,0,10)
-        ZMK_MOCK_PRESS(4,1,10)   /* Ctrl down */
-        ZMK_MOCK_PRESS(5,0,10)   /* Z */
-        ZMK_MOCK_RELEASE(5,0,10)
-        ZMK_MOCK_RELEASE(4,1,10) /* Ctrl up */
-        ZMK_MOCK_PRESS(6,1,10)   /* UP */
-        ZMK_MOCK_RELEASE(6,1,10)
-        ZMK_MOCK_PRESS(7,0,10)   /* DOWN */
-        ZMK_MOCK_RELEASE(7,0,10)
+        ZMK_MOCK_PRESS(4,0,10)    /* Shift down */
+        ZMK_MOCK_PRESS(8,1,10)    /* H */
+        ZMK_MOCK_RELEASE(8,1,10)
+        ZMK_MOCK_RELEASE(4,0,10)  /* Shift up */
+        ZMK_MOCK_PRESS(9,0,10)    /* e */
+        ZMK_MOCK_RELEASE(9,0,10)
+        ZMK_MOCK_PRESS(9,1,10)    /* l */
+        ZMK_MOCK_RELEASE(9,1,10)
+        ZMK_MOCK_PRESS(10,0,10)   /* o */
+        ZMK_MOCK_RELEASE(10,0,10)
+        ZMK_MOCK_PRESS(10,1,10)   /* BSPC */
+        ZMK_MOCK_RELEASE(10,1,10)
+        ZMK_MOCK_PRESS(9,1,10)    /* l */
+        ZMK_MOCK_RELEASE(9,1,10)
+        ZMK_MOCK_PRESS(10,0,10)   /* o */
+        ZMK_MOCK_RELEASE(10,0,10)
+        ZMK_MOCK_PRESS(11,0,10)   /* , */
+        ZMK_MOCK_RELEASE(11,0,10)
+        ZMK_MOCK_PRESS(11,1,10)   /* SPACE */
+        ZMK_MOCK_RELEASE(11,1,10)
         ZMK_MOCK_PRESS(0,1,10)
         ZMK_MOCK_RELEASE(0,1,10)
         ZMK_MOCK_PRESS(2,0,10)
@@ -126,34 +129,34 @@
         /* ===== Phase 2: move slot 1 -> slot 3 ===== */
         ZMK_MOCK_PRESS(7,1,10)
         ZMK_MOCK_RELEASE(7,1,10)
-        ZMK_MOCK_PRESS(1,1,10)   /* source: slot 1 */
+        ZMK_MOCK_PRESS(1,1,10)    /* source: slot 1 */
         ZMK_MOCK_RELEASE(1,1,10)
-        ZMK_MOCK_PRESS(2,1,10)   /* destination: slot 3 */
+        ZMK_MOCK_PRESS(2,1,10)    /* destination: slot 3 */
         ZMK_MOCK_RELEASE(2,1,10)
 
-        /* ===== Phase 3: re-record slot 1: Ctrl+Z Ctrl+Z Ctrl+Z Shift+A Shift+B (20 events) ===== */
+        /* ===== Phase 3: re-record slot 1: Ctrl+Z x3 Shift+A Shift+B (20 events) ===== */
         ZMK_MOCK_PRESS(0,0,10)
         ZMK_MOCK_RELEASE(0,0,10)
-        ZMK_MOCK_PRESS(4,1,10)   /* Ctrl down */
-        ZMK_MOCK_PRESS(5,0,10)   /* Z */
+        ZMK_MOCK_PRESS(4,1,10)    /* Ctrl down */
+        ZMK_MOCK_PRESS(5,0,10)    /* Z */
         ZMK_MOCK_RELEASE(5,0,10)
-        ZMK_MOCK_RELEASE(4,1,10) /* Ctrl up */
-        ZMK_MOCK_PRESS(4,1,10)   /* Ctrl down */
-        ZMK_MOCK_PRESS(5,0,10)   /* Z */
+        ZMK_MOCK_RELEASE(4,1,10)  /* Ctrl up */
+        ZMK_MOCK_PRESS(4,1,10)    /* Ctrl down */
+        ZMK_MOCK_PRESS(5,0,10)    /* Z */
         ZMK_MOCK_RELEASE(5,0,10)
-        ZMK_MOCK_RELEASE(4,1,10) /* Ctrl up */
-        ZMK_MOCK_PRESS(4,1,10)   /* Ctrl down */
-        ZMK_MOCK_PRESS(5,0,10)   /* Z */
+        ZMK_MOCK_RELEASE(4,1,10)  /* Ctrl up */
+        ZMK_MOCK_PRESS(4,1,10)    /* Ctrl down */
+        ZMK_MOCK_PRESS(5,0,10)    /* Z */
         ZMK_MOCK_RELEASE(5,0,10)
-        ZMK_MOCK_RELEASE(4,1,10) /* Ctrl up */
-        ZMK_MOCK_PRESS(4,0,10)   /* Shift down */
-        ZMK_MOCK_PRESS(3,0,10)   /* A */
+        ZMK_MOCK_RELEASE(4,1,10)  /* Ctrl up */
+        ZMK_MOCK_PRESS(4,0,10)    /* Shift down */
+        ZMK_MOCK_PRESS(3,0,10)    /* A */
         ZMK_MOCK_RELEASE(3,0,10)
-        ZMK_MOCK_RELEASE(4,0,10) /* Shift up */
-        ZMK_MOCK_PRESS(4,0,10)   /* Shift down */
-        ZMK_MOCK_PRESS(3,1,10)   /* B */
+        ZMK_MOCK_RELEASE(4,0,10)  /* Shift up */
+        ZMK_MOCK_PRESS(4,0,10)    /* Shift down */
+        ZMK_MOCK_PRESS(3,1,10)    /* B */
         ZMK_MOCK_RELEASE(3,1,10)
-        ZMK_MOCK_RELEASE(4,0,10) /* Shift up */
+        ZMK_MOCK_RELEASE(4,0,10)  /* Shift up */
         ZMK_MOCK_PRESS(0,1,10)
         ZMK_MOCK_RELEASE(0,1,10)
         ZMK_MOCK_PRESS(1,1,10)
@@ -172,7 +175,7 @@
         /* ===== Phase 5: delete slot 2 ===== */
         ZMK_MOCK_PRESS(8,0,10)
         ZMK_MOCK_RELEASE(8,0,10)
-        ZMK_MOCK_PRESS(2,0,10)   /* confirm: slot 2 */
+        ZMK_MOCK_PRESS(2,0,10)    /* confirm: slot 2 */
         ZMK_MOCK_RELEASE(2,0,10)
         /* play slot 2: empty, no output */
         ZMK_MOCK_PRESS(2,0,200)
@@ -196,7 +199,10 @@
                 &kp Z             &kp LEFT
                 &kp RIGHT         &kp UP
                 &kp DOWN          &dm DM_MOV 0
-                &dm DM_DEL 0      &none
+                &dm DM_DEL 0      &kp H
+                &kp E             &kp L
+                &kp O             &kp BSPC
+                &kp COMMA         &kp SPACE
             >;
         };
     };
