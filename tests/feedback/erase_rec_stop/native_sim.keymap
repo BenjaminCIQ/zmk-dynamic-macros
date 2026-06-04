@@ -11,6 +11,6 @@
         ZMK_MOCK_RELEASE(0,1,2000)
         /* SLOT_RAM 0: assign; only works if state is PENDING_ASSIGN; types ">R0" */
         ZMK_MOCK_PRESS(1,0,10)
-        ZMK_MOCK_RELEASE(1,0,10)
+        ZMK_MOCK_RELEASE(1,0,2000)
     >;
 };
