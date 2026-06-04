@@ -1,0 +1,62 @@
+#include <dt-bindings/zmk/keys.h>
+#include <behaviors.dtsi>
+#include <dt-bindings/zmk/kscan_mock.h>
+#include <behaviors/dynamic_macro.dtsi>
+#include <dt-bindings/zmk/dynamic_macros.h>
+
+/* 3 RAM slots: fill slots 0 and 1, leave slot 2 empty.
+ * Move slot 1 (second-last filled) to slot 2 (the only empty slot).
+ * Verify slot 1 is now empty and slot 2 plays the moved macro. */
+
+&kscan {
+    rows = <4>;
+    columns = <2>;
+    exit-after;
+    events = <
+        /* Record A into slot 0 */
+        ZMK_MOCK_PRESS(0,0,10)
+        ZMK_MOCK_RELEASE(0,0,10)
+        ZMK_MOCK_PRESS(3,0,10)
+        ZMK_MOCK_RELEASE(3,0,10)
+        ZMK_MOCK_PRESS(0,1,10)
+        ZMK_MOCK_RELEASE(0,1,10)
+        ZMK_MOCK_PRESS(1,0,10)
+        ZMK_MOCK_RELEASE(1,0,10)
+        /* Record B into slot 1 */
+        ZMK_MOCK_PRESS(0,0,10)
+        ZMK_MOCK_RELEASE(0,0,10)
+        ZMK_MOCK_PRESS(3,1,10)
+        ZMK_MOCK_RELEASE(3,1,10)
+        ZMK_MOCK_PRESS(0,1,10)
+        ZMK_MOCK_RELEASE(0,1,10)
+        ZMK_MOCK_PRESS(1,1,10)
+        ZMK_MOCK_RELEASE(1,1,10)
+        /* Move slot 1 -> slot 2 (last/only empty slot) */
+        ZMK_MOCK_PRESS(2,1,10)
+        ZMK_MOCK_RELEASE(2,1,10)
+        ZMK_MOCK_PRESS(1,1,10)
+        ZMK_MOCK_RELEASE(1,1,10)
+        ZMK_MOCK_PRESS(2,0,10)
+        ZMK_MOCK_RELEASE(2,0,10)
+        /* Play slot 1: should be empty (moved away) */
+        ZMK_MOCK_PRESS(1,1,200)
+        ZMK_MOCK_RELEASE(1,1,10)
+        /* Play slot 2: should be B (moved here) */
+        ZMK_MOCK_PRESS(2,0,2000)
+        ZMK_MOCK_RELEASE(2,0,10)
+    >;
+};
+
+/ {
+    keymap {
+        compatible = "zmk,keymap";
+        default_layer {
+            bindings = <
+                &dm DM_REC 0        &dm DM_STP 0
+                &dm DM_SLOT_RAM 0   &dm DM_SLOT_RAM 1
+                &dm DM_SLOT_RAM 2   &dm DM_MOV 0
+                &kp A               &kp B
+            >;
+        };
+    };
+};

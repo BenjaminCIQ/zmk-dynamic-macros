@@ -1,0 +1,66 @@
+#include <dt-bindings/zmk/keys.h>
+#include <behaviors.dtsi>
+#include <dt-bindings/zmk/kscan_mock.h>
+#include <behaviors/dynamic_macro.dtsi>
+#include <dt-bindings/zmk/dynamic_macros.h>
+
+/* Verify STATUS count output reflects correct filled/total after each
+ * record and delete operation. Uses STATUS_COUNT (header only) with
+ * arrow style to keep snapshot simple: "==N/3 RAM\n" each time. */
+
+&kscan {
+    rows = <4>;
+    columns = <2>;
+    exit-after;
+    events = <
+        /* STATUS: 0 filled -> "==0/3 RAM\n" */
+        ZMK_MOCK_PRESS(2,1,10)
+        ZMK_MOCK_RELEASE(2,1,2000)
+        /* Record A into slot 0 */
+        ZMK_MOCK_PRESS(0,0,10)
+        ZMK_MOCK_RELEASE(0,0,10)
+        ZMK_MOCK_PRESS(3,0,10)
+        ZMK_MOCK_RELEASE(3,0,10)
+        ZMK_MOCK_PRESS(0,1,10)
+        ZMK_MOCK_RELEASE(0,1,10)
+        ZMK_MOCK_PRESS(1,0,10)
+        ZMK_MOCK_RELEASE(1,0,10)
+        /* STATUS: 1 filled -> "==1/3 RAM\n" */
+        ZMK_MOCK_PRESS(2,1,10)
+        ZMK_MOCK_RELEASE(2,1,2000)
+        /* Record B into slot 1 */
+        ZMK_MOCK_PRESS(0,0,10)
+        ZMK_MOCK_RELEASE(0,0,10)
+        ZMK_MOCK_PRESS(3,1,10)
+        ZMK_MOCK_RELEASE(3,1,10)
+        ZMK_MOCK_PRESS(0,1,10)
+        ZMK_MOCK_RELEASE(0,1,10)
+        ZMK_MOCK_PRESS(1,1,10)
+        ZMK_MOCK_RELEASE(1,1,10)
+        /* STATUS: 2 filled -> "==2/3 RAM\n" */
+        ZMK_MOCK_PRESS(2,1,10)
+        ZMK_MOCK_RELEASE(2,1,2000)
+        /* Delete slot 0 */
+        ZMK_MOCK_PRESS(2,0,10)
+        ZMK_MOCK_RELEASE(2,0,10)
+        ZMK_MOCK_PRESS(1,0,10)
+        ZMK_MOCK_RELEASE(1,0,10)
+        /* STATUS: 1 filled -> "==1/3 RAM\n" */
+        ZMK_MOCK_PRESS(2,1,10)
+        ZMK_MOCK_RELEASE(2,1,2000)
+    >;
+};
+
+/ {
+    keymap {
+        compatible = "zmk,keymap";
+        default_layer {
+            bindings = <
+                &dm DM_REC 0        &dm DM_STP 0
+                &dm DM_SLOT_RAM 0   &dm DM_SLOT_RAM 1
+                &dm DM_DEL 0        &dm DM_STATE 0
+                &kp A               &kp B
+            >;
+        };
+    };
+};

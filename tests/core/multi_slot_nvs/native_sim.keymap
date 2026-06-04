@@ -1,0 +1,71 @@
+#include <dt-bindings/zmk/keys.h>
+#include <behaviors.dtsi>
+#include <dt-bindings/zmk/kscan_mock.h>
+#include <behaviors/dynamic_macro.dtsi>
+#include <dt-bindings/zmk/dynamic_macros.h>
+
+/* Record distinct macros into 3 NVS slots, reload from NVS,
+ * verify all three slots survive the reload independently. */
+
+&kscan {
+    rows = <4>;
+    columns = <2>;
+    exit-after;
+    events = <
+        /* Record A into NVS slot 0 */
+        ZMK_MOCK_PRESS(0,0,10)
+        ZMK_MOCK_RELEASE(0,0,10)
+        ZMK_MOCK_PRESS(3,0,10)
+        ZMK_MOCK_RELEASE(3,0,10)
+        ZMK_MOCK_PRESS(0,1,10)
+        ZMK_MOCK_RELEASE(0,1,10)
+        ZMK_MOCK_PRESS(1,0,500)
+        ZMK_MOCK_RELEASE(1,0,10)
+        /* Record B into NVS slot 1 */
+        ZMK_MOCK_PRESS(0,0,10)
+        ZMK_MOCK_RELEASE(0,0,10)
+        ZMK_MOCK_PRESS(3,1,10)
+        ZMK_MOCK_RELEASE(3,1,10)
+        ZMK_MOCK_PRESS(0,1,10)
+        ZMK_MOCK_RELEASE(0,1,10)
+        ZMK_MOCK_PRESS(1,1,500)
+        ZMK_MOCK_RELEASE(1,1,10)
+        /* Record A B into NVS slot 2 */
+        ZMK_MOCK_PRESS(0,0,10)
+        ZMK_MOCK_RELEASE(0,0,10)
+        ZMK_MOCK_PRESS(3,0,10)
+        ZMK_MOCK_RELEASE(3,0,10)
+        ZMK_MOCK_PRESS(3,1,10)
+        ZMK_MOCK_RELEASE(3,1,10)
+        ZMK_MOCK_PRESS(0,1,10)
+        ZMK_MOCK_RELEASE(0,1,10)
+        ZMK_MOCK_PRESS(2,0,500)
+        ZMK_MOCK_RELEASE(2,0,10)
+        /* TEST_RELOAD: flush NVS, zero RAM, reload */
+        ZMK_MOCK_PRESS(2,1,10)
+        ZMK_MOCK_RELEASE(2,1,10)
+        /* Play NVS slot 0: should be A */
+        ZMK_MOCK_PRESS(1,0,2000)
+        ZMK_MOCK_RELEASE(1,0,10)
+        /* Play NVS slot 1: should be B */
+        ZMK_MOCK_PRESS(1,1,2000)
+        ZMK_MOCK_RELEASE(1,1,10)
+        /* Play NVS slot 2: should be A B */
+        ZMK_MOCK_PRESS(2,0,2000)
+        ZMK_MOCK_RELEASE(2,0,10)
+    >;
+};
+
+/ {
+    keymap {
+        compatible = "zmk,keymap";
+        default_layer {
+            bindings = <
+                &dm DM_REC 0           &dm DM_STP 0
+                &dm DM_SLOT_NVS 0      &dm DM_SLOT_NVS 1
+                &dm DM_SLOT_NVS 2      &dm DM_TEST_RELOAD 0
+                &kp A                  &kp B
+            >;
+        };
+    };
+};
