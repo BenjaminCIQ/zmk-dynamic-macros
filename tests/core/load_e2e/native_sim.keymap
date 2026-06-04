@@ -1,0 +1,134 @@
+#include <dt-bindings/zmk/keys.h>
+#include <behaviors.dtsi>
+#include <dt-bindings/zmk/kscan_mock.h>
+#include <behaviors/dynamic_macro.dtsi>
+#include <dt-bindings/zmk/dynamic_macros.h>
+
+/* End-to-end load test: 4 RAM slots, MAX_EVENTS=8.
+ *
+ * Phase 1 - fill three slots with varying sizes:
+ *   slot 0: A        (2 events)
+ *   slot 1: A B      (4 events)
+ *   slot 2: A A B    (6 events)
+ *
+ * Phase 2 - move slot 1 to slot 3 (last empty):
+ *   slot 1 becomes empty, slot 3 = A B
+ *
+ * Phase 3 - fill slot 1 again and fill slot 2 to capacity:
+ *   slot 1: B        (2 events, re-recorded)
+ *   All 4 slots now occupied.
+ *
+ * Phase 4 - play all slots to verify:
+ *   slot 0 -> A
+ *   slot 1 -> B
+ *   slot 2 -> A A B
+ *   slot 3 -> A B
+ *
+ * Phase 5 - delete slot 1, verify slot 1 empty, slot 3 intact:
+ *   play slot 1 -> nothing
+ *   play slot 3 -> A B */
+
+&kscan {
+    rows = <5>;
+    columns = <2>;
+    exit-after;
+    events = <
+        /* --- Phase 1: fill slots 0, 1, 2 --- */
+
+        /* Record A into slot 0 */
+        ZMK_MOCK_PRESS(0,0,10)
+        ZMK_MOCK_RELEASE(0,0,10)
+        ZMK_MOCK_PRESS(3,0,10)
+        ZMK_MOCK_RELEASE(3,0,10)
+        ZMK_MOCK_PRESS(0,1,10)
+        ZMK_MOCK_RELEASE(0,1,10)
+        ZMK_MOCK_PRESS(1,0,10)
+        ZMK_MOCK_RELEASE(1,0,10)
+
+        /* Record A B into slot 1 */
+        ZMK_MOCK_PRESS(0,0,10)
+        ZMK_MOCK_RELEASE(0,0,10)
+        ZMK_MOCK_PRESS(3,0,10)
+        ZMK_MOCK_RELEASE(3,0,10)
+        ZMK_MOCK_PRESS(3,1,10)
+        ZMK_MOCK_RELEASE(3,1,10)
+        ZMK_MOCK_PRESS(0,1,10)
+        ZMK_MOCK_RELEASE(0,1,10)
+        ZMK_MOCK_PRESS(1,1,10)
+        ZMK_MOCK_RELEASE(1,1,10)
+
+        /* Record A A B into slot 2 (6 events) */
+        ZMK_MOCK_PRESS(0,0,10)
+        ZMK_MOCK_RELEASE(0,0,10)
+        ZMK_MOCK_PRESS(3,0,10)
+        ZMK_MOCK_RELEASE(3,0,10)
+        ZMK_MOCK_PRESS(3,0,10)
+        ZMK_MOCK_RELEASE(3,0,10)
+        ZMK_MOCK_PRESS(3,1,10)
+        ZMK_MOCK_RELEASE(3,1,10)
+        ZMK_MOCK_PRESS(0,1,10)
+        ZMK_MOCK_RELEASE(0,1,10)
+        ZMK_MOCK_PRESS(2,0,10)
+        ZMK_MOCK_RELEASE(2,0,10)
+
+        /* --- Phase 2: move slot 1 -> slot 3 --- */
+        ZMK_MOCK_PRESS(4,0,10)
+        ZMK_MOCK_RELEASE(4,0,10)
+        /* source: slot 1 */
+        ZMK_MOCK_PRESS(1,1,10)
+        ZMK_MOCK_RELEASE(1,1,10)
+        /* destination: slot 3 */
+        ZMK_MOCK_PRESS(2,1,10)
+        ZMK_MOCK_RELEASE(2,1,10)
+
+        /* --- Phase 3: re-fill slot 1 with B, fill slot 2 to max --- */
+
+        /* Record B into slot 1 */
+        ZMK_MOCK_PRESS(0,0,10)
+        ZMK_MOCK_RELEASE(0,0,10)
+        ZMK_MOCK_PRESS(3,1,10)
+        ZMK_MOCK_RELEASE(3,1,10)
+        ZMK_MOCK_PRESS(0,1,10)
+        ZMK_MOCK_RELEASE(0,1,10)
+        ZMK_MOCK_PRESS(1,1,10)
+        ZMK_MOCK_RELEASE(1,1,10)
+
+        /* --- Phase 4: play all slots --- */
+        ZMK_MOCK_PRESS(1,0,2000)
+        ZMK_MOCK_RELEASE(1,0,10)
+        ZMK_MOCK_PRESS(1,1,2000)
+        ZMK_MOCK_RELEASE(1,1,10)
+        ZMK_MOCK_PRESS(2,0,2000)
+        ZMK_MOCK_RELEASE(2,0,10)
+        ZMK_MOCK_PRESS(2,1,2000)
+        ZMK_MOCK_RELEASE(2,1,10)
+
+        /* --- Phase 5: delete slot 1, verify empty, slot 3 intact --- */
+        ZMK_MOCK_PRESS(4,1,10)
+        ZMK_MOCK_RELEASE(4,1,10)
+        /* confirm delete slot 1 */
+        ZMK_MOCK_PRESS(1,1,10)
+        ZMK_MOCK_RELEASE(1,1,10)
+        /* play slot 1: empty, no output */
+        ZMK_MOCK_PRESS(1,1,200)
+        ZMK_MOCK_RELEASE(1,1,10)
+        /* play slot 3: A B */
+        ZMK_MOCK_PRESS(2,1,2000)
+        ZMK_MOCK_RELEASE(2,1,10)
+    >;
+};
+
+/ {
+    keymap {
+        compatible = "zmk,keymap";
+        default_layer {
+            bindings = <
+                &dm DM_REC 0      &dm DM_STP 0
+                &dm DM_SLOT_RAM 0 &dm DM_SLOT_RAM 1
+                &dm DM_SLOT_RAM 2 &dm DM_SLOT_RAM 3
+                &kp A             &kp B
+                &dm DM_MOV 0      &dm DM_DEL 0
+            >;
+        };
+    };
+};
