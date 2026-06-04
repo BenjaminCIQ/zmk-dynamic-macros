@@ -616,13 +616,11 @@ static void cmd_slot(struct behavior_dynamic_macro_data *data, int slot_idx) {
         memset(&data->slots[src], 0, sizeof(struct dm_slot));
 
         dm_save_slot(data, dst);
-        int del_rc = dm_delete_slot_from_storage(data, src);
+        dm_delete_slot_from_storage(data, src);
 
         data->move_source_slot = -1;
         LOG_DBG("Moved slot %d -> slot %d", src, dst);
-        if (!del_rc) {
-            feedback_moved(data, src, dst);
-        }
+        feedback_moved(data, src, dst);
         break;
     }
 
