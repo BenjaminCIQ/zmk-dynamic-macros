@@ -1,0 +1,100 @@
+#include <dt-bindings/zmk/keys.h>
+#include <behaviors.dtsi>
+#include <dt-bindings/zmk/kscan_mock.h>
+#include <behaviors/dynamic_macro.dtsi>
+#include <dt-bindings/zmk/dynamic_macros.h>
+
+/* Verify per-level feedback output against the README spec.
+ * Starts at VERBOSE, steps down through BASIC -> COMMAND -> ERROR.
+ * Each round: REC, record A, STOP, assign to slot N, play empty slot N+1.
+ * Operations visible per level:
+ *   VERBOSE:  >*  A  >.  >RN:'a'  ?RN+1
+ *   BASIC:    >*  A  >.  >RN      ?RN+1
+ *   COMMAND:  >*  A  >.  >RN      (no empty slot msg)
+ *   ERROR:    A                   (no command feedback) */
+
+&kscan {
+    rows = <4>;
+    columns = <2>;
+    exit-after;
+    events = <
+        /* --- VERBOSE --- */
+        /* REC */
+        ZMK_MOCK_PRESS(0,0,10)
+        ZMK_MOCK_RELEASE(0,0,10)
+        /* A (recorded) */
+        ZMK_MOCK_PRESS(3,0,10)
+        ZMK_MOCK_RELEASE(3,0,10)
+        /* STP */
+        ZMK_MOCK_PRESS(0,1,10)
+        ZMK_MOCK_RELEASE(0,1,10)
+        /* SLOT_RAM 0 (assign, triggers verbose saved with preview) */
+        ZMK_MOCK_PRESS(1,0,10)
+        ZMK_MOCK_RELEASE(1,0,10)
+        /* SLOT_RAM 1 (play empty) */
+        ZMK_MOCK_PRESS(1,1,2000)
+        ZMK_MOCK_RELEASE(1,1,10)
+        /* DEC: VERBOSE -> BASIC */
+        ZMK_MOCK_PRESS(3,1,10)
+        ZMK_MOCK_RELEASE(3,1,2000)
+
+        /* --- BASIC --- */
+        ZMK_MOCK_PRESS(0,0,10)
+        ZMK_MOCK_RELEASE(0,0,10)
+        ZMK_MOCK_PRESS(3,0,10)
+        ZMK_MOCK_RELEASE(3,0,10)
+        ZMK_MOCK_PRESS(0,1,10)
+        ZMK_MOCK_RELEASE(0,1,10)
+        /* SLOT_RAM 1 (assign) */
+        ZMK_MOCK_PRESS(1,1,10)
+        ZMK_MOCK_RELEASE(1,1,10)
+        /* SLOT_RAM 2 (play empty) */
+        ZMK_MOCK_PRESS(2,0,2000)
+        ZMK_MOCK_RELEASE(2,0,10)
+        /* DEC: BASIC -> COMMAND */
+        ZMK_MOCK_PRESS(3,1,10)
+        ZMK_MOCK_RELEASE(3,1,2000)
+
+        /* --- COMMAND --- */
+        ZMK_MOCK_PRESS(0,0,10)
+        ZMK_MOCK_RELEASE(0,0,10)
+        ZMK_MOCK_PRESS(3,0,10)
+        ZMK_MOCK_RELEASE(3,0,10)
+        ZMK_MOCK_PRESS(0,1,10)
+        ZMK_MOCK_RELEASE(0,1,10)
+        /* SLOT_RAM 2 (assign) */
+        ZMK_MOCK_PRESS(2,0,10)
+        ZMK_MOCK_RELEASE(2,0,10)
+        /* SLOT_RAM 3 (play empty - no output at COMMAND) */
+        ZMK_MOCK_PRESS(2,1,2000)
+        ZMK_MOCK_RELEASE(2,1,10)
+        /* DEC: COMMAND -> ERROR */
+        ZMK_MOCK_PRESS(3,1,10)
+        ZMK_MOCK_RELEASE(3,1,2000)
+
+        /* --- ERROR --- */
+        ZMK_MOCK_PRESS(0,0,10)
+        ZMK_MOCK_RELEASE(0,0,10)
+        ZMK_MOCK_PRESS(3,0,10)
+        ZMK_MOCK_RELEASE(3,0,10)
+        ZMK_MOCK_PRESS(0,1,10)
+        ZMK_MOCK_RELEASE(0,1,10)
+        /* SLOT_RAM 3 (assign - no feedback at ERROR) */
+        ZMK_MOCK_PRESS(2,1,10)
+        ZMK_MOCK_RELEASE(2,1,2000)
+    >;
+};
+
+/ {
+    keymap {
+        compatible = "zmk,keymap";
+        default_layer {
+            bindings = <
+                &dm DM_REC 0           &dm DM_STP 0
+                &dm DM_SLOT_RAM 0      &dm DM_SLOT_RAM 1
+                &dm DM_SLOT_RAM 2      &dm DM_SLOT_RAM 3
+                &kp A                  &dm DM_FEEDBACK_DEC 0
+            >;
+        };
+    };
+};
