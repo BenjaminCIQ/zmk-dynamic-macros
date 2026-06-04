@@ -542,6 +542,8 @@ static void cmd_slot(struct behavior_dynamic_macro_data *data, int slot_idx) {
     case DM_STATE_PENDING_ASSIGN:
         k_work_cancel_delayable(&data->assign_timeout_work);
         if (data->slots[slot_idx].event_count > 0 && !atomic_test_bit(data->pending_delete, slot_idx)) {
+            LOG_ERR("Assign rejected: slot %d is occupied (%u events)", slot_idx,
+                    (unsigned int)data->slots[slot_idx].event_count);
             feedback_slot_full(data, slot_idx);
             return;
         }
