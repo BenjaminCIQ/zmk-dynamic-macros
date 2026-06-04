@@ -469,6 +469,13 @@ static void cmd_record(struct behavior_dynamic_macro_data *data) {
 }
 
 static void cmd_stop(struct behavior_dynamic_macro_data *data) {
+    if (data->state == DM_STATE_TYPING_FEEDBACK &&
+        data->feedback_return_state == DM_STATE_RECORDING) {
+        /* Interrupt the REC indicator and proceed to stop immediately. */
+        data->ring_head = data->ring_tail;
+        data->suppress_recording = false;
+        data->state = DM_STATE_RECORDING;
+    }
     if (data->state != DM_STATE_RECORDING) {
         return;
     }
