@@ -130,6 +130,7 @@ struct behavior_dynamic_macro_data {
     uint16_t erase_char_count;
     struct k_work_delayable erase_work;
     bool erase_pending;
+    enum dm_state erase_return_state;
 #endif
 #endif
 };

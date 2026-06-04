@@ -1321,6 +1321,12 @@ static void erase_work_handler(struct k_work *work) {
     data->erase_pending = false;
     data->erase_char_count = 0;
 
+    /* Capture the state to restore after erase on the first batch; subsequent
+     * batches see TYPING_ERASE so we preserve the already-saved return state. */
+    if (data->state != DM_STATE_TYPING_ERASE) {
+        data->erase_return_state = data->state;
+    }
+
     /* Emit backspaces via the ring+timer path so each gets TAP_DELAY spacing,
      * avoiding host-side key-repeat coalescing from a tight burst.
      * Use DM_STATE_TYPING_ERASE so a concurrent keypress can abort mid-sequence.
@@ -1334,7 +1340,7 @@ static void erase_work_handler(struct k_work *work) {
         data->erase_char_count = count - batch;
         data->erase_pending = true;
     }
-    start_feedback(data, DM_STATE_IDLE, -1);
+    start_feedback(data, data->erase_return_state, -1);
     data->state = DM_STATE_TYPING_ERASE;
 }
 
@@ -1351,7 +1357,7 @@ void dm_feedback_cancel_erase(struct behavior_dynamic_macro_data *data) {
     if (data->state == DM_STATE_TYPING_ERASE) {
         data->ring_head = data->ring_tail;
         data->suppress_recording = false;
-        data->state = DM_STATE_IDLE;
+        data->state = data->erase_return_state;
     }
 }
 
