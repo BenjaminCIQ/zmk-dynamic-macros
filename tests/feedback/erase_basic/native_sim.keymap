@@ -1,0 +1,11 @@
+#include "../behavior_keymap.dtsi"
+
+&kscan {
+    events = <
+        /* REC: types ">*" (2 chars), then auto-erase fires after 500ms
+         * and emits exactly 2 backspaces. No further commands — this test
+         * only verifies erase fires and emits the correct backspace count. */
+        ZMK_MOCK_PRESS(0,0,10)
+        ZMK_MOCK_RELEASE(0,0,2000)
+    >;
+};
