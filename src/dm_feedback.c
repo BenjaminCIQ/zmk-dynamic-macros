@@ -1317,6 +1317,12 @@ static void erase_work_handler(struct k_work *work) {
         return;
     }
 
+    if (data->state != DM_STATE_IDLE) {
+        data->erase_pending = false;
+        data->erase_char_count = 0;
+        return;
+    }
+
     uint16_t count = data->erase_char_count;
     data->erase_pending = false;
     data->erase_char_count = 0;
