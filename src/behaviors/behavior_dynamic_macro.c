@@ -407,7 +407,7 @@ static void emit_work_handler(struct k_work *work) {
         if (data->feedback_press_phase) {
             data->feedback_press_phase = false;
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_FEEDBACK_AUTO_ERASE)
-            if (ev->keycode != 0x28) {
+            if (data->state == DM_STATE_TYPING_FEEDBACK && ev->keycode != 0x28) {
                 data->erase_char_count++;
             }
 #endif
