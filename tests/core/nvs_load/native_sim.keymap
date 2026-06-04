@@ -50,7 +50,7 @@
         ZMK_MOCK_RELEASE(7,0,10)
         ZMK_MOCK_PRESS(0,1,10)
         ZMK_MOCK_RELEASE(0,1,10)
-        ZMK_MOCK_PRESS(1,0,10)
+        ZMK_MOCK_PRESS(1,0,500)
         ZMK_MOCK_RELEASE(1,0,10)
 
         /* Record slot 1: LEFT RIGHT UP DOWN LEFT RIGHT UP DOWN */
@@ -74,7 +74,7 @@
         ZMK_MOCK_RELEASE(7,0,10)
         ZMK_MOCK_PRESS(0,1,10)
         ZMK_MOCK_RELEASE(0,1,10)
-        ZMK_MOCK_PRESS(1,1,10)
+        ZMK_MOCK_PRESS(1,1,500)
         ZMK_MOCK_RELEASE(1,1,10)
 
         /* Record slot 2: Ctrl+Z Ctrl+Z Shift+A Shift+B */
@@ -98,7 +98,7 @@
         ZMK_MOCK_RELEASE(3,0,10)  /* Shift up */
         ZMK_MOCK_PRESS(0,1,10)
         ZMK_MOCK_RELEASE(0,1,10)
-        ZMK_MOCK_PRESS(2,0,10)
+        ZMK_MOCK_PRESS(2,0,500)
         ZMK_MOCK_RELEASE(2,0,10)
 
         /* TEST_RELOAD: flush NVS, zero RAM, reload */
