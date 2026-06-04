@@ -1,0 +1,28 @@
+#include "../behavior_keymap.dtsi"
+
+&kscan {
+    events = <
+        /* REC, record A, STP — now in PENDING_ASSIGN */
+        ZMK_MOCK_PRESS(0,0,10)
+        ZMK_MOCK_RELEASE(0,0,10)
+        ZMK_MOCK_PRESS(3,0,10)
+        ZMK_MOCK_RELEASE(3,0,10)
+        ZMK_MOCK_PRESS(0,1,10)
+        ZMK_MOCK_RELEASE(0,1,1000)
+        /* Wait 1000ms for 500ms assign timeout to expire without pressing a slot */
+        /* Play slot 0: should be empty (assign timed out, nothing saved) */
+        ZMK_MOCK_PRESS(1,0,200)
+        ZMK_MOCK_RELEASE(1,0,10)
+        /* Verify state recovered: record B, assign to slot 0, play it */
+        ZMK_MOCK_PRESS(0,0,10)
+        ZMK_MOCK_RELEASE(0,0,10)
+        ZMK_MOCK_PRESS(3,1,10)
+        ZMK_MOCK_RELEASE(3,1,10)
+        ZMK_MOCK_PRESS(0,1,10)
+        ZMK_MOCK_RELEASE(0,1,10)
+        ZMK_MOCK_PRESS(1,0,10)
+        ZMK_MOCK_RELEASE(1,0,10)
+        ZMK_MOCK_PRESS(1,0,2000)
+        ZMK_MOCK_RELEASE(1,0,10)
+    >;
+};

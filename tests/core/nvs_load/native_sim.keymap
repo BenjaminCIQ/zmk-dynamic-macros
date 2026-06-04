@@ -1,0 +1,134 @@
+#include <dt-bindings/zmk/keys.h>
+#include <behaviors.dtsi>
+#include <dt-bindings/zmk/kscan_mock.h>
+#include <behaviors/dynamic_macro.dtsi>
+#include <dt-bindings/zmk/dynamic_macros.h>
+
+/* NVS round-trip fidelity test with complex events at max capacity.
+ * 3 NVS slots, MAX_EVENTS=16, each slot filled to capacity with
+ * modifier chords and arrow keys. Verifies NVS serialization handles
+ * non-ASCII keycodes and modifier events correctly across a reload.
+ *
+ * Key layout (8 rows x 2 cols):
+ *   (0,0)=REC        (0,1)=STP
+ *   (1,0)=NVS slot 0 (1,1)=NVS slot 1
+ *   (2,0)=NVS slot 2 (2,1)=TEST_RELOAD
+ *   (3,0)=LSHFT      (3,1)=LCTRL
+ *   (4,0)=A          (4,1)=B
+ *   (5,0)=Z          (5,1)=LEFT
+ *   (6,0)=RIGHT      (6,1)=UP
+ *   (7,0)=DOWN       (7,1)=none
+ *
+ * Sequences (each exactly 16 events):
+ *   slot 0: Shift+A Ctrl+Z LEFT RIGHT UP DOWN    (4+4+2+2+2+2 = 16)
+ *   slot 1: LEFT RIGHT UP DOWN x2                (8x2 = 16)
+ *   slot 2: Ctrl+Z Ctrl+Z Shift+A Shift+B        (4+4+4+4 = 16) */
+
+&kscan {
+    rows = <8>;
+    columns = <2>;
+    exit-after;
+    events = <
+        /* Record slot 0: Shift+A Ctrl+Z LEFT RIGHT UP DOWN */
+        ZMK_MOCK_PRESS(0,0,10)
+        ZMK_MOCK_RELEASE(0,0,10)
+        ZMK_MOCK_PRESS(3,0,10)    /* Shift down */
+        ZMK_MOCK_PRESS(4,0,10)    /* A */
+        ZMK_MOCK_RELEASE(4,0,10)
+        ZMK_MOCK_RELEASE(3,0,10)  /* Shift up */
+        ZMK_MOCK_PRESS(3,1,10)    /* Ctrl down */
+        ZMK_MOCK_PRESS(5,0,10)    /* Z */
+        ZMK_MOCK_RELEASE(5,0,10)
+        ZMK_MOCK_RELEASE(3,1,10)  /* Ctrl up */
+        ZMK_MOCK_PRESS(5,1,10)    /* LEFT */
+        ZMK_MOCK_RELEASE(5,1,10)
+        ZMK_MOCK_PRESS(6,0,10)    /* RIGHT */
+        ZMK_MOCK_RELEASE(6,0,10)
+        ZMK_MOCK_PRESS(6,1,10)    /* UP */
+        ZMK_MOCK_RELEASE(6,1,10)
+        ZMK_MOCK_PRESS(7,0,10)    /* DOWN */
+        ZMK_MOCK_RELEASE(7,0,10)
+        ZMK_MOCK_PRESS(0,1,10)
+        ZMK_MOCK_RELEASE(0,1,10)
+        ZMK_MOCK_PRESS(1,0,10)
+        ZMK_MOCK_RELEASE(1,0,10)
+
+        /* Record slot 1: LEFT RIGHT UP DOWN LEFT RIGHT UP DOWN */
+        ZMK_MOCK_PRESS(0,0,10)
+        ZMK_MOCK_RELEASE(0,0,10)
+        ZMK_MOCK_PRESS(5,1,10)    /* LEFT */
+        ZMK_MOCK_RELEASE(5,1,10)
+        ZMK_MOCK_PRESS(6,0,10)    /* RIGHT */
+        ZMK_MOCK_RELEASE(6,0,10)
+        ZMK_MOCK_PRESS(6,1,10)    /* UP */
+        ZMK_MOCK_RELEASE(6,1,10)
+        ZMK_MOCK_PRESS(7,0,10)    /* DOWN */
+        ZMK_MOCK_RELEASE(7,0,10)
+        ZMK_MOCK_PRESS(5,1,10)    /* LEFT */
+        ZMK_MOCK_RELEASE(5,1,10)
+        ZMK_MOCK_PRESS(6,0,10)    /* RIGHT */
+        ZMK_MOCK_RELEASE(6,0,10)
+        ZMK_MOCK_PRESS(6,1,10)    /* UP */
+        ZMK_MOCK_RELEASE(6,1,10)
+        ZMK_MOCK_PRESS(7,0,10)    /* DOWN */
+        ZMK_MOCK_RELEASE(7,0,10)
+        ZMK_MOCK_PRESS(0,1,10)
+        ZMK_MOCK_RELEASE(0,1,10)
+        ZMK_MOCK_PRESS(1,1,10)
+        ZMK_MOCK_RELEASE(1,1,10)
+
+        /* Record slot 2: Ctrl+Z Ctrl+Z Shift+A Shift+B */
+        ZMK_MOCK_PRESS(0,0,10)
+        ZMK_MOCK_RELEASE(0,0,10)
+        ZMK_MOCK_PRESS(3,1,10)    /* Ctrl down */
+        ZMK_MOCK_PRESS(5,0,10)    /* Z */
+        ZMK_MOCK_RELEASE(5,0,10)
+        ZMK_MOCK_RELEASE(3,1,10)  /* Ctrl up */
+        ZMK_MOCK_PRESS(3,1,10)    /* Ctrl down */
+        ZMK_MOCK_PRESS(5,0,10)    /* Z */
+        ZMK_MOCK_RELEASE(5,0,10)
+        ZMK_MOCK_RELEASE(3,1,10)  /* Ctrl up */
+        ZMK_MOCK_PRESS(3,0,10)    /* Shift down */
+        ZMK_MOCK_PRESS(4,0,10)    /* A */
+        ZMK_MOCK_RELEASE(4,0,10)
+        ZMK_MOCK_RELEASE(3,0,10)  /* Shift up */
+        ZMK_MOCK_PRESS(3,0,10)    /* Shift down */
+        ZMK_MOCK_PRESS(4,1,10)    /* B */
+        ZMK_MOCK_RELEASE(4,1,10)
+        ZMK_MOCK_RELEASE(3,0,10)  /* Shift up */
+        ZMK_MOCK_PRESS(0,1,10)
+        ZMK_MOCK_RELEASE(0,1,10)
+        ZMK_MOCK_PRESS(2,0,10)
+        ZMK_MOCK_RELEASE(2,0,10)
+
+        /* TEST_RELOAD: flush NVS, zero RAM, reload */
+        ZMK_MOCK_PRESS(2,1,10)
+        ZMK_MOCK_RELEASE(2,1,10)
+
+        /* Play all 3 slots post-reload */
+        ZMK_MOCK_PRESS(1,0,2000)
+        ZMK_MOCK_RELEASE(1,0,10)
+        ZMK_MOCK_PRESS(1,1,2000)
+        ZMK_MOCK_RELEASE(1,1,10)
+        ZMK_MOCK_PRESS(2,0,2000)
+        ZMK_MOCK_RELEASE(2,0,10)
+    >;
+};
+
+/ {
+    keymap {
+        compatible = "zmk,keymap";
+        default_layer {
+            bindings = <
+                &dm DM_REC 0      &dm DM_STP 0
+                &dm DM_SLOT_NVS 0 &dm DM_SLOT_NVS 1
+                &dm DM_SLOT_NVS 2 &dm DM_TEST_RELOAD 0
+                &kp LSHFT         &kp LCTRL
+                &kp A             &kp B
+                &kp Z             &kp LEFT
+                &kp RIGHT         &kp UP
+                &kp DOWN          &none
+            >;
+        };
+    };
+};
