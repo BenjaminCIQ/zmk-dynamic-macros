@@ -11,7 +11,8 @@
  *   VERBOSE:  >*  A  >.  >RN:'a'  ?RN+1
  *   BASIC:    >*  A  >.  >RN      ?RN+1
  *   COMMAND:  >*  A  >.  >RN      (no empty slot msg)
- *   ERROR:    A                   (no command feedback) */
+ *   ERROR:    A                   (no command feedback)
+ * Each operation is separated by 500ms to allow full feedback emission. */
 
 &kscan {
     rows = <4>;
@@ -19,21 +20,18 @@
     exit-after;
     events = <
         /* --- VERBOSE --- */
-        /* REC */
         ZMK_MOCK_PRESS(0,0,10)
         ZMK_MOCK_RELEASE(0,0,10)
-        /* A (recorded) */
         ZMK_MOCK_PRESS(3,0,10)
-        ZMK_MOCK_RELEASE(3,0,10)
-        /* STP */
+        ZMK_MOCK_RELEASE(3,0,500)
         ZMK_MOCK_PRESS(0,1,10)
-        ZMK_MOCK_RELEASE(0,1,10)
-        /* SLOT_RAM 0 (assign, triggers verbose saved with preview) */
+        ZMK_MOCK_RELEASE(0,1,500)
+        /* SLOT_RAM 0 (assign) */
         ZMK_MOCK_PRESS(1,0,10)
-        ZMK_MOCK_RELEASE(1,0,10)
+        ZMK_MOCK_RELEASE(1,0,1000)
         /* SLOT_RAM 1 (play empty) */
-        ZMK_MOCK_PRESS(1,1,2000)
-        ZMK_MOCK_RELEASE(1,1,10)
+        ZMK_MOCK_PRESS(1,1,10)
+        ZMK_MOCK_RELEASE(1,1,500)
         /* DEC: VERBOSE -> BASIC */
         ZMK_MOCK_PRESS(3,1,10)
         ZMK_MOCK_RELEASE(3,1,2000)
@@ -42,15 +40,15 @@
         ZMK_MOCK_PRESS(0,0,10)
         ZMK_MOCK_RELEASE(0,0,10)
         ZMK_MOCK_PRESS(3,0,10)
-        ZMK_MOCK_RELEASE(3,0,10)
+        ZMK_MOCK_RELEASE(3,0,500)
         ZMK_MOCK_PRESS(0,1,10)
-        ZMK_MOCK_RELEASE(0,1,10)
+        ZMK_MOCK_RELEASE(0,1,500)
         /* SLOT_RAM 1 (assign) */
         ZMK_MOCK_PRESS(1,1,10)
-        ZMK_MOCK_RELEASE(1,1,10)
+        ZMK_MOCK_RELEASE(1,1,500)
         /* SLOT_RAM 2 (play empty) */
-        ZMK_MOCK_PRESS(2,0,2000)
-        ZMK_MOCK_RELEASE(2,0,10)
+        ZMK_MOCK_PRESS(2,0,10)
+        ZMK_MOCK_RELEASE(2,0,500)
         /* DEC: BASIC -> COMMAND */
         ZMK_MOCK_PRESS(3,1,10)
         ZMK_MOCK_RELEASE(3,1,2000)
@@ -59,15 +57,15 @@
         ZMK_MOCK_PRESS(0,0,10)
         ZMK_MOCK_RELEASE(0,0,10)
         ZMK_MOCK_PRESS(3,0,10)
-        ZMK_MOCK_RELEASE(3,0,10)
+        ZMK_MOCK_RELEASE(3,0,500)
         ZMK_MOCK_PRESS(0,1,10)
-        ZMK_MOCK_RELEASE(0,1,10)
+        ZMK_MOCK_RELEASE(0,1,500)
         /* SLOT_RAM 2 (assign) */
         ZMK_MOCK_PRESS(2,0,10)
-        ZMK_MOCK_RELEASE(2,0,10)
+        ZMK_MOCK_RELEASE(2,0,500)
         /* SLOT_RAM 3 (play empty - no output at COMMAND) */
-        ZMK_MOCK_PRESS(2,1,2000)
-        ZMK_MOCK_RELEASE(2,1,10)
+        ZMK_MOCK_PRESS(2,1,10)
+        ZMK_MOCK_RELEASE(2,1,500)
         /* DEC: COMMAND -> ERROR */
         ZMK_MOCK_PRESS(3,1,10)
         ZMK_MOCK_RELEASE(3,1,2000)
@@ -76,9 +74,9 @@
         ZMK_MOCK_PRESS(0,0,10)
         ZMK_MOCK_RELEASE(0,0,10)
         ZMK_MOCK_PRESS(3,0,10)
-        ZMK_MOCK_RELEASE(3,0,10)
+        ZMK_MOCK_RELEASE(3,0,500)
         ZMK_MOCK_PRESS(0,1,10)
-        ZMK_MOCK_RELEASE(0,1,10)
+        ZMK_MOCK_RELEASE(0,1,500)
         /* SLOT_RAM 3 (assign - no feedback at ERROR) */
         ZMK_MOCK_PRESS(2,1,10)
         ZMK_MOCK_RELEASE(2,1,2000)
