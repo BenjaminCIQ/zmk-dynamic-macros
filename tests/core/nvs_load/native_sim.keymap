@@ -17,7 +17,14 @@
  *   (4,0)=A          (4,1)=B
  *   (5,0)=Z          (5,1)=LEFT
  *   (6,0)=RIGHT      (6,1)=UP
- *   (7,0)=DOWN       (7,1)=none
+ *   (7,0)=DOWN       (7,1)=DEL
+ *
+ * NVS test isolation: ZMK's flash simulator defaults to a shared `flash.bin`
+ * in the runner's working directory, and run-test.sh executes test cases in
+ * parallel from that same directory. Sibling NVS tests therefore leave residue
+ * in slots 0/1/2 at boot. We delete all three slots up front so the assigns
+ * below are never rejected as "slot occupied", making this test deterministic
+ * regardless of shared-flash state.
  *
  * Sequences (each exactly 16 events):
  *   slot 0: Shift+A Ctrl+Z LEFT RIGHT UP DOWN    (4+4+2+2+2+2 = 16)
@@ -29,6 +36,22 @@
     columns = <2>;
     exit-after;
     events = <
+        /* Clear any shared-flash residue in slots 0/1/2 before recording.
+         * Each: DEL (enter delete mode) then press the NVS slot. The async NVS
+         * erase needs time to settle, so wait 500ms after each before moving on. */
+        ZMK_MOCK_PRESS(7,1,10)    /* DEL */
+        ZMK_MOCK_RELEASE(7,1,10)
+        ZMK_MOCK_PRESS(1,0,500)   /* delete NVS slot 0 */
+        ZMK_MOCK_RELEASE(1,0,10)
+        ZMK_MOCK_PRESS(7,1,10)    /* DEL */
+        ZMK_MOCK_RELEASE(7,1,10)
+        ZMK_MOCK_PRESS(1,1,500)   /* delete NVS slot 1 */
+        ZMK_MOCK_RELEASE(1,1,10)
+        ZMK_MOCK_PRESS(7,1,10)    /* DEL */
+        ZMK_MOCK_RELEASE(7,1,10)
+        ZMK_MOCK_PRESS(2,0,500)   /* delete NVS slot 2 */
+        ZMK_MOCK_RELEASE(2,0,10)
+
         /* Record slot 0: Shift+A Ctrl+Z LEFT RIGHT UP DOWN */
         ZMK_MOCK_PRESS(0,0,10)
         ZMK_MOCK_RELEASE(0,0,10)
@@ -127,7 +150,7 @@
                 &kp A             &kp B
                 &kp Z             &kp LEFT
                 &kp RIGHT         &kp UP
-                &kp DOWN          &none
+                &kp DOWN          &dm DM_DEL 0
             >;
         };
     };
