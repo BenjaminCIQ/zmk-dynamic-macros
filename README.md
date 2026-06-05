@@ -27,14 +27,25 @@ A [ZMK](https://zmk.dev/) module for dynamic macro recording and playback. Recor
 
 ### 1. Add to west.yml
 
+Add the following remote and project to your `config/west.yml`:
+
 ```yaml
 manifest:
+  remotes:
+    - name: benjaminciq
+      url-base: https://github.com/BenjaminCIQ
   projects:
     - name: zmk-dynamic-macros
-      path: modules/zmk/dynamic-macros
-      url: https://github.com/BenjaminCIQ/zmk-dynamic-macros
-      revision: main
+      remote: benjaminciq
+      revision: v0.3
 ```
+
+This module's version is synchronized with upstream ZMK: each release is tagged
+to match the ZMK version it targets. To ensure compatibility, pin the module's
+`revision` to the **same version as ZMK** in your manifest — e.g. `v0.3` when you
+build against ZMK `v0.3`. Pinning the minor tag (`v0.3`) keeps you on patch
+updates within that line; pin an exact tag (`v0.3.0`) to lock it fully, or track
+`main` for the latest unreleased changes (may be unstable).
 
 ### 2. Add includes to your keymap
 
@@ -302,7 +313,10 @@ Runs on central half only. Both halves' keystrokes are captured during recording
 
 ### Compatibility
 
-Requires ZMK main branch. Tested with Zephyr 4.1+.
+Released in lockstep with ZMK: each tagged release targets a specific ZMK
+version, so pin both to the same revision (see [Setup](#1-add-to-westyml)). The
+`main` branch tracks ZMK `main` and may be unstable — prefer a tagged release.
+Tested with Zephyr 4.1+.
 
 ## License
 
