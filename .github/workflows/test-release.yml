@@ -1,4 +1,4 @@
-name: Tests
+name: Run tests (release)
 
 on:
   workflow_dispatch:
@@ -17,7 +17,6 @@ on:
 
 jobs:
   test:
-    uses: urob/zmk-actions/.github/workflows/run-tests.yml@main
+    uses: urob/zmk-actions/.github/workflows/run-tests.yml@v12.0.0
     with:
       toolchain: gnuarmemb
-      zmk-version: main
