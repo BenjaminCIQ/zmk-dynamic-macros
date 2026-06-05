@@ -27,22 +27,32 @@ A [ZMK](https://zmk.dev/) module for dynamic macro recording and playback. Recor
 
 ### 1. Add to west.yml
 
-Add the following remote and project to your `config/west.yml`:
+ZMK itself (the `zmk` project) is the required base of your `config/west.yml`;
+this module is an optional add-on. Add its remote and project alongside ZMK's so
+your manifest looks like:
 
 ```yaml
 manifest:
   remotes:
+    - name: zmkfirmware
+      url-base: https://github.com/zmkfirmware
     - name: benjaminciq
       url-base: https://github.com/BenjaminCIQ
   projects:
+    - name: zmk
+      remote: zmkfirmware
+      revision: v0.3 # Set to desired ZMK release.
+      import: app/west.yml
     - name: zmk-dynamic-macros
       remote: benjaminciq
-      revision: v0.3
+      revision: v0.3 # Should match ZMK release.
+  self:
+    path: config
 ```
 
 This module's version is synchronized with upstream ZMK: each release is tagged
 to match the ZMK version it targets. To ensure compatibility, pin the module's
-`revision` to the **same version as ZMK** in your manifest — e.g. `v0.3` when you
+`revision` to the **same version as the `zmk` project** — e.g. `v0.3` when you
 build against ZMK `v0.3`. Pinning the minor tag (`v0.3`) keeps you on patch
 updates within that line; pin an exact tag (`v0.3.0`) to lock it fully, or track
 `main` for the latest unreleased changes (may be unstable).
