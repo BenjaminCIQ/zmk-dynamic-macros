@@ -25,11 +25,9 @@ A [ZMK](https://zmk.dev/) module for dynamic macro recording and playback. Recor
 
 ## Setup
 
-### 1. Add to west.yml
+### 1. Add to config/west.yml
 
-ZMK itself (the `zmk` project) is the required base of your `config/west.yml`;
-this module is an optional add-on. Add its remote and project alongside ZMK's so
-your manifest looks like:
+Add this module's remote and project alongside ZMK's so that your manifest looks like:
 
 ```yaml
 manifest:
@@ -45,23 +43,13 @@ manifest:
       import: app/west.yml
     - name: zmk-dynamic-macros
       remote: benjaminciq
-      revision: v0.3 # Should match ZMK release.
+      revision: v0.3 # Should match ZMK release**
+    .... further specified modules as desired .... 
   self:
     path: config
 ```
 
-This module's version is synchronized with upstream ZMK: each release is tagged
-to match the ZMK version it targets. To ensure compatibility, pin the module's
-`revision` to the **same version as the `zmk` project** — e.g. `v0.3` when you
-build against ZMK `v0.3`. Pinning the minor tag (`v0.3`) keeps you on patch
-updates within that line; pin an exact tag (`v0.3.0`) to lock it fully, or track
-`main` for the latest unreleased changes (may be unstable).
-
-`revision` accepts any git ref — a branch, a tag, or a commit hash. For a commit
-use the **full 40-character SHA** (west cannot resolve abbreviated hashes); this
-gives a completely immutable pin at the cost of the version-matching convenience
-and automatic fixes.
-
+This module uses urob's [zmk-actions](https://github.com/urob/zmk-actions), where the module version tracks zmk version. However... **
 ### 2. Add includes to your keymap
 
 ```dts
