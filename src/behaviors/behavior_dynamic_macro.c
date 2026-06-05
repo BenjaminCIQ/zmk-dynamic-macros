@@ -473,6 +473,12 @@ static void cmd_stop(struct behavior_dynamic_macro_data *data) {
         return;
     }
 
+    if (data->recording_buffer.event_count == 0) {
+        LOG_DBG("Stop with nothing recorded; discarding");
+        feedback_no_recording(data);
+        return;
+    }
+
     LOG_DBG("Stopped recording (%d events), awaiting slot assignment",
             data->recording_buffer.event_count);
     feedback_stop(data);

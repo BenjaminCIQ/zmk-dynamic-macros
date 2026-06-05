@@ -1,0 +1,18 @@
+#include "../behavior_keymap.dtsi"
+
+&kscan {
+    events = <
+        /* REC */
+        ZMK_MOCK_PRESS(0,0,10)
+        ZMK_MOCK_RELEASE(0,0,10)
+        /* STP with nothing recorded -> NO_RECORDING, return to idle (not pending-assign) */
+        ZMK_MOCK_PRESS(0,1,10)
+        ZMK_MOCK_RELEASE(0,1,10)
+        /* SLOT_RAM 0: idle, so this plays an empty slot (nothing was saved) */
+        ZMK_MOCK_PRESS(1,0,10)
+        ZMK_MOCK_RELEASE(1,0,10)
+        /* SLOT_RAM 0 again: still empty */
+        ZMK_MOCK_PRESS(1,0,200)
+        ZMK_MOCK_RELEASE(1,0,10)
+    >;
+};

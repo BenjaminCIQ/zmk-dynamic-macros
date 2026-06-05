@@ -23,7 +23,12 @@ tightening. Severity is rated for a *to-be-publicized* module.
 
 ## Findings
 
-### 1. Empty recording can be "saved"; documented `ERROR_NO_RECORDING` event is never emitted — **Medium / do now**
+### 1. Empty recording can be "saved"; documented `ERROR_NO_RECORDING` event is never emitted — **Medium / ✅ DONE**
+
+> **Resolved:** `cmd_stop` now discards a zero-event recording, emits
+> `ERROR_NO_RECORDING`, types a `[DM NO REC]` / `?*` message, and returns to
+> `IDLE` (never `PENDING_ASSIGN`). Regression test: `tests/events/rec_stop_empty`.
+
 
 `ZMK_DYNAMIC_MACRO_ERROR_NO_RECORDING` is declared in the public event header
 (`dynamic_macro_state_changed.h:33`) and documented in `docs/event-api.md:67`
@@ -49,7 +54,13 @@ reject an empty buffer in the `PENDING_ASSIGN` branch.)
 
 ---
 
-### 2. Deferred delete/delete-failed feedback is not state-guarded at execution time — **Low / harden + make consistent**
+### 2. Deferred delete/delete-failed feedback is not state-guarded at execution time — **Low / ✅ DONE**
+
+> **Resolved:** `dm_feedback_deleted` now proceeds only when `IDLE` (deferred
+> path) or `DELETE_PENDING` (RAM path); `dm_feedback_delete_failed` mirrors
+> `dm_feedback_save_failed`'s `state == IDLE` guard. The feedback-OFF stubs were
+> hardened the same way. The four storage callbacks are now symmetric.
+
 
 The save-side deferred callbacks self-guard:
 `dm_feedback_save_failed` and `dm_feedback_save_queue_full` both bail on

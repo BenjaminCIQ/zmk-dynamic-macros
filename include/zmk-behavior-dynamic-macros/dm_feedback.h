@@ -12,6 +12,7 @@
 /* Feedback functions called from command handlers */
 void feedback_rec(struct behavior_dynamic_macro_data *data);
 void feedback_stop(struct behavior_dynamic_macro_data *data);
+void feedback_no_recording(struct behavior_dynamic_macro_data *data);
 void feedback_saved(struct behavior_dynamic_macro_data *data, int slot_idx,
                     const struct dm_slot *slot);
 void feedback_slot_full(struct behavior_dynamic_macro_data *data, int slot_idx);
