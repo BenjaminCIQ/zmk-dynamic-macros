@@ -57,6 +57,11 @@ build against ZMK `v0.3`. Pinning the minor tag (`v0.3`) keeps you on patch
 updates within that line; pin an exact tag (`v0.3.0`) to lock it fully, or track
 `main` for the latest unreleased changes (may be unstable).
 
+`revision` accepts any git ref — a branch, a tag, or a commit hash. For a commit
+use the **full 40-character SHA** (west cannot resolve abbreviated hashes); this
+gives a completely immutable pin at the cost of the version-matching convenience
+and automatic fixes.
+
 ### 2. Add includes to your keymap
 
 ```dts
