@@ -12,7 +12,9 @@
  *   BASIC:    >*  A  >.  >RN      ?RN+1
  *   COMMAND:  >*  A  >.  >RN      (no empty slot msg)
  *   ERROR:    A                   (no command feedback)
- * Each operation is separated by 500ms to allow full feedback emission. */
+ * Each operation is separated by 500ms to allow full feedback emission.
+ * The REC->record gap is 300ms so the keystroke lands after REC feedback
+ * finishes (while RECORDING, not suppressed), otherwise it isn't recorded. */
 
 &kscan {
     rows = <4>;
@@ -21,7 +23,7 @@
     events = <
         /* --- VERBOSE --- */
         ZMK_MOCK_PRESS(0,0,10)
-        ZMK_MOCK_RELEASE(0,0,10)
+        ZMK_MOCK_RELEASE(0,0,300)
         ZMK_MOCK_PRESS(3,0,10)
         ZMK_MOCK_RELEASE(3,0,500)
         ZMK_MOCK_PRESS(0,1,10)
@@ -38,7 +40,7 @@
 
         /* --- BASIC --- */
         ZMK_MOCK_PRESS(0,0,10)
-        ZMK_MOCK_RELEASE(0,0,10)
+        ZMK_MOCK_RELEASE(0,0,300)
         ZMK_MOCK_PRESS(3,0,10)
         ZMK_MOCK_RELEASE(3,0,500)
         ZMK_MOCK_PRESS(0,1,10)
@@ -55,7 +57,7 @@
 
         /* --- COMMAND --- */
         ZMK_MOCK_PRESS(0,0,10)
-        ZMK_MOCK_RELEASE(0,0,10)
+        ZMK_MOCK_RELEASE(0,0,300)
         ZMK_MOCK_PRESS(3,0,10)
         ZMK_MOCK_RELEASE(3,0,500)
         ZMK_MOCK_PRESS(0,1,10)
@@ -72,7 +74,7 @@
 
         /* --- ERROR --- */
         ZMK_MOCK_PRESS(0,0,10)
-        ZMK_MOCK_RELEASE(0,0,10)
+        ZMK_MOCK_RELEASE(0,0,300)
         ZMK_MOCK_PRESS(3,0,10)
         ZMK_MOCK_RELEASE(3,0,500)
         ZMK_MOCK_PRESS(0,1,10)
