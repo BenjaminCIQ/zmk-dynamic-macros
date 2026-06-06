@@ -63,8 +63,6 @@ major.minor as your ZMK:**
   hashes); loses the version-matching convenience and auto-fixes.
 - `revision: main` — latest unreleased changes; may be unstable.
 
-See [docs/versioning-and-ci.md](docs/versioning-and-ci.md) for the full scheme.
-
 ### 2. Add includes to your keymap
 
 ```dts
