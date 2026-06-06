@@ -1,4 +1,4 @@
-name: Tests
+name: Run tests (main)
 
 on:
   workflow_dispatch:
@@ -8,16 +8,22 @@ on:
       - "include/**"
       - "src/**"
       - "tests/**"
+      - "VERSION"
+      - ".github/workflows/**"
   pull_request:
     paths:
       - "dts/**"
       - "include/**"
       - "src/**"
       - "tests/**"
+      - "VERSION"
+      - ".github/workflows/**"
+  schedule:
+    - cron: "0 21 * * 0,3" # Run every Sunday and Wednesday at 21:00 UTC
 
 jobs:
   test:
-    uses: urob/zmk-actions/.github/workflows/run-tests.yml@main
+    uses: urob/zmk-actions/.github/workflows/run-tests.yml@v12.0.0
     with:
       toolchain: gnuarmemb
       zmk-version: main

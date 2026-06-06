@@ -25,16 +25,43 @@ A [ZMK](https://zmk.dev/) module for dynamic macro recording and playback. Recor
 
 ## Setup
 
-### 1. Add to west.yml
+### 1. Add to config/west.yml
+
+Add this module's remote and project alongside ZMK's so that your manifest looks like:
 
 ```yaml
 manifest:
+  remotes:
+    - name: zmkfirmware
+      url-base: https://github.com/zmkfirmware
+    - name: benjaminciq
+      url-base: https://github.com/BenjaminCIQ
   projects:
+    - name: zmk
+      remote: zmkfirmware
+      revision: v0.3 # Set to desired ZMK release.
+      import: app/west.yml
     - name: zmk-dynamic-macros
-      path: modules/zmk/dynamic-macros
-      url: https://github.com/BenjaminCIQ/zmk-dynamic-macros
-      revision: main
+      remote: benjaminciq
+      revision: v0.3 # Match this to your ZMK major.minor
+    # - name: <other-module> ...   # add other modules here
+  self:
+    path: config
 ```
+
+This module is tested against ZMK via urob's
+[zmk-actions](https://github.com/urob/zmk-actions). Its version is a **hybrid**:
+the **major.minor** matches the ZMK line it targets (so `v0.3.x` works with ZMK
+`0.3`), while the **patch** is the module's own — fixes ship on the module's
+schedule, independent of ZMK's release cadence. **Pin the module to the same
+major.minor as your ZMK:**
+
+- `revision: v0.3` — floating minor tag; tracks the module's latest patch for the
+  ZMK 0.3 line (recommended).
+- `revision: v0.3.0` — an exact, immutable release.
+- a **full 40-char commit SHA** — fully immutable (west cannot resolve abbreviated
+  hashes); loses the version-matching convenience and auto-fixes.
+- `revision: main` — latest unreleased changes; may be unstable.
 
 ### 2. Add includes to your keymap
 
@@ -302,7 +329,24 @@ Runs on central half only. Both halves' keystrokes are captured during recording
 
 ### Compatibility
 
-Requires ZMK main branch. Tested with Zephyr 4.1+.
+The module version tracks ZMK's: the **major.minor** matches the ZMK release
+line it targets (so `v0.3.x` works with ZMK `0.3`), while the **patch** is the
+module's own. Pin both to the same major.minor (see [Setup](#setup)). The `main`
+branch tracks ZMK `main` and may be unstable — prefer a tagged release. Tested
+with Zephyr 4.1+.
+
+### Stability
+
+These form the module's compatibility contract and are treated as append-only —
+existing values are never renumbered or reordered:
+
+- **Binding command IDs** (`dt-bindings/zmk/dynamic_macros.h`) — compiled into
+  your keymap.
+- **Event types** (`zmk_dynamic_macro_event_type`) — compiled into display
+  widgets; new events are only appended.
+- **On-flash format** — versioned in each saved slot's header. An incompatible
+  format change is a deliberate, breaking event that clears saved macros: the
+  module detects the old version and discards it rather than misreading it.
 
 ## License
 

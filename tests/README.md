@@ -28,6 +28,7 @@ Test suite for ZMK dynamic macro behavior using native_sim simulation.
 | Test | Description | Validates |
 |------|-------------|-----------|
 | `record_play_events` | Record and play with event notifications enabled | Event API broadcasting |
+| `rec_stop_empty` | Stop recording with zero events, then probe the slot | Empty recording is discarded (not saved); `ERROR_NO_RECORDING` fires |
 
 ## Running Tests
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026 The ZMK Contributors
+ * Copyright (c) 2026 Benjamin H
  *
  * SPDX-License-Identifier: MIT
  */
@@ -250,6 +250,7 @@ void fb_append_str(struct behavior_dynamic_macro_data *data, const char *str) {
 struct dm_msg_table {
     const char *rec;
     const char *stop;
+    const char *no_rec;
     const char *saved;
     const char *slot;
     const char *del;
@@ -273,7 +274,7 @@ struct dm_msg_table {
 };
 
 static const struct dm_msg_table dm_msg_arrow = {
-    .rec = ">*",   .stop = ">.",  .saved = ">",  .slot = ">",
+    .rec = ">*",   .stop = ">.",  .no_rec = "?*",  .saved = ">",  .slot = ">",
     .del = "-",    .del_fail = "!-",
     .save_fail = "!>",  .save_full = "!>%",  .del_full = "!-%",
     .empty = "?",  .full = "!%",
@@ -286,7 +287,7 @@ static const struct dm_msg_table dm_msg_arrow = {
 
 #if DM_LOCALE_PLAIN
 static const struct dm_msg_table dm_msg_full = {
-    .rec = "DM REC",     .stop = "DM STOP",  .saved = "DM SAVED ",
+    .rec = "DM REC",     .stop = "DM STOP",  .no_rec = "DM NO REC",  .saved = "DM SAVED ",
     .slot = "DM SLOT ",  .del = "DM DEL ",   .del_fail = "DM DEL FAILED",
     .save_fail = "DM SAVE FAILED ",  .save_full = "DM SAVE QUEUE FULL ",
     .del_full = "DM DEL QUEUE FULL ",
@@ -299,7 +300,7 @@ static const struct dm_msg_table dm_msg_full = {
 };
 #else
 static const struct dm_msg_table dm_msg_full = {
-    .rec = "[DM REC]",   .stop = "[DM STOP]",  .saved = "[DM SAVED ",
+    .rec = "[DM REC]",   .stop = "[DM STOP]",  .no_rec = "[DM NO REC]",  .saved = "[DM SAVED ",
     .slot = "[DM SLOT ", .del = "[DM DEL ",     .del_fail = " FAILED]",
     .save_fail = "[DM SAVE FAILED ",  .save_full = "[DM SAVE QUEUE FULL ",
     .del_full = "[DM DEL QUEUE FULL ",
@@ -936,6 +937,21 @@ void feedback_stop(struct behavior_dynamic_macro_data *data) {
     start_feedback(data, DM_STATE_PENDING_ASSIGN, -1);
 }
 
+void feedback_no_recording(struct behavior_dynamic_macro_data *data) {
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
+    dm_raise_state_changed(data, ZMK_DYNAMIC_MACRO_ERROR_NO_RECORDING, -1);
+#endif
+    if (!feedback_enabled_for(data, DM_FEEDBACK_COMMAND)) {
+        data->state = DM_STATE_IDLE;
+        return;
+    }
+
+    data->status_mode = false;
+    fb_reset(data);
+    fb_append_str(data, dm_msg(data)->no_rec);
+    start_feedback(data, DM_STATE_IDLE, -1);
+}
+
 void feedback_saved(struct behavior_dynamic_macro_data *data, int slot_idx,
                     const struct dm_slot *slot) {
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
@@ -990,6 +1006,13 @@ void dm_feedback_deleted(struct behavior_dynamic_macro_data *data, int slot_idx)
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
     dm_raise_state_changed(data, ZMK_DYNAMIC_MACRO_DELETED, slot_idx);
 #endif
+    /* The NVS-delete completion is deferred and may land while another
+     * operation is active. Only speak when idle (deferred path) or while
+     * finishing a delete (synchronous RAM path); otherwise drop it rather than
+     * hijacking the state machine. */
+    if (data->state != DM_STATE_IDLE && data->state != DM_STATE_DELETE_PENDING) {
+        return;
+    }
     if (!feedback_enabled_for(data, DM_FEEDBACK_COMMAND)) {
         data->state = DM_STATE_IDLE;
         return;
@@ -1008,8 +1031,8 @@ void dm_feedback_delete_failed(struct behavior_dynamic_macro_data *data, int slo
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
     dm_raise_state_changed(data, ZMK_DYNAMIC_MACRO_ERROR_DELETE_FAILED, slot_idx);
 #endif
-    if (!feedback_enabled_for(data, DM_FEEDBACK_ERROR)) {
-        data->state = DM_STATE_IDLE;
+    /* Deferred completion: only speak when idle, never hijack an active op. */
+    if (!feedback_enabled_for(data, DM_FEEDBACK_ERROR) || data->state != DM_STATE_IDLE) {
         return;
     }
 
@@ -1372,6 +1395,7 @@ void dm_feedback_cancel_erase(struct behavior_dynamic_macro_data *data) {
  * ------------------------------|----------------------|---------------------------
  * feedback_rec                  | RECORDING            |
  * feedback_stop                 | PENDING_ASSIGN       | reschedule timeout
+ * feedback_no_recording         | IDLE                 |
  * feedback_saved                | IDLE                 | dm_save_slot()
  * feedback_slot_full            | keep/PENDING_ASSIGN  | reschedule timeout
  * feedback_deleted              | IDLE                 |
@@ -1406,6 +1430,12 @@ void feedback_stop(struct behavior_dynamic_macro_data *data) {
     data->state = DM_STATE_PENDING_ASSIGN;
     k_work_reschedule(&data->assign_timeout_work, ASSIGN_TIMEOUT);
 }
+void feedback_no_recording(struct behavior_dynamic_macro_data *data) {
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
+    dm_raise_state_changed(data, ZMK_DYNAMIC_MACRO_ERROR_NO_RECORDING, -1);
+#endif
+    data->state = DM_STATE_IDLE;
+}
 void feedback_saved(struct behavior_dynamic_macro_data *data, int slot_idx,
                     const struct dm_slot *slot) {
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
@@ -1427,14 +1457,19 @@ void dm_feedback_deleted(struct behavior_dynamic_macro_data *data, int slot_idx)
     dm_raise_state_changed(data, ZMK_DYNAMIC_MACRO_DELETED, slot_idx);
 #endif
     (void)slot_idx;
-    data->state = DM_STATE_IDLE;
+    /* RAM path finishes a pending delete; deferred NVS path is already idle.
+     * Don't clobber an unrelated active operation. */
+    if (data->state == DM_STATE_DELETE_PENDING) {
+        data->state = DM_STATE_IDLE;
+    }
 }
 void dm_feedback_delete_failed(struct behavior_dynamic_macro_data *data, int slot_idx) {
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
     dm_raise_state_changed(data, ZMK_DYNAMIC_MACRO_ERROR_DELETE_FAILED, slot_idx);
 #endif
+    /* Deferred completion only; already idle, so don't touch state. */
+    (void)data;
     (void)slot_idx;
-    data->state = DM_STATE_IDLE;
 }
 void dm_feedback_save_failed(struct behavior_dynamic_macro_data *data, int slot_idx) {
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)

@@ -6,10 +6,12 @@
          * State must be RECORDING after erase completes, not IDLE. */
         ZMK_MOCK_PRESS(0,0,10)
         ZMK_MOCK_RELEASE(0,0,2000)
-        /* STP: only works if state is RECORDING after erase; types ">." */
+        /* STP with nothing recorded: types "?*" (NO REC) then auto-erases it.
+         * The "?*" only appears if state was RECORDING after the erase above. */
         ZMK_MOCK_PRESS(0,1,10)
         ZMK_MOCK_RELEASE(0,1,2000)
-        /* SLOT_RAM 0: assign; only works if state is PENDING_ASSIGN; types ">R0" */
+        /* SLOT_RAM 0: state is IDLE after NO REC, so this plays empty slot R0;
+         * types "?R0" then auto-erases it. */
         ZMK_MOCK_PRESS(1,0,10)
         ZMK_MOCK_RELEASE(1,0,2000)
     >;
