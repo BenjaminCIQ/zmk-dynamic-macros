@@ -8,12 +8,16 @@ on:
       - "include/**"
       - "src/**"
       - "tests/**"
+      - "VERSION"
+      - ".github/workflows/**"
   pull_request:
     paths:
       - "dts/**"
       - "include/**"
       - "src/**"
       - "tests/**"
+      - "VERSION"
+      - ".github/workflows/**"
   schedule:
     - cron: "0 21 * * 0,3" # Run every Sunday and Wednesday at 21:00 UTC
 

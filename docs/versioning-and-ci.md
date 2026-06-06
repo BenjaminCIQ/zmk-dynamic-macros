@@ -87,7 +87,15 @@ Token with `contents` + `pull-requests` write) so the bump PR triggers CI —
 GitHub's built-in `github.token` cannot trigger workflows on PRs it opens. (This
 is the same PAT urob's stock bot uses.) All other workflows use `github.token`.
 
-### 2.1 `test-main.yml` — unchanged
+### 2.1 `test-main.yml` — the sole CI test (against ZMK `main`)
+
+Tests against ZMK `main`, which is always the latest ZMK and always compatible
+with the action. Right after ZMK cuts a release, `main` ≈ that release, so this
+effectively also tests against the newest ZMK. The `paths` filter includes
+`VERSION` and `.github/workflows/**` so that the `track-zmk` bump PR (which edits
+only `VERSION`) and workflow changes both trigger a run — that's what makes the
+bump PR show a pass/fail status. (The bump PR triggering CI also depends on the
+PAT; see above.)
 
 ```yaml
 name: Run tests (main)
@@ -95,9 +103,9 @@ name: Run tests (main)
 on:
   workflow_dispatch:
   push:
-    paths: ["dts/**", "include/**", "src/**", "tests/**"]
+    paths: ["dts/**", "include/**", "src/**", "tests/**", "VERSION", ".github/workflows/**"]
   pull_request:
-    paths: ["dts/**", "include/**", "src/**", "tests/**"]
+    paths: ["dts/**", "include/**", "src/**", "tests/**", "VERSION", ".github/workflows/**"]
   schedule:
     - cron: "0 21 * * 0,3" # Sundays and Wednesdays at 21:00 UTC
 
