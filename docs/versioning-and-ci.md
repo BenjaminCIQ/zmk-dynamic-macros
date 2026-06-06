@@ -1,6 +1,7 @@
 # Versioning, CI & Releases — Design & Implementation Plan
 
-**Status:** plan for review, not yet implemented.
+**Status:** implemented. Remaining manual steps: create the `ZMK_ACTIONS_TOKEN`
+secret and push the bootstrap `v0.3.0` tag (§7 steps 5–6).
 **Date:** 2026-06-05
 
 This doc defines how `zmk-dynamic-macros` is versioned, tested, and released, and

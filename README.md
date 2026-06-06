@@ -43,13 +43,28 @@ manifest:
       import: app/west.yml
     - name: zmk-dynamic-macros
       remote: benjaminciq
-      revision: v0.3 # Should match ZMK release**
-    .... further specified modules as desired .... 
+      revision: v0.3 # Match this to your ZMK major.minor
+    # - name: <other-module> ...   # add other modules here
   self:
     path: config
 ```
 
-This module uses urob's [zmk-actions](https://github.com/urob/zmk-actions), where the module version tracks zmk version. However... **
+This module is tested against ZMK via urob's
+[zmk-actions](https://github.com/urob/zmk-actions). Its version is a **hybrid**:
+the **major.minor** matches the ZMK line it targets (so `v0.3.x` works with ZMK
+`0.3`), while the **patch** is the module's own — fixes ship on the module's
+schedule, independent of ZMK's release cadence. **Pin the module to the same
+major.minor as your ZMK:**
+
+- `revision: v0.3` — floating minor tag; tracks the module's latest patch for the
+  ZMK 0.3 line (recommended).
+- `revision: v0.3.0` — an exact, immutable release.
+- a **full 40-char commit SHA** — fully immutable (west cannot resolve abbreviated
+  hashes); loses the version-matching convenience and auto-fixes.
+- `revision: main` — latest unreleased changes; may be unstable.
+
+See [docs/versioning-and-ci.md](docs/versioning-and-ci.md) for the full scheme.
+
 ### 2. Add includes to your keymap
 
 ```dts

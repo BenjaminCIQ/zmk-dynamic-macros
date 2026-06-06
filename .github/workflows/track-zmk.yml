@@ -1,0 +1,62 @@
+name: Track ZMK releases
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 22 * * *" # daily at 22:00 UTC
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  track:
+    runs-on: ubuntu-latest
+    steps:
+      # Check out with the PAT so the pushed branch + PR trigger CI (a PR opened
+      # by the default GITHUB_TOKEN does not start workflow runs).
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.ZMK_ACTIONS_TOKEN }}
+      - name: Open a PR if ZMK has a newer major.minor than our line
+        env:
+          GH_TOKEN: ${{ secrets.ZMK_ACTIONS_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          zmk=$(gh release view --repo zmkfirmware/zmk --json tagName -q .tagName)
+          zmk_minor=${zmk%.*}                  # v0.3.0 -> v0.3
+          ours_minor=$(cut -d. -f1,2 VERSION)  # v0.3.2 -> v0.3
+          echo "ZMK latest minor: $zmk_minor; our line: $ours_minor"
+
+          if [ "$zmk_minor" = "$ours_minor" ]; then
+            echo "Already on the latest ZMK line; nothing to do."
+            exit 0
+          fi
+
+          branch="track-zmk-$zmk_minor"
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+            echo "Branch $branch already exists; nothing to do."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+
+          echo "$zmk_minor.0" > VERSION
+          sed -i "s/zmk-version: v[0-9]\+\.[0-9]\+/zmk-version: $zmk_minor/" \
+            .github/workflows/test-release.yml
+
+          git commit -am "Track ZMK $zmk_minor: start $zmk_minor.0 line"
+          git push -u origin "$branch"
+
+          body=$(printf '%s\n' \
+            "ZMK published **$zmk**. This starts the **$zmk_minor.0** module line." \
+            "" \
+            "- \`VERSION\` -> \`$zmk_minor.0\`" \
+            "- \`test-release.yml\` now tests against ZMK \`$zmk_minor\`" \
+            "" \
+            "Before merging: adapt the code to any ZMK $zmk_minor API changes (CI on this PR tests against ZMK $zmk_minor) and update the README pin guidance to \`$zmk_minor\`. After merge, tag \`$zmk_minor.0\` to publish (CI moves the floating \`$zmk_minor\` tag).")
+
+          gh pr create --title "Track ZMK $zmk_minor" --body "$body"

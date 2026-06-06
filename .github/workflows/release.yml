@@ -1,15 +1,26 @@
-name: Release module version
+name: Update floating tag
 
 on:
-  pull_request:
-    types:
-      - closed
-    branches:
-      - main
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
 
 permissions:
   contents: write
 
 jobs:
-  release:
-    uses: urob/zmk-actions/.github/workflows/upgrade-module.yml@v12.0.0
+  float:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Move the floating minor tag to this release
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"   # e.g. v0.3.2
+          minor="${tag%.*}"          # v0.3
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -f "$minor" "$tag"
+          git push -f origin "refs/tags/$minor"
+          echo "Moved floating tag $minor -> $tag"

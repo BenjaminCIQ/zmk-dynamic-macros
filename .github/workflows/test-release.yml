@@ -20,3 +20,4 @@ jobs:
     uses: urob/zmk-actions/.github/workflows/run-tests.yml@v12.0.0
     with:
       toolchain: gnuarmemb
+      zmk-version: v0.3 # ZMK line this module targets; bumped by track-zmk's PR
