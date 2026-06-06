@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026 The ZMK Contributors
+ * Copyright (c) 2026 Benjamin H
  *
  * SPDX-License-Identifier: MIT
  */
@@ -41,6 +41,18 @@ BUILD_ASSERT(MAX_EVENTS > 0, "Dynamic macros require at least 1 event per slot")
 BUILD_ASSERT(NVS_SLOTS <= 16, "Dynamic macros support at most 16 NVS slots");
 BUILD_ASSERT(RAM_SLOTS <= 48, "Dynamic macros support at most 48 RAM slots");
 BUILD_ASSERT(MAX_SLOTS <= 64, "Dynamic macros support at most 64 total slots");
+
+/*
+ * Single-instance only. The driver uses the standard ZMK per-instance
+ * scaffolding (DT_INST_FOREACH_STATUS_OKAY, the dm_devices[] array) purely to
+ * follow convention, but the query API reads dm_devices[0] and recording
+ * suppression is global across instances, so multiple enabled nodes would not
+ * behave independently.
+ */
+BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) <= 1,
+             "Only one zmk,behavior-dynamic-macro instance is supported. The "
+             "per-instance scaffolding follows ZMK convention; the query API and "
+             "recording suppression assume a single instance.");
 
 #if MAX_SLOTS == 0
 #warning "Dynamic macro has zero slots; all dynamic macro slot bindings are invalid"
@@ -802,6 +814,8 @@ static int dm_event_listener(const zmk_event_t *eh) {
 
         struct dm_event *rec = &data->recording_buffer.events[data->recording_buffer.event_count];
         rec->usage_page = ev->usage_page;
+        /* HID usage IDs fit in 16 bits for every supported page (keyboard,
+         * consumer, button), so narrowing the 32-bit keycode is safe. */
         rec->keycode = (uint16_t)ev->keycode;
         rec->implicit_mods = ev->implicit_modifiers;
         rec->explicit_mods = ev->explicit_modifiers;

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026 The ZMK Contributors
+ * Copyright (c) 2026 Benjamin H
  * SPDX-License-Identifier: MIT
  */
 

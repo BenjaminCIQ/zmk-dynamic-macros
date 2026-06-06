@@ -316,10 +316,24 @@ Runs on central half only. Both halves' keystrokes are captured during recording
 
 ### Compatibility
 
-Released in lockstep with ZMK: each tagged release targets a specific ZMK
-version, so pin both to the same revision (see [Setup](#1-add-to-westyml)). The
-`main` branch tracks ZMK `main` and may be unstable — prefer a tagged release.
-Tested with Zephyr 4.1+.
+The module version tracks ZMK's: the **major.minor** matches the ZMK release
+line it targets (so `v0.3.x` works with ZMK `0.3`), while the **patch** is the
+module's own. Pin both to the same major.minor (see [Setup](#setup)). The `main`
+branch tracks ZMK `main` and may be unstable — prefer a tagged release. Tested
+with Zephyr 4.1+.
+
+### Stability
+
+These form the module's compatibility contract and are treated as append-only —
+existing values are never renumbered or reordered:
+
+- **Binding command IDs** (`dt-bindings/zmk/dynamic_macros.h`) — compiled into
+  your keymap.
+- **Event types** (`zmk_dynamic_macro_event_type`) — compiled into display
+  widgets; new events are only appended.
+- **On-flash format** — versioned in each saved slot's header. An incompatible
+  format change is a deliberate, breaking event that clears saved macros: the
+  module detects the old version and discards it rather than misreading it.
 
 ## License
 

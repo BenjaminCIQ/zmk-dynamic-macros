@@ -104,7 +104,12 @@ silently on their next firmware build.
 
 ---
 
-### 4. Public-contract stability policy — **Medium / before publicizing**
+### 4. Public-contract stability policy — **Medium / ✅ DONE**
+
+> **Resolved:** added a "Stability" section to the README documenting that binding
+> command IDs, the event-type enum, and the on-flash format are append-only
+> contracts (format bumps deliberately clear saved macros).
+
 
 Three things become compatibility contracts the moment users depend on the
 module. Worth an explicit, documented policy so future changes are deliberate:
@@ -127,7 +132,11 @@ SemVer-minor = additive, SemVer-major = format/ID break.
 
 ---
 
-### 5. Copyright attribution is inconsistent — **Low / before publicizing**
+### 5. Copyright attribution is inconsistent — **Low / ✅ DONE**
+
+> **Resolved:** all source/dts headers now read `Copyright (c) 2026 Benjamin H`,
+> matching `LICENSE`.
+
 
 `LICENSE` is `Copyright (c) 2026 Benjamin H`, but every source/header file
 carries `Copyright (c) 2026 The ZMK Contributors`. That header is the
@@ -140,7 +149,11 @@ in both).
 
 ---
 
-### 6. Missing repo hygiene files for a public project — **Low / optional**
+### 6. Missing repo hygiene files for a public project — **Low / partial**
+
+> **Partial:** `CHANGELOG.md` added (Keep a Changelog format, initial release
+> under `[Unreleased]`). `CONTRIBUTING.md` intentionally deferred.
+
 
 No `CHANGELOG.md` or `CONTRIBUTING.md`. For a project about to attract users and
 PRs, a minimal CHANGELOG (anchored to the new tag) and a short CONTRIBUTING note
@@ -164,7 +177,12 @@ of the testing story and can be linked.
 
 ---
 
-### 8. Multi-instance behavior is implicitly single-instance — **Low / document**
+### 8. Multi-instance behavior is implicitly single-instance — **Low / ✅ DONE**
+
+> **Resolved:** added a `BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(...) <= 1, ...)`
+> with a message explaining the single-instance support and that the
+> per-instance scaffolding only follows ZMK convention.
+
 
 The `dtsi` ships a single `dm` node, and the design assumes one:
 `get_first_dm_data()` (query API) always uses `dm_devices[0]`
@@ -181,10 +199,9 @@ supported; do not define multiple `zmk,behavior-dynamic-macro` nodes."
 
 ### 9. Minor / informational
 
-- **Keycode truncation:** recording narrows `ev->keycode` (u32) to `uint16_t`
-  (`behavior_dynamic_macro.c:799`). Safe for keyboard/consumer/button usage IDs
-  (all ≤ 0xFFFF), but a one-line comment or `__ASSERT` documenting the assumption
-  would prevent a future surprise if a wider usage page is ever recorded.
+- **Keycode truncation:** recording narrows `ev->keycode` (u32) to `uint16_t`.
+  Safe for keyboard/consumer/button usage IDs (all ≤ 0xFFFF). ✅ A comment now
+  documents the assumption at the cast site.
 - **`status_mode` excluded from auto-erase** is intentional and documented; no
   action.
 
