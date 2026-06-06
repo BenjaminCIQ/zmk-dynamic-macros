@@ -45,8 +45,6 @@ jobs:
           git switch -c "$branch"
 
           echo "$zmk_minor.0" > VERSION
-          sed -i "s/zmk-version: v[0-9]\+\.[0-9]\+/zmk-version: $zmk_minor/" \
-            .github/workflows/test-release.yml
 
           git commit -am "Track ZMK $zmk_minor: start $zmk_minor.0 line"
           git push -u origin "$branch"
@@ -55,8 +53,7 @@ jobs:
             "ZMK published **$zmk**. This starts the **$zmk_minor.0** module line." \
             "" \
             "- \`VERSION\` -> \`$zmk_minor.0\`" \
-            "- \`test-release.yml\` now tests against ZMK \`$zmk_minor\`" \
             "" \
-            "Before merging: adapt the code to any ZMK $zmk_minor API changes (CI on this PR tests against ZMK $zmk_minor) and update the README pin guidance to \`$zmk_minor\`. After merge, tag \`$zmk_minor.0\` to publish (CI moves the floating \`$zmk_minor\` tag).")
+            "Before merging: adapt the code to any ZMK $zmk_minor API changes (test locally against ZMK $zmk_minor; CI runs against ZMK main) and update the README pin guidance to \`$zmk_minor\`. After merge, tag \`$zmk_minor.0\` to publish (CI moves the floating \`$zmk_minor\` tag).")
 
           gh pr create --title "Track ZMK $zmk_minor" --body "$body"

@@ -63,16 +63,24 @@ attach. We follow the norm: **tags only, no `gh release create`.**
 
 | File | Action | Purpose |
 | --- | --- | --- |
-| `test-main.yml` | keep as-is | Test against ZMK `main` (early warning) |
-| `test-release.yml` | **modify** | Test against ZMK `v0.3` (our target line) |
+| `test-main.yml` | keep as-is | Test against ZMK `main` (the only CI test) |
+| `test-release.yml` | **removed** | Not viable — see note below |
 | `upgrade-zmk.yml` | **remove** | Replaced by `track-zmk.yml` |
 | `release.yml` | **replace** | Tag-maintenance (move floating `v0.3`), not lockstep |
 | `track-zmk.yml` | **add** | Open a PR when ZMK's *minor* advances (PR-based) |
 
-Net effect vs. what is currently committed: `test-main` unchanged;
-`test-release` stops reading `VERSION` for the ZMK ref and pins `v0.3`; the
-stock lockstep `upgrade-zmk` + `release` are dropped; a new PR-based `track-zmk`
-and a new tag-maintenance `release` are added.
+> **Why no `test-release`:** we tried pinning a release-line job to ZMK `v0.3`,
+> but `urob/zmk-actions@v12.0.0` is incompatible with ZMK 0.3.0's test harness —
+> building against any 0.3.x ref makes the action call `run-test.sh` with no
+> path (`Usage: ./run-test.sh <path to testcase>`, exit 123). ZMK `main` works.
+> Since 0.3.0 is the only ZMK release and there is nothing newer to pin, CI tests
+> against `main` only. The versioning *scheme* is unaffected — this is purely a
+> CI-coverage limitation. A `test-release` job can be re-introduced if/when a
+> future ZMK release is compatible with the action.
+
+Net effect vs. what was committed: `test-main` unchanged; `test-release`
+removed; the stock lockstep `upgrade-zmk` + `release` are dropped; a new
+PR-based `track-zmk` and a new tag-maintenance `release` are added.
 
 **PAT:** the PR-based `track-zmk` needs `ZMK_ACTIONS_TOKEN` (a Personal Access
 Token with `contents` + `pull-requests` write) so the bump PR triggers CI —
@@ -101,31 +109,15 @@ jobs:
       zmk-version: main
 ```
 
-### 2.2 `test-release.yml` — pin to the ZMK line (no `VERSION` fallback)
+### 2.2 `test-release.yml` — removed (not viable)
 
-`run-tests` uses `${{ inputs.zmk-version }}` and only falls back to `cat VERSION`
-when that input is empty. Passing `zmk-version: v0.3` explicitly means `VERSION`
-is **no longer read for the ZMK ref** — the decoupling we want. ZMK keeps a
-floating `v0.3` tag, so this auto-tracks ZMK `0.3.x` patches with zero custom
-code.
-
-```yaml
-name: Run tests (release)
-
-on:
-  workflow_dispatch:
-  push:
-    paths: ["dts/**", "include/**", "src/**", "tests/**"]
-  pull_request:
-    paths: ["dts/**", "include/**", "src/**", "tests/**"]
-
-jobs:
-  test:
-    uses: urob/zmk-actions/.github/workflows/run-tests.yml@v12.0.0
-    with:
-      toolchain: gnuarmemb
-      zmk-version: v0.3 # ZMK line this module targets; bumped by track-zmk's PR
-```
+The intent was a second job pinned to ZMK `v0.3` (which keeps a floating tag, so
+it would auto-track `0.3.x`). In practice `urob/zmk-actions@v12.0.0` cannot run
+ZMK 0.3.0's test harness — it invokes `run-test.sh` with no path and fails with
+exit 123 before any test runs. ZMK `main` works, and 0.3.0 is the only ZMK
+release, so there is nothing testable to pin. The job was removed; `test-main`
+is the sole CI test. Re-add a release job once a future ZMK release builds
+cleanly with the action.
 
 ### 2.3 `track-zmk.yml` — PR-based, hybrid semantics (replaces stock `upgrade-zmk.yml`)
 
