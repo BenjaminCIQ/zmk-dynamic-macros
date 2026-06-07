@@ -4,8 +4,7 @@ All notable changes to this module are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows the module's hybrid scheme: the **major.minor** tracks the ZMK
-release line it targets, while the **patch** is the module's own — see
-[docs/versioning-and-ci.md](docs/versioning-and-ci.md).
+release line it targets, while the **patch** is the module's own.
 
 ## [Unreleased]
 
