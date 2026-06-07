@@ -152,7 +152,7 @@ extern const size_t dm_devices_len;
 
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_PERSIST)
 void dm_storage_init(void);
-void dm_storage_save_slot(struct behavior_dynamic_macro_data *data, int slot_idx);
+int dm_storage_save_slot(struct behavior_dynamic_macro_data *data, int slot_idx);
 int dm_storage_delete_slot(struct behavior_dynamic_macro_data *data, int slot_idx);
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_TEST_RELOAD)
 void dm_storage_flush(void);
@@ -167,7 +167,7 @@ static inline void dm_storage_save_feedback_level(struct behavior_dynamic_macro_
 #endif
 #endif
 
-void dm_save_slot(struct behavior_dynamic_macro_data *data, int slot_idx);
+int dm_save_slot(struct behavior_dynamic_macro_data *data, int slot_idx);
 int dm_delete_slot_from_storage(struct behavior_dynamic_macro_data *data, int slot_idx);
 
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)

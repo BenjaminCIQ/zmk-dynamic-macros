@@ -266,8 +266,8 @@ static const struct behavior_parameter_metadata dm_parameter_metadata = {
 
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_PERSIST)
 
-void dm_save_slot(struct behavior_dynamic_macro_data *data, int slot_idx) {
-    dm_storage_save_slot(data, slot_idx);
+int dm_save_slot(struct behavior_dynamic_macro_data *data, int slot_idx) {
+    return dm_storage_save_slot(data, slot_idx);
 }
 
 int dm_delete_slot_from_storage(struct behavior_dynamic_macro_data *data, int slot_idx) {
@@ -276,9 +276,10 @@ int dm_delete_slot_from_storage(struct behavior_dynamic_macro_data *data, int sl
 
 #else /* !CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_PERSIST */
 
-void dm_save_slot(struct behavior_dynamic_macro_data *data, int slot_idx) {
+int dm_save_slot(struct behavior_dynamic_macro_data *data, int slot_idx) {
     (void)data;
     (void)slot_idx;
+    return 0;
 }
 
 int dm_delete_slot_from_storage(struct behavior_dynamic_macro_data *data, int slot_idx) {
@@ -627,18 +628,52 @@ static void cmd_slot(struct behavior_dynamic_macro_data *data, int slot_idx) {
         }
 
         k_work_cancel_delayable(&data->assign_timeout_work);
+        data->move_source_slot = -1;
+
+        /*
+         * A move is two independent NVS ops (write dst, delete src) with no
+         * atomicity. Order them so the only reachable failure is a benign
+         * transient duplicate, never data loss:
+         *
+         *   1. Commit dst in RAM and persist it. If the save can't even be
+         *      enqueued, roll dst back and leave src fully intact -- the user
+         *      keeps their macro and is told to retry. Nothing is lost.
+         *   2. Only once dst's save is queued, zero src in RAM and delete it
+         *      from storage. If that delete can't be enqueued, dst is already
+         *      safe; src may resurrect on reboot, so surface the failure
+         *      rather than reporting a clean move.
+         *
+         * State is moved to IDLE up front: the queue-full feedback helpers only
+         * speak from IDLE (and drive their own typing return-to-IDLE), so we
+         * must not be in MOVE_PENDING when calling them, and we must not clobber
+         * the typing they start afterwards.
+         */
+        data->state = DM_STATE_IDLE;
+
         atomic_clear_bit(data->pending_delete, dst);
         data->slot_generation[dst]++;
         memcpy(&data->slots[dst], &data->slots[src], sizeof(struct dm_slot));
+
+        if (dm_save_slot(data, dst) != 0) {
+            /* Roll back dst; src is untouched. dm_feedback_save_queue_full
+             * (invoked by the enqueue path) has already reported the failure. */
+            data->slot_generation[dst]++;
+            memset(&data->slots[dst], 0, sizeof(struct dm_slot));
+            LOG_ERR("Move %d -> %d aborted: could not persist dst", src, dst);
+            return;
+        }
 
         atomic_clear_bit(data->pending_delete, src);
         data->slot_generation[src]++;
         memset(&data->slots[src], 0, sizeof(struct dm_slot));
 
-        dm_save_slot(data, dst);
-        dm_delete_slot_from_storage(data, src);
+        if (dm_delete_slot_from_storage(data, src) != 0) {
+            /* dst is safe; src's NVS copy lingers and may reappear on reboot.
+             * dm_feedback_delete_queue_full has already reported the failure. */
+            LOG_ERR("Move %d -> %d: dst persisted but src NVS delete failed", src, dst);
+            return;
+        }
 
-        data->move_source_slot = -1;
         LOG_DBG("Moved slot %d -> slot %d", src, dst);
         feedback_moved(data, src, dst);
         break;

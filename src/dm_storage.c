@@ -529,12 +529,12 @@ static int dm_settings_export(int (*storage_func)(const char *name, const void *
 SETTINGS_STATIC_HANDLER_DEFINE(dm, "dm", NULL, dm_settings_set, dm_settings_commit,
                                dm_settings_export);
 
-void dm_storage_save_slot(struct behavior_dynamic_macro_data *data, int slot_idx) {
+int dm_storage_save_slot(struct behavior_dynamic_macro_data *data, int slot_idx) {
     if (!slot_is_nvs(slot_idx)) {
-        return;
+        return 0;
     }
 
-    enqueue_storage_op(data, DM_STORAGE_OP_SAVE, slot_idx, &data->slots[slot_idx]);
+    return enqueue_storage_op(data, DM_STORAGE_OP_SAVE, slot_idx, &data->slots[slot_idx]);
 }
 
 int dm_storage_delete_slot(struct behavior_dynamic_macro_data *data, int slot_idx) {
