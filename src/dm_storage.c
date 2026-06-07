@@ -189,12 +189,14 @@ static void dm_storage_work_handler(struct k_work *work) {
         settings_slot_key(op.data, op.slot_idx, key, sizeof(key));
 
         if (op.type == DM_STORAGE_OP_SAVE) {
-            struct dm_slot_header *header = (struct dm_slot_header *)save_buf;
-            header->version = DM_STORAGE_VERSION;
-            header->_reserved[0] = 0;
-            header->_reserved[1] = 0;
-            header->_reserved[2] = 0;
-            header->event_count = op.slot.event_count;
+            /* Build the header in a naturally-aligned local, then copy it into
+             * the byte buffer -- avoids writing a packed-struct member through
+             * a cast to the (alignment-1) buffer. */
+            struct dm_slot_header header = {
+                .version = DM_STORAGE_VERSION,
+                .event_count = op.slot.event_count,
+            };
+            memcpy(save_buf, &header, sizeof(header));
 
             size_t events_size = op.slot.event_count * sizeof(struct dm_event);
             memcpy(save_buf + sizeof(struct dm_slot_header), op.slot.events, events_size);
@@ -469,12 +471,11 @@ static int dm_settings_export(int (*storage_func)(const char *name, const void *
             char key[64];
             settings_slot_key(data, i, key, sizeof(key));
 
-            struct dm_slot_header *header = (struct dm_slot_header *)export_buf;
-            header->version = DM_STORAGE_VERSION;
-            header->_reserved[0] = 0;
-            header->_reserved[1] = 0;
-            header->_reserved[2] = 0;
-            header->event_count = data->slots[i].event_count;
+            struct dm_slot_header header = {
+                .version = DM_STORAGE_VERSION,
+                .event_count = data->slots[i].event_count,
+            };
+            memcpy(export_buf, &header, sizeof(header));
 
             size_t events_size = data->slots[i].event_count * sizeof(struct dm_event);
             memcpy(export_buf + sizeof(struct dm_slot_header), data->slots[i].events, events_size);
