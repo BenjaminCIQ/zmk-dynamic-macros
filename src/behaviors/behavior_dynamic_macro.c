@@ -475,6 +475,18 @@ static void cmd_record(struct behavior_dynamic_macro_data *data) {
         return;
     }
 
+    /*
+     * REC restarts recording from IDLE, RECORDING (re-record), and
+     * PENDING_ASSIGN (a finished-but-unassigned recording is discarded in
+     * favour of a fresh one). The PENDING_ASSIGN case silently dropped the
+     * buffered recording before; flag it so callers/tests can see the discard,
+     * and emit a recording-started cue so the user knows the old take is gone.
+     */
+    if (data->state == DM_STATE_PENDING_ASSIGN && data->recording_buffer.event_count > 0) {
+        LOG_DBG("REC during pending-assign: discarding %u unassigned events",
+                (unsigned int)data->recording_buffer.event_count);
+    }
+
     data->recording_buffer.event_count = 0;
     k_work_cancel_delayable(&data->assign_timeout_work);
     LOG_DBG("Started recording dynamic macro");
