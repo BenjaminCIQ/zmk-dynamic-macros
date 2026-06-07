@@ -487,6 +487,17 @@ static void fb_append_status_header(struct behavior_dynamic_macro_data *data) {
 
 /* Macro preview rendering: literal text stays literal; actions become <TOKENS>. */
 
+/*
+ * Maps a HID keycode (plus shift) back to the printable character it produces,
+ * for the configured host locale. Inverse of ascii_to_hid().
+ *
+ * NOTE: only US and UK (the "full punctuation" locales) are mapped here. DE/FR
+ * are plain-mode locales (DM_LOCALE_PLAIN) where macro previews emit only
+ * letters, digits and space; their punctuation/AltGr keys are not inverted and
+ * fall through to the <TOKEN> path. Keys that produce a non-ASCII glyph on a
+ * given layout (e.g. UK Shift+3 = GBP, UK Shift+` = NOT sign) return false so
+ * the caller renders a token rather than a wrong character.
+ */
 bool printable_char_for_keycode(uint32_t keycode, bool shifted, char *out) {
     if (keycode >= 0x04 && keycode <= 0x1D) {
         *out = (shifted ? 'A' : 'a') + (keycode - 0x04);
@@ -495,6 +506,17 @@ bool printable_char_for_keycode(uint32_t keycode, bool shifted, char *out) {
     if (keycode >= 0x1E && keycode <= 0x27) {
         static const char normal[] = "1234567890";
         static const char shifted_chars[] = "!@#$%^&*()";
+#if DM_LOCALE == DM_LOCALE_UK
+        /* UK number row diverges from US on two keys: Shift+2 = " and
+         * Shift+3 = GBP (non-ASCII -> token). The rest match US. */
+        if (shifted && keycode == 0x1F) { /* '2' */
+            *out = '"';
+            return true;
+        }
+        if (shifted && keycode == 0x20) { /* '3' -> GBP, not printable ASCII */
+            return false;
+        }
+#endif
         *out = shifted ? shifted_chars[keycode - 0x1E] : normal[keycode - 0x1E];
         return true;
     }
@@ -504,13 +526,23 @@ bool printable_char_for_keycode(uint32_t keycode, bool shifted, char *out) {
     case 0x2E: *out = shifted ? '+' : '='; return true;
     case 0x2F: *out = shifted ? '{' : '['; return true;
     case 0x30: *out = shifted ? '}' : ']'; return true;
-    case 0x31: *out = shifted ? '|' : '\\'; return true;
     case 0x33: *out = shifted ? ':' : ';'; return true;
-    case 0x34: *out = shifted ? '"' : '\''; return true;
-    case 0x35: *out = shifted ? '~' : '`'; return true;
     case 0x36: *out = shifted ? '<' : ','; return true;
     case 0x37: *out = shifted ? '>' : '.'; return true;
     case 0x38: *out = shifted ? '?' : '/'; return true;
+#if DM_LOCALE == DM_LOCALE_UK
+    /* UK-specific punctuation keys (inverse of the ascii_to_hid UK branches).
+     * 0x31 is not emitted by the UK encoder, so it falls through to a token. */
+    case 0x32: *out = shifted ? '~' : '#'; return true;  /* UK #/~ key */
+    case 0x34: *out = shifted ? '@' : '\''; return true; /* US: "/' */
+    case 0x35: if (shifted) { return false; }            /* NOT sign -> token */
+               *out = '`'; return true;
+    case 0x64: *out = shifted ? '|' : '\\'; return true; /* UK ISO key */
+#else
+    case 0x31: *out = shifted ? '|' : '\\'; return true;
+    case 0x34: *out = shifted ? '"' : '\''; return true;
+    case 0x35: *out = shifted ? '~' : '`'; return true;
+#endif
     default: return false;
     }
 }
