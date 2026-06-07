@@ -598,7 +598,7 @@ bool is_modifier_key(uint16_t usage_page, uint32_t keycode) {
     return usage_page == HID_USAGE_KEY && keycode >= 0xE0 && keycode <= 0xE7;
 }
 
-static bool is_replayable_event(const struct dm_event *ev, uint8_t active_mods) {
+bool is_replayable_event(const struct dm_event *ev, uint8_t active_mods) {
     if (ev->usage_page != HID_USAGE_KEY) {
         return false;
     }

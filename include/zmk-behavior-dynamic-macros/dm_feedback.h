@@ -59,6 +59,10 @@ void dm_feedback_preview_suffix(struct behavior_dynamic_macro_data *data);
 
 bool printable_char_for_keycode(uint32_t keycode, bool shifted, char *out);
 bool is_modifier_key(uint16_t usage_page, uint32_t keycode);
+/* True if the event is a plain (no non-shift modifier) printable key that can
+ * be replayed as a literal character rather than a <TOKEN>. Shared by the live
+ * preview-typing path and the dm_get_preview_string query API so both agree. */
+bool is_replayable_event(const struct dm_event *ev, uint8_t active_mods);
 const char *action_name(uint16_t usage_page, uint32_t keycode);
 uint8_t token_size(uint8_t mods, uint16_t usage_page, uint32_t keycode);
 size_t render_token_to_buf(char *buf, size_t pos, size_t len,

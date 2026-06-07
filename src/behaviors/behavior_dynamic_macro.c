@@ -1013,7 +1013,10 @@ int dm_get_preview_string(int slot_idx, char *buf, size_t len) {
 
         uint8_t mods = active_mods | ev->implicit_mods | ev->explicit_mods;
         char c;
-        if (ev->usage_page == HID_USAGE_KEY &&
+        /* Use the same classifier as the live preview-typing path so the two
+         * renderings agree: a printable key held with a non-shift modifier
+         * (e.g. Ctrl+A) becomes a <TOKEN>, not a bare character. */
+        if (is_replayable_event(ev, active_mods) &&
             printable_char_for_keycode(ev->keycode, (mods & MOD_SHIFT_MASK) != 0, &c)) {
             buf[pos++] = c;
         } else {
