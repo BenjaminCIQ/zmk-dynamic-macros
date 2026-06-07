@@ -146,7 +146,9 @@ static void settings_feedback_key(struct behavior_dynamic_macro_data *data, char
  * - slots[] writes: main thread does memcpy on assign; this handler does memset
  *   on delete completion. These don't race because pending_delete is set during
  *   delete (main thread treats slot as empty and won't access it), and the
- *   atomic_clear_bit happens after memset completes.
+ *   atomic_clear_bit happens after memset completes. Exception: a slot that is
+ *   actively being played back is NOT zeroed here (the playback pump reads it
+ *   concurrently); the RAM copy is left for the next op to overwrite.
  * - Save operations read slot data via op.slot copy in message queue, not
  *   directly from data->slots[]
  * - Feedback calls are deferred to the system work queue via k_work_submit()
@@ -224,7 +226,21 @@ static void dm_storage_work_handler(struct k_work *work) {
 
         if (atomic_test_bit(op.data->pending_delete, op.slot_idx) &&
             op.data->slot_generation[op.slot_idx] == op.generation) {
-            memset(&op.data->slots[op.slot_idx], 0, sizeof(struct dm_slot));
+            /*
+             * Don't zero a slot that is currently being played back: the
+             * playback pump (system work queue) reads slots[playback_slot]
+             * concurrently with this handler. The NVS copy is already gone,
+             * which is what the delete requested; the RAM copy lingers
+             * harmlessly until the next assign/delete to that slot. Reading
+             * state/playback_slot here is a benign cross-thread word read --
+             * worst case we skip a memset for a slot that just stopped
+             * playing, leaving stale RAM that the next op overwrites anyway.
+             */
+            bool playing_this_slot = op.data->state == DM_STATE_PLAYING &&
+                                     op.data->playback_slot == op.slot_idx;
+            if (!playing_this_slot) {
+                memset(&op.data->slots[op.slot_idx], 0, sizeof(struct dm_slot));
+            }
             atomic_clear_bit(op.data->pending_delete, op.slot_idx);
             if (op.data->state == DM_STATE_IDLE) {
                 schedule_deferred_fb(DM_DEFERRED_FB_DELETED, op.data, op.slot_idx);
