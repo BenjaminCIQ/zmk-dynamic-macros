@@ -146,7 +146,9 @@ static void settings_feedback_key(struct behavior_dynamic_macro_data *data, char
  * - slots[] writes: main thread does memcpy on assign; this handler does memset
  *   on delete completion. These don't race because pending_delete is set during
  *   delete (main thread treats slot as empty and won't access it), and the
- *   atomic_clear_bit happens after memset completes.
+ *   atomic_clear_bit happens after memset completes. Exception: a slot that is
+ *   actively being played back is NOT zeroed here (the playback pump reads it
+ *   concurrently); the RAM copy is left for the next op to overwrite.
  * - Save operations read slot data via op.slot copy in message queue, not
  *   directly from data->slots[]
  * - Feedback calls are deferred to the system work queue via k_work_submit()
@@ -187,12 +189,14 @@ static void dm_storage_work_handler(struct k_work *work) {
         settings_slot_key(op.data, op.slot_idx, key, sizeof(key));
 
         if (op.type == DM_STORAGE_OP_SAVE) {
-            struct dm_slot_header *header = (struct dm_slot_header *)save_buf;
-            header->version = DM_STORAGE_VERSION;
-            header->_reserved[0] = 0;
-            header->_reserved[1] = 0;
-            header->_reserved[2] = 0;
-            header->event_count = op.slot.event_count;
+            /* Build the header in a naturally-aligned local, then copy it into
+             * the byte buffer -- avoids writing a packed-struct member through
+             * a cast to the (alignment-1) buffer. */
+            struct dm_slot_header header = {
+                .version = DM_STORAGE_VERSION,
+                .event_count = op.slot.event_count,
+            };
+            memcpy(save_buf, &header, sizeof(header));
 
             size_t events_size = op.slot.event_count * sizeof(struct dm_event);
             memcpy(save_buf + sizeof(struct dm_slot_header), op.slot.events, events_size);
@@ -224,7 +228,21 @@ static void dm_storage_work_handler(struct k_work *work) {
 
         if (atomic_test_bit(op.data->pending_delete, op.slot_idx) &&
             op.data->slot_generation[op.slot_idx] == op.generation) {
-            memset(&op.data->slots[op.slot_idx], 0, sizeof(struct dm_slot));
+            /*
+             * Don't zero a slot that is currently being played back: the
+             * playback pump (system work queue) reads slots[playback_slot]
+             * concurrently with this handler. The NVS copy is already gone,
+             * which is what the delete requested; the RAM copy lingers
+             * harmlessly until the next assign/delete to that slot. Reading
+             * state/playback_slot here is a benign cross-thread word read --
+             * worst case we skip a memset for a slot that just stopped
+             * playing, leaving stale RAM that the next op overwrites anyway.
+             */
+            bool playing_this_slot = op.data->state == DM_STATE_PLAYING &&
+                                     op.data->playback_slot == op.slot_idx;
+            if (!playing_this_slot) {
+                memset(&op.data->slots[op.slot_idx], 0, sizeof(struct dm_slot));
+            }
             atomic_clear_bit(op.data->pending_delete, op.slot_idx);
             if (op.data->state == DM_STATE_IDLE) {
                 schedule_deferred_fb(DM_DEFERRED_FB_DELETED, op.data, op.slot_idx);
@@ -453,12 +471,11 @@ static int dm_settings_export(int (*storage_func)(const char *name, const void *
             char key[64];
             settings_slot_key(data, i, key, sizeof(key));
 
-            struct dm_slot_header *header = (struct dm_slot_header *)export_buf;
-            header->version = DM_STORAGE_VERSION;
-            header->_reserved[0] = 0;
-            header->_reserved[1] = 0;
-            header->_reserved[2] = 0;
-            header->event_count = data->slots[i].event_count;
+            struct dm_slot_header header = {
+                .version = DM_STORAGE_VERSION,
+                .event_count = data->slots[i].event_count,
+            };
+            memcpy(export_buf, &header, sizeof(header));
 
             size_t events_size = data->slots[i].event_count * sizeof(struct dm_event);
             memcpy(export_buf + sizeof(struct dm_slot_header), data->slots[i].events, events_size);
@@ -513,12 +530,12 @@ static int dm_settings_export(int (*storage_func)(const char *name, const void *
 SETTINGS_STATIC_HANDLER_DEFINE(dm, "dm", NULL, dm_settings_set, dm_settings_commit,
                                dm_settings_export);
 
-void dm_storage_save_slot(struct behavior_dynamic_macro_data *data, int slot_idx) {
+int dm_storage_save_slot(struct behavior_dynamic_macro_data *data, int slot_idx) {
     if (!slot_is_nvs(slot_idx)) {
-        return;
+        return 0;
     }
 
-    enqueue_storage_op(data, DM_STORAGE_OP_SAVE, slot_idx, &data->slots[slot_idx]);
+    return enqueue_storage_op(data, DM_STORAGE_OP_SAVE, slot_idx, &data->slots[slot_idx]);
 }
 
 int dm_storage_delete_slot(struct behavior_dynamic_macro_data *data, int slot_idx) {
