@@ -85,7 +85,9 @@ documented module invariants, with a regression test where one is named.
 - [ ] **Generation-stamped async ops** ignore stale completions → `slot_store`/`dm_nvs`.
 - [ ] **REC during pending-assign discards the unassigned take** (`539260c`) →
       `dm_machine` transition with a logged/observable discard.
-- [ ] **Deferred feedback only speaks when IDLE** → `dm_feedback` entry guard.
+- [ ] **Deferred feedback only speaks when IDLE** → `dm_machine_deliver_async()`
+      suppression rule (the rule lives in the machine, not a `dm_feedback` entry guard;
+      see redesign §2.7.3, landed test-first in step 4).
 - [ ] **Aligned NVS header build** (`277f0c8`) → `dm_nvs` serialization.
 - [ ] **UK punctuation + Ctrl+printable → token** (`49c4f1a`, `86993af`) →
       `dm_render`, covered by host tests.

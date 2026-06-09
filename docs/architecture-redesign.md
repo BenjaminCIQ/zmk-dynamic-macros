@@ -242,6 +242,14 @@ unreachable genericity. It therefore takes no instance handle; the per-instance
 `277f0c8`)*. Calls back into `slot_store` for completion (clearing `pending_delete`,
 honoring the playing-slot rule). Compiled only under `PERSIST`.
 
+**`DM_TEST_RELOAD` lives here.** The test-only flush+reload command (`dm_storage_flush` /
+`dm_storage_test_reload`, behind `CONFIG_..._TEST_RELOAD`) is `dm_nvs`'s own surface — it
+drains the work queue, zeroes RAM, and re-runs `settings_load`, all of which are
+`dm_nvs`-internal mechanics. The behavior shell only *dispatches* the command (it is
+ignored unless IDLE, like any other); the machine is not involved because reload is not a
+user-facing transition. This keeps the single-instance `dm_devices[]` iteration in the
+reload path beside the rest of the file-scoped storage code, not leaked into the shell.
+
 ### 2.5 `dm_feedback` — message builder + feedback emitter
 
 Keeps the ring, preview cursor, and erase scheduler. Collapses today's 23 near-clone
@@ -285,6 +293,22 @@ two emitters driven by the shared `tap_cadence` primitive; the other is the **pl
 emitter** (slot `dm_event`s → keystrokes), co-located with playback. The cadence owns
 only the `TAP_DELAY` timer lifecycle and press/release phasing; the two emit bodies do
 not share. *(Co-located primitives — no own file; see §1, §7.)*
+
+**Why the cadence is not a seam (unlike `dm_render`'s sink).** The obvious objection: two
+emitters consume one cadence, so by "two adapters = a real seam" (LANGUAGE) this should be
+a `dm_emitter` vtable with playback and feedback as adapters, symmetric with the sink. It
+is not, and the asymmetry is the point. `dm_render`'s two sinks are **live in the same
+build and on overlapping calls** — `dm_get_preview_string` (buffer) and the typing pump
+(ring) both run, and the ring sink is *resumable* mid-render; the vtable expresses a
+coexistence and a pause/resume a direct call cannot. The two emitters, by contrast, are
+**mutually exclusive states**: `emit_work_handler` is already an `if (state == PLAYING)
+… else if (TYPING_*)` — the `state` field has *already* dispatched before any emit body
+runs. A `dm_emitter` vtable would add a function-pointer indirection to re-express a choice
+`dm_machine` made for free, and nothing swaps the emitter at runtime or in any test. By the
+**deletion test**: delete the hypothetical vtable and no complexity reappears — the state
+branch was the dispatch. So the cadence is shared *code* (timer + phasing), not a shared
+*seam*; promoting it to a module would pay flash + indirection on a footprint-conscious
+target to perform modularity. Co-located is the depth-correct call.
 
 ### 2.6 `dm_events` — notifications + query projection
 
@@ -378,13 +402,20 @@ and calls `draft_commit` on assign.
 
 1. **2.7.4 with step 3** (`slot_store`) — the machine's guards in step 4 need
    `draft_count` to exist.
-2. **2.7.1 + 2.7.2 with step 4** (`dm_machine`) — the orchestration contract *is* step 4;
-   the rejection table is a ported invariant written test-first.
-3. **2.7.3 with step 5** — `typing_finished`/`deliver_async` cannot exist before the
-   machine does. **Hazard:** this inverts the call graph the snapshot suite exercises
-   (feedback→machine, not feedback→state-write), and step 5 is characterization-tested,
-   not TDD — so capture a fresh snapshot baseline *immediately before* step 5 and treat
-   any diff as a regression to explain, not to re-bless.
+2. **2.7.1 + 2.7.2 + 2.7.3 with step 4** (`dm_machine`) — the orchestration contract *is*
+   step 4; the rejection table is a ported invariant written test-first. The §2.7.3
+   up-calls (`typing_finished`/`deliver_async`) and the IDLE-suppression rule land here
+   too, **test-first**, because they are part of the machine's interface and they perform
+   the riskiest change in the rewrite: the feedback→state→feedback→machine call-graph
+   inversion. Putting them in step 4 lands that inversion under TDD against the host-tested
+   machine. The feedback callers are repointed to the up-calls in this step; their
+   message-building bodies are not yet collapsed.
+3. **The speak() collapse is step 5** — purely cosmetic once step 4 owns the up-calls, so
+   it is the *only* part guarded by snapshots rather than TDD. **Residual hazard:** the
+   three deferred-completion paths still funnel their now-unified IDLE check through the
+   collapsed builder, so step 5 still captures a fresh snapshot baseline first (5a) and
+   pins each deferred path with a characterization test (5b) before collapsing. Any diff is
+   a regression to explain, not re-bless.
 
 ---
 
@@ -404,6 +435,16 @@ and calls `draft_commit` on assign.
 The rewrite does not change these rules — it moves them behind two module interfaces
 so they're documented in one place each instead of spread across three files.
 
+**Tuning constants are ported verbatim, not re-derived.** `FB_RING_SIZE` (64), the
+storage msgq depth (4), the storage work-queue priority (10), and its stack size (1024)
+are carried over unchanged. They are field-tuned values, not architecture: the rewrite
+moves them behind `dm_feedback`/`dm_nvs` but does **not** treat them as open questions,
+because changing them is a behavior/footprint experiment independent of the module split.
+If the step-8 footprint pass shows one of them is now mis-sized (e.g. the ring could
+shrink once the renderer streams differently), that is a *measured* follow-up, not a
+decision this plan owns. Documented here so a reader does not mistake the silent carry-over
+for an oversight.
+
 ---
 
 ## 4. Test strategy — TDD on the pure core
@@ -419,7 +460,7 @@ specs. This split is deliberate; see [ADR-0001](adr/0001-deep-module-architectur
 | Layer | Discipline | How tested |
 | --- | --- | --- |
 | `dm_render` | **TDD, test-first** | feed `dm_event[]`, assert string per locale/style |
-| `dm_machine` | **TDD, test-first** | drive command sequences, assert state + rejections |
+| `dm_machine` | **TDD, test-first** | drive command sequences, assert state + rejections; **also covers the §2.7.3 up-calls** (`typing_finished`/`deliver_async`) and the IDLE-suppression rule, so the call-graph inversion is test-first |
 | `slot_store` | **TDD, test-first** | fake `dm_nvs` sink; assert dual-write ordering + rollback |
 | `dm_feedback`, `dm_events`, behavior shell | tests-after / characterization | existing `native_sim` snapshots |
 
@@ -461,8 +502,52 @@ recording (already in place).
 
 ## 5. Sequencing — keep the build green at every step
 
+### 5.0 Method: rewrite *alongside*, don't overwrite
+
+Each module is built **beside** the code it replaces, not on top of it. The existing
+`behavior_dynamic_macro.c` / `dm_feedback.c` / `dm_storage.c` stay in the tree, compiling
+and working, while the new `dm_render` / `slot_store` / `dm_machine` / … modules are added
+next to them; the cut-over for a given concern happens only once the new module's tests
+(host + Ztest) are green and the `native_sim` snapshots still match. The old implementation
+is then deleted in the same step that proves the new one — never before.
+
+**Why parallel, not in-place:**
+
+- **The old code is the oracle.** "Full feature/config parity" (ADR-0001) is the hard
+  requirement. Keeping the original compiling means it remains a live, executable reference
+  for *exactly* what the behavior did — comparable side-by-side, not reconstructed from
+  memory or from the snapshots alone. When a new module's output diverges, the question is
+  "which is right?", and having both runnable answers it.
+- **The snapshot suite stays a true safety net.** Each step ends green against the *same*
+  `native_sim` suite the old code passed; a parallel build lets the suite bisect a
+  regression to the one concern that just cut over, instead of to a half-migrated file.
+- **Cut-over is atomic per concern.** No intermediate commit has a concern split across
+  "half old, half new" — the seam is either the old call site or the new module, never a
+  spliced hybrid. This is what makes "keep the build green at every step" literally true
+  rather than aspirational.
+- **It bounds the blast radius of the riskiest step.** The step-4 call-graph inversion
+  (§2.7.3) can be staged against the old feedback bodies still present, so the inversion is
+  proven before the old bodies are removed in step 5.
+
+The cost — both implementations briefly co-resident — is a transient flash/RAM bump during
+the rewrite, not in the shipped artifact; the old code is gone by the end of each concern's
+step, and the step-8 footprint pass measures only the final state.
+
+### 5.1 Steps
+
 Each step ends with the existing `native_sim` suite green. Pure-core steps (1, 3, 4)
 are **test-first**: the red Ztest/host test lands before the module it specifies.
+
+**Why this order** (render → store → machine → feedback): the dependency arrows in §1
+point down, and the build climbs them leaf-first so each step rests on already-extracted,
+already-tested modules. `dm_render` depends on nothing in the system, so it is the only
+module that can be extracted with *zero* coupling to the rest — it is the cheapest proof
+of the TDD loop. `slot_store` comes before `dm_machine` because the machine's guards
+(§2.2) *ask* `slot_store` for `draft_count`/`is_empty`/`count`; the machine cannot be
+test-driven against an interface that does not yet exist (§2.7.4 implementation order
+makes this explicit). `dm_feedback` (step 5) comes after the machine because the §2.7.3
+up-calls (`typing_finished`/`deliver_async`) it must call *into* are part of the machine's
+interface. The order is forced by the contracts, not chosen for convenience.
 
 0. **Stand up the dual-mode harness** (§4.1). A `tests/unit/` Ztest suite that runs
    under `west test`, plus a standalone host target + `ztest_shim.h` for the fast local
@@ -477,17 +562,31 @@ are **test-first**: the red Ztest/host test lands before the module it specifies
    `dm_nvs` sink → extract `slot_store` with the invariant internal → `cmd_slot` and the
    nvs completion path call its interface instead of poking `slots[]`. **Includes the
    draft buffer** (§2.7.4): the recording buffer moves here behind `draft_*`.
-4. **`dm_machine`, test-first.** Write the red legality-matrix + guard tests → install
-   the two-valued `static const` matrix + guard logic → route all 49 `state =` writes
-   through `dm_machine_command`. **Installs the orchestration + rejection contracts**
-   (§2.7.1–2.7.2); the rejection return-state table is asserted test-first.
-5. **Collapse `dm_feedback`** to the `speak` builder; untangle `feedback_complete` along
-   the §2.7.3 boundary — *rendering-continuation* stays, *state-return* moves to
-   `dm_machine_typing_finished()`; route deferred completions through
-   `dm_machine_deliver_async()`. Guarded by snapshots (characterization, not TDD).
-   **Capture a fresh snapshot baseline immediately before this step** — it inverts the
-   feedback→state call graph, so any snapshot diff is a regression to explain, not
-   re-bless (§2.7.3 hazard).
+4. **`dm_machine`, test-first — and it owns the up-calls.** Write the red legality-matrix
+   + guard tests → install the two-valued `static const` matrix + guard logic → route all
+   49 `state =` writes through `dm_machine_command`. **Installs the orchestration +
+   rejection contracts** (§2.7.1–2.7.2); the rejection return-state table is asserted
+   test-first. **Crucially, this step also installs `dm_machine_typing_finished()` and
+   `dm_machine_deliver_async()` (§2.7.3) and the IDLE-suppression rule — test-first.** The
+   state-ownership inversion (feedback→state becomes feedback→machine→state) is the
+   riskiest single change in the rewrite, so it lands *here*, under TDD against the
+   host-tested machine, **not** in the snapshot-only step 5. The existing
+   `feedback_*`/`feedback_complete` callers are repointed to call these up-calls instead of
+   writing `state` directly, but their message-building bodies are otherwise untouched in
+   this step. *(Resolves the §2.7.3 hazard by moving it under the TDD'd module rather than
+   the characterization net.)*
+5. **Collapse `dm_feedback`** to the `speak` builder — now a *cosmetic* consolidation, no
+   state-ownership change (that moved to step 4). Fold the 23 near-clones into one
+   `speak(spec)`; the *rendering-continuation* half of `feedback_complete` ("another status
+   slot to type?") stays in `dm_feedback`, while the *state-return* half already calls
+   `dm_machine_typing_finished()` from step 4. Guarded by snapshots (characterization, not
+   TDD). **Sub-steps, because the discipline must match even the reduced risk:**
+   - **5a.** Capture and commit a fresh `native_sim` snapshot baseline.
+   - **5b.** Add one targeted characterization test per deferred-completion path
+     (`save_failed` / `delete_failed` / `deleted`) before touching them, so the three
+     unified IDLE-check sites have a pinned expectation.
+   - **5c.** Collapse to `speak(spec)`; the OFF path becomes the single early-return.
+   - **5d.** Diff snapshots; any change is a regression to *explain*, not re-bless.
 6. **Carve out `dm_events`** as the projection; assert single-instance in one place.
 7. **Thin `behavior_dynamic_macro`** to wiring + dispatch.
 8. **Footprint pass:** measure flash/RAM vs. the v0.3.1 baseline; claw back only where
@@ -528,11 +627,13 @@ Recorded here so they are not re-litigated; the load-bearing ones became ADRs.
 | Error model | One `dm_result` domain-outcome enum across sync + async delivery; errno confined inside `dm_nvs`. Deliberate timing-flattening accepted. | §2.0 |
 | State machine | Two-valued legality matrix `[state][command] → ALLOWED\|IGNORED`; guards in code; rejection is a `dm_result`, not a table verdict. | §2.2 |
 | Emit pump | `tap_cadence` primitive + two separate emitters (playback, feedback); not a unified `dm_pump`. | §2.5, CONTEXT |
+| Rewrite method | Build each new module *alongside* the old code (old stays compiling as the parity oracle); delete the old implementation only in the same step that proves the new one green. Not in-place overwrite. | §5.0 |
 | Module granularity | Seven modules with real interfaces get own files; `tap_cadence` and `playback` are co-located primitives — split where there's a seam, not a noun. | §1 |
+| Cadence is not a seam | The two emitters are mutually-exclusive *states* (`emit_work_handler`'s `if (PLAYING) … else if (TYPING)`), so `state` already dispatches; a `dm_emitter` vtable would re-express that for free at a flash/indirection cost. Unlike `dm_render`'s sinks, the emitters never coexist on a call. Deletion test: removing the vtable concentrates no complexity. | §2.5 |
 | Handle granularity | Resolved by ADR-0002: the ZMK `dev` pointer is the handle; no separate `dm_context` aggregate. | ADR-0002 |
 | Sink dispatch | Runtime vtable, not compile-time-selected: both sinks coexist in one build and the ring sink is resumable. Cycle cost negligible vs. `TAP_DELAY`. | §2.3, §6 |
 | Locale vs. style/level | Locale is link-time-fixed (render table); style and level are runtime-mutable and read live — never baked into the render table or the `dm_feedback_spec`. | §2.3, §2.5 |
 | Orchestration | The machine runs each command as a transaction (legality → guard → single `state=` before effects → effect); `slot_store`/`dm_feedback` are called *down* into. Not a returned effect-list. | §2.7.1 |
 | Rejection return-state | Rejection carries a data-dependent return-state (occupied/empty × moving-or-not); preserves the pending state, timeout is the only escape. Not a uniform drop-to-IDLE. | §2.7.2, §2.2 |
-| Completion up-calls | Feedback never writes `state`; it reports up via `dm_machine_typing_finished()` / `dm_machine_deliver_async()`. The deferred IDLE-suppression rule lives in the machine. | §2.7.3 |
+| Completion up-calls | Feedback never writes `state`; it reports up via `dm_machine_typing_finished()` / `dm_machine_deliver_async()`. The deferred IDLE-suppression rule lives in the machine. **Lands in step 4 (test-first), not step 5** — the call-graph inversion is the riskiest change, so it goes under TDD on the host-tested machine, leaving step 5 a cosmetic `speak()` collapse. | §2.7.3, §5 |
 | Draft buffer owner | The recording buffer belongs to `slot_store` (slot-to-slot byte work), behind a `draft_*` surface — not `dm_machine`, not a new recorder module. | §2.7.4 |
