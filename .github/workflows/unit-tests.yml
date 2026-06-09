@@ -45,6 +45,16 @@ jobs:
           config: tests
           always-update-west: true
 
+      # The urob/zmk-actions SDK setup is provisioned for BUILDING, not for
+      # Twister — it lacks Twister's Python deps (natsort, etc.). Install the
+      # Zephyr base requirements into the workspace's Python before running.
+      - name: Install Twister Python requirements
+        working-directory: ${{ steps.setup-zmk.outputs.workspace }}
+        run: |
+          ZBASE="${{ steps.setup-zmk.outputs.workspace }}/zephyr"
+          python -m pip install --user -r "${ZBASE}/scripts/requirements-base.txt" \
+            || python -m pip install --user natsort pyyaml pyelftools
+
       - name: Run Twister over the unit + parity suites
         working-directory: ${{ steps.setup-zmk.outputs.workspace }}
         run: |
