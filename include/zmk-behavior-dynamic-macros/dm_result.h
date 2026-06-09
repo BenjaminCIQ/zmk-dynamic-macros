@@ -3,16 +3,15 @@
  *
  * SPDX-License-Identifier: MIT
  *
- * dm_result — the shared transition-outcome type (redesign §2.0).
+ * dm_result — the shared transition-outcome type.
  *
  * One enum names every transition outcome, whether returned synchronously from
  * a slot_store/dm_machine call or delivered late through the deferred-feedback
  * path. PURE: no Zephyr, so the pure-core modules (slot_store, dm_machine) and
  * their host tests share it without pulling in the kernel.
  *
- * Deliberate timing-flattening (§2.0): a synchronous return MAY type-hold an
- * async-only value (DM_SAVE_FAILED). Accepted on purpose — one outcome type is
- * worth more than encoding sync-vs-async in the type. Do NOT re-split this.
+ * A synchronous return may carry an async-only value (DM_SAVE_FAILED): timing
+ * is deliberately not encoded in the type, so one outcome domain spans both.
  */
 
 #ifndef DM_RESULT_H
@@ -34,12 +33,10 @@ typedef enum {
 } dm_result;
 
 /*
- * Queue-full is split per op (2026-06-09; replaced a single DM_QUEUE_FULL) for
- * the same reason DM_REJECTED_FULL exists: each code drives a DISTINCT
- * user-facing message ("[DM SAVE QUEUE FULL <dst>]" vs "[DM DEL QUEUE FULL
- * <src>]"). A move can fail either way, so one shared code would force feedback
- * to recover which phase failed — and which slot to name — from out-of-band
- * knowledge, the exact thing this enum exists to prevent.
+ * Queue-full is split per op because each code drives a distinct user-facing
+ * message ("[DM SAVE QUEUE FULL <dst>]" vs "[DM DEL QUEUE FULL <src>]"). A move
+ * can fail at either phase, so one shared code would force feedback to recover
+ * which phase failed — and which slot to name — from out-of-band knowledge.
  */
 
 #ifdef __cplusplus

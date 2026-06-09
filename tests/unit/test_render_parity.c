@@ -3,15 +3,14 @@
  *
  * SPDX-License-Identifier: MIT
  *
- * Render parity test (host, fast loop) — redesign §5.2.
+ * Render parity test (host, fast loop).
  *
- * Asserts the NEW dm_render produces, for each shared-corpus case at the US
- * locale, exactly the golden string CAPTURED FROM THE OLD WALK
- * (tests/parity/render/golden_us.h, recorded by the native_sim capture test).
- *
- * This is the parity proof for step 1: new == old, over a corpus, with the old
- * code as oracle. Until the golden is captured (DM_GOLDEN_US_CAPTURED == 0) the
- * test SKIPS rather than asserting against placeholders.
+ * Asserts dm_render produces, for each shared-corpus case at the US locale,
+ * exactly the golden string captured from the live behavior walk
+ * (tests/parity/render/golden_us.h, recorded by the native_sim capture test) —
+ * the live code as oracle. Until the golden is captured
+ * (DM_GOLDEN_US_CAPTURED == 0) the test SKIPS rather than asserting against
+ * placeholders.
  */
 
 #include <stdbool.h>

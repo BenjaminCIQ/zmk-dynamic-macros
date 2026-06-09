@@ -3,32 +3,24 @@
  *
  * SPDX-License-Identifier: MIT
  *
- * Red tests for slot_store (redesign §4.2, §2.1), written BEFORE the
- * implementation. They drive the interface and pin the ported invariants:
+ * Tests for slot_store. They drive the interface and pin the invariants:
  *
- *   - move with dst-persist-fail rolls back: src intact, dst zeroed (a2865b3)
- *   - move dst-ok but src-delete-enqueue-fail: dst safe, error surfaced (a2865b3)
- *   - delete-while-playing skips the RAM zero on completion (fe3689e)
+ *   - move with dst-persist-fail rolls back: src intact, dst zeroed
+ *   - move dst-ok but src-delete-enqueue-fail: dst safe, error surfaced
+ *   - delete-while-playing skips the RAM zero on completion
  *   - a stale-generation completion is ignored
  *   - draft append fills to MAX_EVENTS; chain rejects empty / no-room; commit
- *     copies draft -> slot (§2.7.4)
+ *     copies draft -> slot, RAM-only
+ *   - persist is the separate deferred enqueue (DM_OK | DM_SAVE_QUEUE_FULL)
+ *   - load / reset are the restore surface: populate without persist echo or
+ *     generation bump; reset zeroes slots/pending/generations
  *
- * White-box (§4): the store tests read slots[]/pending_delete/slot_generation
- * via the private layout to assert the dual-write outcome directly.
+ * White-box: the store tests read slots[]/pending_delete/slot_generation via
+ * the private layout to assert the dual-write outcome directly.
  *
  * The fake dm_nvs sink records the last op and can be armed to fail the next
  * enqueue (DM_SAVE_QUEUE_FULL / DM_DELETE_QUEUE_FULL), letting the ordering +
  * rollback be exercised with nothing but a C compiler.
- *
- * Amendments (2026-06-09 review):
- *   - queue-full is split per op (save vs delete) so the machine can name the
- *     failing op AND slot with no out-of-band knowledge (§2.0)
- *   - draft_commit is RAM-only; persistence is the separate slot_store_persist
- *     enqueue, fired by the machine at typing-finished (§2.1/§2.7.3, ports
- *     feedback_post_save_slot)
- *   - slot_store_load / slot_store_reset are the dm_nvs restore surface (boot
- *     settings_load + DM_TEST_RELOAD): populate without persist echo or
- *     generation bump
  */
 
 #include <stdbool.h>
@@ -242,7 +234,7 @@ ZTEST(slot_store, delete_completion_failure_surfaces) {
     zassert_equal(c, DM_DELETE_FAILED, "failed storage delete surfaces DM_DELETE_FAILED");
 }
 
-/* ---- draft buffer (§2.7.4) ------------------------------------------------- */
+/* ---- draft buffer --------------------------------------------------------- */
 ZTEST(slot_store, draft_append_until_full) {
     slot_store *s = fresh_store();
     slot_store_draft_reset(s);
@@ -255,9 +247,9 @@ ZTEST(slot_store, draft_append_until_full) {
     zassert_false(slot_store_draft_append(s, &e), "append past MAX_EVENTS reports full");
 }
 
-/* Commit is RAM-only (§2.1 amendment): the persist is a separate enqueue the
- * machine fires at typing-finished (ports feedback_post_save_slot — the SAVED
- * message types from a settled state BEFORE the enqueue can fail). */
+/* Commit is RAM-only: the persist is a separate enqueue the machine fires at
+ * typing-finished, so the SAVED message types from a settled state before the
+ * enqueue can fail. */
 ZTEST(slot_store, draft_commit_copies_to_slot_ram_only) {
     slot_store *s = fresh_store();
     slot_store_draft_reset(s);
@@ -272,7 +264,7 @@ ZTEST(slot_store, draft_commit_copies_to_slot_ram_only) {
     zassert_equal(g_nvs.save_calls, 0, "commit does NOT touch the sink (persist is deferred)");
 }
 
-/* ---- persist: the deferred enqueue step (§2.1 / §2.7.3) --------------------- */
+/* ---- persist: the deferred enqueue step ------------------------------------ */
 ZTEST(slot_store, persist_enqueues_committed_slot) {
     slot_store *s = fresh_store();
     slot_store_draft_reset(s);
@@ -361,7 +353,7 @@ ZTEST(slot_store, draft_chain_appends_slot_events) {
     zassert_equal(slot_store_draft_count(s), 4, "draft grew by the chained slot's events");
 }
 
-/* ---- restore surface: boot settings_load + DM_TEST_RELOAD (§2.1 amendment) -- */
+/* ---- restore surface: boot settings_load + DM_TEST_RELOAD ------------------ */
 
 /* Boot load is a raw populate: no persist echo back into the sink, no generation
  * bump, pending bit cleared — exactly what dm_settings_set does today. */

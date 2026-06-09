@@ -3,14 +3,13 @@
  *
  * SPDX-License-Identifier: MIT
  *
- * Red tests for dm_render (redesign §4.2), written BEFORE the implementation.
- * They drive the interface: feed a dm_event[] + locale, assert the rendered
- * preview string. A buffer sink (the simplest adapter) collects emit_char into
- * a fixed buffer.
+ * Tests for dm_render. They drive the interface: feed a dm_event[] + locale,
+ * assert the rendered preview string. A buffer sink (the simplest adapter)
+ * collects emit_char into a fixed buffer.
  *
- * Ported invariants under test:
- *   - Ctrl+printable -> <LCTL+C> token, not a bare char   (49c4f1a)
- *   - UK Shift+3 -> token, NOT the GBP char (non-ASCII)    (86993af)
+ * Invariants under test:
+ *   - Ctrl+printable -> <LCTL+C> token, not a bare char
+ *   - UK Shift+3 -> token, NOT the GBP char (non-ASCII)
  *   - DE/FR plain locales emit only letters/digits/space
  *   - literal printable text stays literal
  */
@@ -96,7 +95,7 @@ ZTEST(dm_render, literal_text_us) {
     zassert_str_equal(s.buf, "ac", "plain letters render literally");
 }
 
-/* Ctrl+C becomes a token, not a bare 'c' (ports 49c4f1a). */
+/* Ctrl+C becomes a token, not a bare 'c'. */
 ZTEST(dm_render, ctrl_printable_is_token_us) {
     struct dm_event evs[] = {
         key(KC_LCTL, 0, 0, 1),           /* Ctrl down */
@@ -109,7 +108,7 @@ ZTEST(dm_render, ctrl_printable_is_token_us) {
     zassert_str_equal(s.buf, "<LCTL+C>", "Ctrl+printable renders as a token");
 }
 
-/* UK Shift+3 is GBP (non-ASCII) -> token, never a wrong char (ports 86993af). */
+/* UK Shift+3 is GBP (non-ASCII) -> token, never a wrong char. */
 ZTEST(dm_render, uk_shift3_is_token_not_gbp) {
     struct dm_event evs[] = {
         key(KC_LSFT, 0, 0, 1),
@@ -157,8 +156,8 @@ ZTEST(dm_render, de_plain_digit) {
 
 /*
  * DE plain locale: a punctuation key renders via the <TOKEN> path, not as a
- * literal — plain previews are letters/digits/space only (§2.3, step-2 decision).
- * A SHIFTED comma proves the token path was taken: on US it would be the literal
+ * literal — plain previews are letters/digits/space only. A SHIFTED comma
+ * proves the token path was taken: on US it would be the literal
  * '<', but on DE plain it goes through emit_token as "LSFT ," (plain separator =
  * space, no <…> delimiters), which no literal path could produce. */
 ZTEST(dm_render, de_plain_shifted_punctuation_is_token) {
@@ -173,7 +172,7 @@ ZTEST(dm_render, de_plain_shifted_punctuation_is_token) {
     zassert_str_equal(s.buf, "LSFT ,", "DE plain shifted comma -> token path, not literal '<'");
 }
 
-/* ---- pause/resume cursor (§2.3 amendment, 2026-06-09) ----------------------
+/* ---- pause/resume cursor ---------------------------------------------------
  *
  * The ring sink pauses the walk on backpressure and re-enters after drain. The
  * cursor must carry BOTH the position and the accumulated modifier state: a

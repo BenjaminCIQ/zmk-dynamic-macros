@@ -3,13 +3,11 @@
  *
  * SPDX-License-Identifier: MIT
  *
- * slot_store — deep storage module (redesign §2.1, rewrite step 3).
+ * slot_store — deep storage module.
  *
  * Owns slots[], pending_delete, slot_generation, and the recording draft. The
  * RAM+NVS dual-write ordering and rollback live HERE and surface only as a
- * dm_result; no caller sees "dst-before-src" (§2.7.1). Ported verbatim from the
- * old cmd_slot MOVE_PENDING / DELETE_PENDING / PENDING_ASSIGN bodies and the
- * dm_storage delete-completion handler, now pure and host-tested.
+ * dm_result; no caller sees "dst-before-src".
  *
  * PURE: no Zephyr, no I/O. Persistence is reached through the injected
  * dm_nvs_sink; the generation-stamp staleness check is plain arithmetic.
@@ -29,8 +27,7 @@ static bool idx_valid(int idx) {
 }
 
 /* Raw RAM-occupancy: a slot is empty if it has no events OR is pending delete
- * (the NVS copy is on its way out and the RAM copy is stale). Mirrors the old
- * slot_is_empty() in dm_internal.h. */
+ * (the NVS copy is on its way out and the RAM copy is stale). */
 static bool slot_empty(const slot_store *s, int idx) {
     return s->slots[idx].event_count == 0 || s->pending_delete[idx];
 }
@@ -89,7 +86,7 @@ static dm_result nvs_delete(slot_store *s, int idx) {
     return s->sink->del(s->sink->ctx, idx, s->slot_generation[idx]);
 }
 
-/* ---- move (ports a2865b3) -------------------------------------------------- */
+/* ---- move ------------------------------------------------------------------ */
 
 dm_result slot_store_move(slot_store *s, int src, int dst) {
     if (!idx_valid(src) || !idx_valid(dst)) {
@@ -181,9 +178,9 @@ dm_result slot_store_complete_delete(slot_store *s, int idx, uint32_t generation
         return DM_DELETE_FAILED;
     }
 
-    /* Don't zero a slot that is currently being played back (ports fe3689e):
-     * the NVS copy is already gone, the RAM copy lingers harmlessly until the
-     * next op overwrites it. */
+    /* Don't zero a slot that is currently being played back: the NVS copy is
+     * already gone, the RAM copy lingers harmlessly until the next op
+     * overwrites it. */
     if (s->playing_slot != idx) {
         zero_slot(s, idx);
     }
@@ -191,7 +188,7 @@ dm_result slot_store_complete_delete(slot_store *s, int idx, uint32_t generation
     return DM_OK;
 }
 
-/* ---- draft buffer (§2.7.4) ------------------------------------------------ */
+/* ---- draft buffer --------------------------------------------------------- */
 
 void slot_store_draft_reset(slot_store *s) {
     s->draft.event_count = 0;
@@ -234,7 +231,7 @@ dm_result slot_store_draft_commit(slot_store *s, int dst) {
     s->slot_generation[dst]++;
     memcpy(&s->slots[dst], &s->draft, sizeof(struct dm_slot));
     /* RAM only — the persist is slot_store_persist(), fired by the machine at
-     * typing-finished (ports feedback_post_save_slot). */
+     * typing-finished. */
     return DM_OK;
 }
 

@@ -3,25 +3,17 @@
  *
  * SPDX-License-Identifier: MIT
  *
- * dm_render — pure preview renderer (redesign §2.3, rewrite steps 1–2).
+ * dm_render — pure preview renderer.
  *
  * One event-walk, emitting to an abstract char sink. PURE: no Zephyr, no I/O,
  * no global state. This is the single home for the replayable-vs-token decision
  * and all token formatting, so the live-typing preview and the
  * dm_get_preview_string query API cannot disagree.
  *
- * STEP 1 ported the existing dm_feedback.c walk (is_replayable_event /
- * printable_char_for_keycode / render_action_token) into one pure routine behind
- * the sink, proven byte-identical to the live old walk (parity test).
- *
- * STEP 2 (this file) replaced the per-locale #if/switch ladders in
- * printable_char_for_keycode with static const data tables (one dm_keymap per
- * locale; see below). Behavior is identical for US/UK; for the plain locales
- * (DE/FR) it is deliberately tightened to letters/digits/space only — the old
- * code fell through to the US punctuation branch, but the encoder never emits
- * punctuation on a plain locale, so this is unobservable through real recording
- * and brings the renderer in line with §2.3's "plain previews are letters,
- * digits, space". See tests de_plain_* for the pinned new behavior.
+ * Locale → character mapping is static const data (one dm_keymap per locale;
+ * see below). US/UK are full-punctuation locales; the plain locales (DE/FR)
+ * map digits and space only, so a recorded punctuation key falls through to a
+ * <TOKEN> — previews on a plain locale are letters, digits, and space.
  */
 
 #include <string.h>
@@ -37,17 +29,14 @@
 #define DM_MOD_NON_SHIFT_MASK (~DM_MOD_SHIFT_MASK & 0xFF)
 
 /*
- * Locale → character mapping as static const data (redesign §2.3, step 2),
- * replacing the old printable_char_for_keycode() #if/switch ladders. Each row
- * inverts one HID keycode to the {unshifted, shifted} characters it produces on
- * a layout. A '\0' in either slot means "this key produces no printable ASCII
- * glyph here (e.g. UK Shift+3 = GBP) — render a <TOKEN> instead", which is how
- * the old code's `return false` is encoded in the table.
+ * Locale → character mapping as static const data. Each row inverts one HID
+ * keycode to the {unshifted, shifted} characters it produces on a layout. A
+ * '\0' in either slot means "this key produces no printable ASCII glyph here
+ * (e.g. UK Shift+3 = GBP) — render a <TOKEN> instead".
  *
  * Letters (0x04–0x1D) stay algorithmic — a dense arithmetic range (`'a'+offset`)
- * with no per-locale variance, so a table would only obscure them. Everything
- * that USED to branch on DM_LOCALE — the number row (shared digit rows + shifted
- * symbols) and all punctuation — is data here.
+ * with no per-locale variance, so a table would only obscure them. The number
+ * row (shared digit rows + shifted symbols) and all punctuation are data here.
  *
  * Tables are keyed by keycode via a small linear scan; the punctuation set is
  * tiny (≤16 rows) so a scan beats a 256-entry sparse array on flash with no
@@ -89,8 +78,8 @@ static const dm_keymap_row keymap_uk[] = {
 };
 
 /* Plain locales (DE/FR): digits + space only, no punctuation inversion. A
- * recorded punctuation key therefore falls through to a <TOKEN> (§2.3 — plain
- * previews are letters/digits/space). */
+ * recorded punctuation key therefore falls through to a <TOKEN> — previews on
+ * a plain locale are letters, digits, and space. */
 static const dm_keymap_row keymap_plain[] = {
     DM_KEYMAP_DIGITS,
     {0x2C, ' ', ' '},
@@ -147,8 +136,8 @@ static bool is_modifier_key(uint16_t usage_page, uint32_t keycode) {
 
 /*
  * True if the event is a plain (no non-shift modifier) printable key that can be
- * shown as a literal character rather than a <TOKEN>. Ported from
- * is_replayable_event(). active_mods are the modifiers held by prior events.
+ * shown as a literal character rather than a <TOKEN>. active_mods are the
+ * modifiers held by prior events.
  */
 static bool is_replayable(dm_locale locale, const struct dm_event *ev, uint8_t active_mods) {
     if (ev->usage_page != DM_HID_USAGE_KEY) {
@@ -163,7 +152,7 @@ static bool is_replayable(dm_locale locale, const struct dm_event *ev, uint8_t a
                                       &dummy);
 }
 
-/* Action names for the <TOKEN> form. Ported from action_name()/keyboard_action_name(). */
+/* Action names for the <TOKEN> form. */
 static const char *keyboard_action_name(uint32_t keycode) {
     if (keycode >= 0x04 && keycode <= 0x1D) {
         static const char *letters[] = {
@@ -211,7 +200,7 @@ static const char *action_name(uint16_t usage_page, uint32_t keycode) {
     if (usage_page == DM_HID_USAGE_KEY) {
         return keyboard_action_name(keycode);
     }
-    /* Mouse buttons / consumer pages: mirror dm_feedback.c action_name(). */
+    /* Mouse buttons / consumer pages. */
     if (usage_page == 0x09 /* HID_USAGE_BUTTON */) {
         switch (keycode) {
         case 0x01: return "MOUSE_LEFT";
@@ -232,8 +221,7 @@ static const uint8_t mod_bits[] = {0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x8
 static const char *const mod_names[] = {"LCTL", "LSFT", "LALT", "LGUI",
                                         "RCTL", "RSFT", "RALT", "RGUI"};
 
-/* Char length a token will occupy, for the sink's space_for() backpressure.
- * Mirrors token_size() in dm_feedback.c. */
+/* Char length a token will occupy, for the sink's space_for() backpressure. */
 static uint8_t token_size(dm_locale locale, uint8_t mods, uint16_t usage_page, uint32_t keycode) {
     uint8_t size = 0;
     if (!locale_is_plain(locale)) {
@@ -262,7 +250,7 @@ static void emit_str(dm_sink *sink, const char *s) {
     }
 }
 
-/* Render the <TOKEN> form to the sink as characters. Mirrors render_action_token(). */
+/* Render the <TOKEN> form to the sink as characters. */
 static void emit_token(dm_sink *sink, dm_locale locale, uint8_t mods, uint16_t usage_page,
                        uint32_t keycode) {
     bool plain = locale_is_plain(locale);

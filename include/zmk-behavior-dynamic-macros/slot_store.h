@@ -3,20 +3,20 @@
  *
  * SPDX-License-Identifier: MIT
  *
- * slot_store — the deep storage module (redesign §2.1, rewrite step 3).
+ * slot_store — the deep storage module.
  *
  * Owns slots[], pending_delete, slot_generation, and the recording draft buffer.
  * The RAM+NVS dual-write ordering and rollback are INTERNAL; callers never see
  * "dst-before-src" — they see only a dm_result. The machine asks for counts and
- * commits; it never touches slot bytes (§2.7.4).
+ * commits; it never touches slot bytes.
  *
  * PURE: this header and slot_store.c include no Zephyr and do no I/O. Persistence
  * is reached through an injected dm_nvs_sink vtable (below), so the dual-write
- * ordering + rollback are host-testable against a fake sink (§4). The firmware
- * wires a thin adapter over the file-scoped dm_nvs; the host tests wire a fake
- * that can inject queue-full and drive async completion synchronously.
+ * ordering + rollback are host-testable against a fake sink. The firmware wires a
+ * thin adapter over the file-scoped dm_nvs; the host tests wire a fake that can
+ * inject queue-full and drive async completion synchronously.
  *
- * Cross-thread contract (§3): pending_delete is atomic bits and slot_generation
+ * Cross-thread contract: pending_delete is atomic bits and slot_generation
  * is generation-stamped so a stale async completion is ignored. In the pure
  * build these are plain words (single-threaded host); the firmware adapter keeps
  * the atomic semantics. The ordering logic under test does not depend on the
@@ -38,17 +38,14 @@ extern "C" {
 #endif
 
 /*
- * A recorded macro: a fixed-capacity event array with a live count. Layout is
- * shared with the firmware's struct dm_slot (dm_internal.h) for the fields the
- * store touches; the new stack includes THIS definition, the old path keeps its
- * own, and they are merged at the step-8 cut-over.
+ * A recorded macro: a fixed-capacity event array with a live count.
  */
 struct dm_slot {
     uint32_t event_count;
     struct dm_event events[MAX_EVENTS];
 };
 
-/* Slot class for slot_store_count (§2.1). */
+/* Slot class for slot_store_count. */
 typedef enum {
     DM_SLOT_CLASS_NVS = 0, /* persisted slots [0, NVS_SLOTS)        */
     DM_SLOT_CLASS_RAM,     /* RAM-only slots  [NVS_SLOTS, MAX_SLOTS) */
@@ -96,9 +93,9 @@ int                   slot_store_count(const slot_store *s, slot_class cls);
  * success is src zeroed+deleted. dst-enqueue failure rolls dst back, src intact
  * (returns DM_SAVE_QUEUE_FULL). src delete-enqueue failure leaves dst safe and
  * surfaces DM_DELETE_QUEUE_FULL. Returns DM_REJECTED_EMPTY if src empty,
- * DM_REJECTED_OCCUPIED if dst occupied. (ports a2865b3)
+ * DM_REJECTED_OCCUPIED if dst occupied.
  * NOTE: src == dst never reaches the store — the machine's guard turns a
- * same-slot move into a CANCEL (§2.7.2), not a rejection. */
+ * same-slot move into a CANCEL, not a rejection. */
 dm_result slot_store_move(slot_store *s, int src, int dst);
 
 /* Delete idx. NVS slots are marked pending and enqueued; the RAM zero happens on
@@ -108,15 +105,14 @@ dm_result slot_store_move(slot_store *s, int src, int dst);
 dm_result slot_store_delete(slot_store *s, int idx);
 
 /* Enqueue the persist of slot idx (NVS slots; a RAM slot is a successful no-op).
- * This is assign's DEFERRED persistence step: draft_commit is RAM-only, and the
+ * This is assign's deferred persistence step: draft_commit is RAM-only, and the
  * machine calls persist from dm_machine_typing_finished() — after the SAVED
- * feedback has typed from a settled state — porting the old
- * feedback_post_save_slot ordering (§2.7.3). At feedback levels that type
- * nothing, typing-finished fires synchronously, so this degenerates to the old
- * immediate save. Returns DM_OK | DM_SAVE_QUEUE_FULL. */
+ * feedback has typed from a settled state. At feedback levels that type
+ * nothing, typing-finished fires synchronously, so the persist is immediate.
+ * Returns DM_OK | DM_SAVE_QUEUE_FULL. */
 dm_result slot_store_persist(slot_store *s, int idx);
 
-/* ---- Draft buffer (the recording buffer) — §2.7.4 ------------------------- */
+/* ---- Draft buffer (the recording buffer) ---------------------------------- */
 
 void      slot_store_draft_reset(slot_store *s);                     /* REC start */
 bool      slot_store_draft_append(slot_store *s, const struct dm_event *e); /* false = full */
@@ -136,7 +132,7 @@ bool slot_store_load(slot_store *s, int idx, const struct dm_event *events, uint
 
 /* Zero all slots, pending bits, and generations ahead of a settings_load re-run
  * (DM_TEST_RELOAD). The draft and the sink wiring are untouched — reload only
- * dispatches from IDLE, matching the old dm_storage_test_reload. */
+ * dispatches from IDLE. */
 void slot_store_reset(slot_store *s);
 
 /* ---- Playback ownership — lets delete-completion skip a playing slot ------ */
@@ -147,7 +143,7 @@ void slot_store_clear_playing(slot_store *s);
 /*
  * Async delete completion (called by the nvs sink driver once settings_delete
  * returns). `ok` is the storage verdict. On success the RAM slot is zeroed
- * UNLESS it is the playing slot (ports fe3689e) or the generation is stale (the
+ * UNLESS it is the playing slot or the generation is stale (the
  * op was superseded). Returns the outcome to surface (DM_OK / DM_DELETE_FAILED),
  * already filtered for staleness so the caller need not re-check.
  */

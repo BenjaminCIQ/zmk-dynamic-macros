@@ -3,7 +3,7 @@
  *
  * SPDX-License-Identifier: MIT
  *
- * dm_render — pure, host-testable macro preview renderer (redesign §2.3).
+ * dm_render — pure, host-testable macro preview renderer.
  *
  * One event-walk over a slot's dm_events, emitting a human-readable preview to
  * an abstract char sink: literal printable keys stay literal, everything else
@@ -16,8 +16,8 @@
  * checked by the standalone unit build (tests/unit). Do not add a Zephyr
  * include here.
  *
- * The sink is char-only by design (no emit_token); see §2.3. A token is emitted
- * as its individual characters via emit_char; dm_render owns the formatting.
+ * The sink is char-only by design (no emit_token). A token is emitted as its
+ * individual characters via emit_char; dm_render owns the formatting.
  */
 
 #ifndef DM_RENDER_H
@@ -46,7 +46,7 @@ typedef enum {
 } dm_locale;
 
 /*
- * Abstract char sink. Two adapters satisfy it (§2.3):
+ * Abstract char sink. Two adapters satisfy it:
  *   - ring sink (live typing): space_for returns ring headroom; the walk pauses
  *     when a unit will not fit and resumes after drain.
  *   - buffer sink (dm_get_preview_string): space_for checks remaining buffer.
@@ -81,8 +81,7 @@ typedef struct {
  * what survives the pause, and it must carry BOTH halves of the walk state:
  * the position AND the modifier state accumulated from events before the pause
  * (a held Ctrl from event i-2 still modifies the token at event i). A plain
- * caller-owned value so the renderer itself stays stateless and re-entrant —
- * the typed equivalent of the old preview_idx/preview_mods fields.
+ * caller-owned value so the renderer itself stays stateless and re-entrant.
  * Zero-initialize to start a walk from the beginning.
  */
 typedef struct {
@@ -100,12 +99,9 @@ typedef struct {
  * drains. `cursor` may be NULL for a one-shot render from the start (the
  * buffer-sink shape); a NULL-cursor walk that runs out of space just stops.
  *
- * Truncation is stop-at-first-non-fit BY DESIGN (decided 2026-06-09): a
- * truncated preview is always an honest prefix. The old dm_get_preview_string
- * walk instead skipped an oversized token and kept appending later, smaller
- * characters, which could show a sequence with a silently-missing middle
- * token. Observable only when the destination buffer is smaller than the
- * preview; pinned by the truncation tests. Do not "fix" this back.
+ * Truncation is stop-at-first-non-fit: a truncated preview is always an honest
+ * prefix, never a sequence with a silently-missing middle token. Observable
+ * only when the destination buffer is smaller than the full preview.
  */
 bool dm_render_slot(const dm_render_slot_view *view, dm_locale locale, dm_sink *sink,
                     dm_render_cursor *cursor);
