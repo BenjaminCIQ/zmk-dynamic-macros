@@ -44,7 +44,7 @@ struct fake {
 
 static struct fake *g; /* current fake for the callback thunks */
 
-static void logf(const char *tag) {
+static void log_tag(const char *tag) {
     if (g->log_n < LOG_CAP) {
         size_t n = strlen(tag);
         if (n > 31) {
@@ -70,53 +70,53 @@ static dm_result cb_move(void *c, int s, int d) {
     (void)c;
     g->last_moved_src = s;
     g->last_moved_dst = d;
-    logf("move");
+    log_tag("move");
     return g->move_rc;
 }
-static dm_result cb_delete(void *c, int i) { (void)c; (void)i; logf("delete"); return g->delete_rc; }
+static dm_result cb_delete(void *c, int i) { (void)c; (void)i; log_tag("delete"); return g->delete_rc; }
 static dm_result cb_persist(void *c, int i) {
     (void)c;
     g->last_persist_slot = i;
-    logf("persist");
+    log_tag("persist");
     return g->persist_rc;
 }
-static dm_result cb_commit(void *c, int d) { (void)c; (void)d; logf("commit"); return g->commit_rc; }
-static dm_result cb_chain(void *c, int s) { (void)c; (void)s; logf("chain"); return g->chain_rc; }
+static dm_result cb_commit(void *c, int d) { (void)c; (void)d; log_tag("commit"); return g->commit_rc; }
+static dm_result cb_chain(void *c, int s) { (void)c; (void)s; log_tag("chain"); return g->chain_rc; }
 static int  cb_draft_count(void *c) { (void)c; return g->draft_count; }
 static bool cb_is_empty(void *c, int i) { (void)c; return slot_store_is_empty(&g->store, i); }
-static void cb_draft_reset(void *c) { (void)c; logf("draft_reset"); }
-static void cb_mark_playing(void *c, int i) { (void)c; (void)i; logf("mark_playing"); }
-static void cb_clear_playing(void *c) { (void)c; logf("clear_playing"); }
+static void cb_draft_reset(void *c) { (void)c; log_tag("draft_reset"); }
+static void cb_mark_playing(void *c, int i) { (void)c; (void)i; log_tag("mark_playing"); }
+static void cb_clear_playing(void *c) { (void)c; log_tag("clear_playing"); }
 
 /* speak thunks */
-static void cb_rec(void *c) { (void)c; logf("rec"); }
-static void cb_stop(void *c) { (void)c; logf("stop"); }
-static void cb_no_recording(void *c) { (void)c; logf("no_recording"); }
-static void cb_saved(void *c, int s) { (void)c; g->last_saved_slot = s; logf("saved"); }
-static void cb_deleted(void *c, int s) { (void)c; (void)s; logf("deleted"); }
-static void cb_slot_empty(void *c, int s) { (void)c; (void)s; logf("slot_empty"); }
-static void cb_slot_full(void *c, int s) { (void)c; (void)s; logf("slot_full"); }
-static void cb_chain_insert(void *c, int s) { (void)c; (void)s; logf("chain_insert"); }
-static void cb_chain_empty(void *c, int s) { (void)c; (void)s; logf("chain_empty"); }
-static void cb_chain_no_room(void *c, int s) { (void)c; (void)s; logf("chain_no_room"); }
-static void cb_overflow(void *c) { (void)c; logf("overflow"); }
-static void cb_move_prompt(void *c) { (void)c; logf("move_prompt"); }
-static void cb_move_src_sel(void *c, int s) { (void)c; (void)s; logf("move_src_sel"); }
-static void cb_move_cancelled(void *c) { (void)c; logf("move_cancelled"); }
-static void cb_moved(void *c, int s, int d) { (void)c; (void)s; (void)d; logf("moved"); }
-static void cb_save_qfull(void *c, int s) { (void)c; (void)s; logf("save_qfull"); }
-static void cb_delete_qfull(void *c, int s) { (void)c; (void)s; logf("delete_qfull"); }
-static void cb_status(void *c) { (void)c; logf("status"); }
-static void cb_preview(void *c, int s) { (void)c; (void)s; logf("preview"); }
-static void cb_async_deleted(void *c, int s) { (void)c; (void)s; logf("async_deleted"); }
-static void cb_async_save_failed(void *c, int s) { (void)c; (void)s; logf("async_save_failed"); }
-static void cb_async_delete_failed(void *c, int s) { (void)c; (void)s; logf("async_delete_failed"); }
-static void cb_erase(void *c) { (void)c; logf("erase"); }
+static void cb_rec(void *c) { (void)c; log_tag("rec"); }
+static void cb_stop(void *c) { (void)c; log_tag("stop"); }
+static void cb_no_recording(void *c) { (void)c; log_tag("no_recording"); }
+static void cb_saved(void *c, int s) { (void)c; g->last_saved_slot = s; log_tag("saved"); }
+static void cb_deleted(void *c, int s) { (void)c; (void)s; log_tag("deleted"); }
+static void cb_slot_empty(void *c, int s) { (void)c; (void)s; log_tag("slot_empty"); }
+static void cb_slot_full(void *c, int s) { (void)c; (void)s; log_tag("slot_full"); }
+static void cb_chain_insert(void *c, int s) { (void)c; (void)s; log_tag("chain_insert"); }
+static void cb_chain_empty(void *c, int s) { (void)c; (void)s; log_tag("chain_empty"); }
+static void cb_chain_no_room(void *c, int s) { (void)c; (void)s; log_tag("chain_no_room"); }
+static void cb_overflow(void *c) { (void)c; log_tag("overflow"); }
+static void cb_move_prompt(void *c) { (void)c; log_tag("move_prompt"); }
+static void cb_move_src_sel(void *c, int s) { (void)c; (void)s; log_tag("move_src_sel"); }
+static void cb_move_cancelled(void *c) { (void)c; log_tag("move_cancelled"); }
+static void cb_moved(void *c, int s, int d) { (void)c; (void)s; (void)d; log_tag("moved"); }
+static void cb_save_qfull(void *c, int s) { (void)c; (void)s; log_tag("save_qfull"); }
+static void cb_delete_qfull(void *c, int s) { (void)c; (void)s; log_tag("delete_qfull"); }
+static void cb_status(void *c) { (void)c; log_tag("status"); }
+static void cb_preview(void *c, int s) { (void)c; (void)s; log_tag("preview"); }
+static void cb_async_deleted(void *c, int s) { (void)c; (void)s; log_tag("async_deleted"); }
+static void cb_async_save_failed(void *c, int s) { (void)c; (void)s; log_tag("async_save_failed"); }
+static void cb_async_delete_failed(void *c, int s) { (void)c; (void)s; log_tag("async_delete_failed"); }
+static void cb_erase(void *c) { (void)c; log_tag("erase"); }
 static void cb_notify(void *c, int e, int s) {
     (void)c;
     g->last_notify_event = e;
     g->last_notify_slot = s;
-    logf("notify");
+    log_tag("notify");
 }
 
 static const dm_machine_callbacks fake_cb = {
