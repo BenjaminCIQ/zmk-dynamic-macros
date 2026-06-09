@@ -24,13 +24,23 @@ extern "C" {
 
 typedef enum {
     DM_OK = 0,
-    DM_QUEUE_FULL,        /* storage queue saturated — retry later */
+    DM_SAVE_QUEUE_FULL,   /* save enqueue refused — storage queue saturated */
+    DM_DELETE_QUEUE_FULL, /* delete enqueue refused — storage queue saturated */
     DM_SAVE_FAILED,       /* NVS write failed (async only) */
     DM_DELETE_FAILED,     /* NVS delete failed (async only) */
     DM_REJECTED_OCCUPIED, /* target slot not empty */
     DM_REJECTED_EMPTY,    /* source/target slot empty */
     DM_REJECTED_FULL,     /* recording draft / chain would overflow MAX_EVENTS */
 } dm_result;
+
+/*
+ * Queue-full is split per op (2026-06-09; replaced a single DM_QUEUE_FULL) for
+ * the same reason DM_REJECTED_FULL exists: each code drives a DISTINCT
+ * user-facing message ("[DM SAVE QUEUE FULL <dst>]" vs "[DM DEL QUEUE FULL
+ * <src>]"). A move can fail either way, so one shared code would force feedback
+ * to recover which phase failed — and which slot to name — from out-of-band
+ * knowledge, the exact thing this enum exists to prevent.
+ */
 
 #ifdef __cplusplus
 }

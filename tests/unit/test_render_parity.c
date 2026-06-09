@@ -73,7 +73,7 @@ ZTEST(dm_render_parity, matches_old_walk_us) {
         memset(&s, 0, sizeof(s));
         dm_sink sink = {.emit_char = pbuf_emit, .space_for = pbuf_space, .ctx = &s};
         dm_render_slot_view view = {.event_count = c->count, .events = c->events};
-        dm_render_slot(&view, DM_LOCALE_US, &sink);
+        dm_render_slot(&view, DM_LOCALE_US, &sink, NULL);
 
         zassert_str_equal(s.buf, g->expected,
                           "case %s: dm_render must match old-walk golden", g->name);

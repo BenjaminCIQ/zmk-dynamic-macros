@@ -14,7 +14,7 @@
  * is reached through an injected dm_nvs_sink vtable (below), so the dual-write
  * ordering + rollback are host-testable against a fake sink (§4). The firmware
  * wires a thin adapter over the file-scoped dm_nvs; the host tests wire a fake
- * that can inject DM_QUEUE_FULL and drive async completion synchronously.
+ * that can inject queue-full and drive async completion synchronously.
  *
  * Cross-thread contract (§3): pending_delete is atomic bits and slot_generation
  * is generation-stamped so a stale async completion is ignored. In the pure
@@ -59,10 +59,13 @@ typedef enum {
  * The NVS sink — slot_store's only downward dependency for persistence.
  *
  * save/del are the ENQUEUE step: they return DM_OK if the async op was accepted,
- * DM_QUEUE_FULL if the storage queue is saturated (the only synchronous failure
- * the dual-write ordering must roll back on). The async OUTCOME of a save/delete
- * (success memset, save_failed, delete_failed) is reported back later via
- * slot_store_complete_delete() / the machine's deliver_async — not here.
+ * or the op's queue-full code if the storage queue is saturated (save returns
+ * DM_SAVE_QUEUE_FULL, del returns DM_DELETE_QUEUE_FULL — split so a move's two
+ * failure phases stay distinguishable; see dm_result.h). Queue-full is the only
+ * synchronous failure the dual-write ordering must roll back on. The async
+ * OUTCOME of a save/delete (success memset, save_failed, delete_failed) is
+ * reported back later via slot_store_complete_delete() / the machine's
+ * deliver_async — not here.
  *
  * RAM-only slots never reach the sink; slot_store calls it only for NVS slots.
  */
@@ -91,15 +94,27 @@ int                   slot_store_count(const slot_store *s, slot_class cls);
 
 /* Move src -> dst. Ordering hidden: dst is written+persisted first; only on its
  * success is src zeroed+deleted. dst-enqueue failure rolls dst back, src intact
- * (returns DM_QUEUE_FULL). src delete-enqueue failure leaves dst safe and
- * surfaces DM_QUEUE_FULL. Returns DM_REJECTED_EMPTY if src empty,
- * DM_REJECTED_OCCUPIED if dst occupied. (ports a2865b3) */
+ * (returns DM_SAVE_QUEUE_FULL). src delete-enqueue failure leaves dst safe and
+ * surfaces DM_DELETE_QUEUE_FULL. Returns DM_REJECTED_EMPTY if src empty,
+ * DM_REJECTED_OCCUPIED if dst occupied. (ports a2865b3)
+ * NOTE: src == dst never reaches the store — the machine's guard turns a
+ * same-slot move into a CANCEL (§2.7.2), not a rejection. */
 dm_result slot_store_move(slot_store *s, int src, int dst);
 
 /* Delete idx. NVS slots are marked pending and enqueued; the RAM zero happens on
  * async completion (slot_store_complete_delete), honoring the playing-slot rule.
- * RAM slots are zeroed immediately. DM_REJECTED_EMPTY if already empty. */
+ * RAM slots are zeroed immediately. DM_REJECTED_EMPTY if already empty;
+ * DM_DELETE_QUEUE_FULL rolls the pending bit back. */
 dm_result slot_store_delete(slot_store *s, int idx);
+
+/* Enqueue the persist of slot idx (NVS slots; a RAM slot is a successful no-op).
+ * This is assign's DEFERRED persistence step: draft_commit is RAM-only, and the
+ * machine calls persist from dm_machine_typing_finished() — after the SAVED
+ * feedback has typed from a settled state — porting the old
+ * feedback_post_save_slot ordering (§2.7.3). At feedback levels that type
+ * nothing, typing-finished fires synchronously, so this degenerates to the old
+ * immediate save. Returns DM_OK | DM_SAVE_QUEUE_FULL. */
+dm_result slot_store_persist(slot_store *s, int idx);
 
 /* ---- Draft buffer (the recording buffer) — §2.7.4 ------------------------- */
 
@@ -107,7 +122,22 @@ void      slot_store_draft_reset(slot_store *s);                     /* REC star
 bool      slot_store_draft_append(slot_store *s, const struct dm_event *e); /* false = full */
 uint32_t  slot_store_draft_count(const slot_store *s);              /* guard input */
 dm_result slot_store_draft_chain(slot_store *s, int src);          /* chain src into draft */
-dm_result slot_store_draft_commit(slot_store *s, int dst);         /* assign: draft -> dst */
+/* Assign: draft -> dst, RAM ONLY (DM_OK | DM_REJECTED_OCCUPIED). Persistence is
+ * the separate slot_store_persist() above, deferred to typing-finished. */
+dm_result slot_store_draft_commit(slot_store *s, int dst);
+
+/* ---- Restore surface — dm_nvs only (boot settings_load + DM_TEST_RELOAD) --- */
+
+/* Raw populate of slot idx from decoded storage: no sink echo, no generation
+ * bump, clears a stale pending bit. Serialization validation (version, length)
+ * is dm_nvs's job; the store only defends count <= MAX_EVENTS (false = reject).
+ * Never called by the machine. */
+bool slot_store_load(slot_store *s, int idx, const struct dm_event *events, uint32_t count);
+
+/* Zero all slots, pending bits, and generations ahead of a settings_load re-run
+ * (DM_TEST_RELOAD). The draft and the sink wiring are untouched — reload only
+ * dispatches from IDLE, matching the old dm_storage_test_reload. */
+void slot_store_reset(slot_store *s);
 
 /* ---- Playback ownership — lets delete-completion skip a playing slot ------ */
 

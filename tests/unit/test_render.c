@@ -56,7 +56,9 @@ static void render_into(struct buf_sink *s, const struct dm_event *events, uint3
     memset(s, 0, sizeof(*s));
     dm_sink sink = {.emit_char = buf_emit_char, .space_for = buf_space_for, .ctx = s};
     dm_render_slot_view view = {.event_count = count, .events = events};
-    dm_render_slot(&view, locale, &sink);
+    /* NULL cursor = one-shot render from the start (the buffer-sink shape). */
+    bool done = dm_render_slot(&view, locale, &sink, NULL);
+    zassert_true(done, "one-shot render of a fitting slot completes");
 }
 
 /* ---- event builders ------------------------------------------------------- */
@@ -169,4 +171,73 @@ ZTEST(dm_render, de_plain_shifted_punctuation_is_token) {
     struct buf_sink s;
     render_into(&s, evs, 4, DM_LOCALE_DE);
     zassert_str_equal(s.buf, "LSFT ,", "DE plain shifted comma -> token path, not literal '<'");
+}
+
+/* ---- pause/resume cursor (§2.3 amendment, 2026-06-09) ----------------------
+ *
+ * The ring sink pauses the walk on backpressure and re-enters after drain. The
+ * cursor must carry BOTH the position and the accumulated modifier state: a
+ * held Ctrl from before the pause must still modify tokens after it. A sink
+ * with a movable capacity limit stands in for the draining ring. */
+
+struct stingy_sink {
+    char buf[256];
+    size_t pos;
+    size_t limit; /* space_for refuses anything past this; raised to "drain" */
+};
+
+static void stingy_emit_char(void *ctx, char c) {
+    struct stingy_sink *s = ctx;
+    if (s->pos + 1 < sizeof(s->buf)) {
+        s->buf[s->pos++] = c;
+        s->buf[s->pos] = '\0';
+    }
+}
+
+static bool stingy_space_for(void *ctx, uint8_t n) {
+    struct stingy_sink *s = ctx;
+    return s->pos + n <= s->limit;
+}
+
+#define KC_X 0x1B
+
+ZTEST(dm_render, resume_preserves_held_modifier) {
+    /* Ctrl held across two tokens: <LCTL+C> then <LCTL+X>. */
+    struct dm_event evs[] = {
+        key(KC_LCTL, 0, 0, 1),
+        key(KC_C, 0, MOD_LCTL, 1), key(KC_C, 0, MOD_LCTL, 0),
+        key(KC_X, 0, MOD_LCTL, 1), key(KC_X, 0, MOD_LCTL, 0),
+        key(KC_LCTL, 0, 0, 0),
+    };
+    struct stingy_sink s = {.limit = 8}; /* exactly one <LCTL+C> token fits */
+    dm_sink sink = {.emit_char = stingy_emit_char, .space_for = stingy_space_for, .ctx = &s};
+    dm_render_slot_view view = {.event_count = 6, .events = evs};
+    dm_render_cursor cur = {0};
+
+    bool done = dm_render_slot(&view, DM_LOCALE_US, &sink, &cur);
+    zassert_false(done, "walk pauses when the second token does not fit");
+    zassert_str_equal(s.buf, "<LCTL+C>", "first token emitted before the pause");
+
+    s.limit = sizeof(s.buf); /* "drain": the ring has room again */
+    done = dm_render_slot(&view, DM_LOCALE_US, &sink, &cur);
+    zassert_true(done, "re-entry with the same cursor completes the walk");
+    zassert_str_equal(s.buf, "<LCTL+C><LCTL+X>",
+                      "resumed token still carries the Ctrl held before the pause");
+}
+
+/* A paused-then-resumed walk must not re-emit units from before the pause. */
+ZTEST(dm_render, resume_does_not_reemit) {
+    struct dm_event evs[] = {
+        key(KC_A, 0, 0, 1), key(KC_A, 0, 0, 0),
+        key(KC_C, 0, 0, 1), key(KC_C, 0, 0, 0),
+    };
+    struct stingy_sink s = {.limit = 1}; /* only 'a' fits */
+    dm_sink sink = {.emit_char = stingy_emit_char, .space_for = stingy_space_for, .ctx = &s};
+    dm_render_slot_view view = {.event_count = 4, .events = evs};
+    dm_render_cursor cur = {0};
+
+    zassert_false(dm_render_slot(&view, DM_LOCALE_US, &sink, &cur), "pauses after 'a'");
+    s.limit = sizeof(s.buf);
+    zassert_true(dm_render_slot(&view, DM_LOCALE_US, &sink, &cur), "completes on re-entry");
+    zassert_str_equal(s.buf, "ac", "each unit emitted exactly once across the pause");
 }

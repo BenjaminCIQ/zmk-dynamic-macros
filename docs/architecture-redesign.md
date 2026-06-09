@@ -49,6 +49,20 @@ Dependency rule: **arrows point down; no module calls up.** `dm_render` depends 
 nothing in the system (only on a locale table + a sink vtable). `behavior_*` depends
 on everything but is depended on by nothing.
 
+**Arrows added at the 2026-06-09 review** (the diagram above predates them; each is
+specified in the section cited):
+
+- `dm_feedback → slot_store` — **read-only queries**: status streaming and saved/chain
+  previews need live slot contents mid-typing (§2.5).
+- `dm_feedback → dm_nvs` — **knob persistence**: `dm_nvs_save_knobs()` for the runtime
+  level/style/erase keys (§2.4, §2.5). Symmetric with `slot_store`'s slot persistence.
+- `dm_nvs ⇢ slot_store / dm_feedback` *(dashed)* — **export read-back**: settings export
+  reads current slots + knobs through public queries only; the one documented up-read,
+  single-instance-anchored (§2.4, ADR-0002).
+- Boot restore is delivered upward through narrow setters (`slot_store_load`,
+  `dm_feedback_restore_knobs`) — a *delivery* to the data's owner, the load-time mirror
+  of `deliver_async`, not a call into logic (§2.4).
+
 **Instance model** (see [ADR-0002](adr/0002-single-instance-internals.md)): interfaces
 thread the instance per ZMK convention (`dev->data`, `slot_store *`, `dm_machine *`),
 but three tiers apply — interfaces and behavior-owned state are per-instance; the
@@ -76,7 +90,8 @@ out-of-band knowledge of which failure occurred.
 ```c
 typedef enum {
     DM_OK,
-    DM_QUEUE_FULL,         /* storage queue saturated — retry later */
+    DM_SAVE_QUEUE_FULL,    /* save enqueue refused — storage queue saturated */
+    DM_DELETE_QUEUE_FULL,  /* delete enqueue refused — storage queue saturated */
     DM_SAVE_FAILED,        /* NVS write failed (async only) */
     DM_DELETE_FAILED,      /* NVS delete failed (async only) */
     DM_REJECTED_OCCUPIED,  /* target slot not empty */
@@ -88,11 +103,21 @@ typedef enum {
 > **`DM_REJECTED_FULL` was added at step 3** (not in the original draft). The
 > chain-no-room rejection (old `feedback_chain_no_room`) has a *distinct*
 > user-facing message from both slot-empty and storage-queue-full, so collapsing
-> it onto `DM_QUEUE_FULL` would force feedback (step 5) to disambiguate
+> it onto a queue-full code would force feedback (step 5) to disambiguate
 > buffer-full from msgq-full by out-of-band knowledge — the exact thing this enum
 > exists to prevent. One code per distinct outcome keeps the feedback dispatch
 > type-checked. `slot_store_draft_chain` returns it; `draft_empty` reuses
 > `DM_REJECTED_EMPTY` (the old code likewise reused the slot-empty message).
+
+> **Queue-full was split per op (2026-06-09 review; replaced a single
+> `DM_QUEUE_FULL`)** by the same rule. The old code emits *distinct* messages —
+> `[DM SAVE QUEUE FULL <slot>]` vs `[DM DEL QUEUE FULL <slot>]` — and a move can
+> fail either way: dst-save-enqueue-full (rolled back, message names **dst**) or
+> src-delete-enqueue-full (dst kept, message names **src**). With one shared code
+> the machine could not pick the message *or the slot to name* without knowing
+> which phase of the move failed — out-of-band knowledge again. The sink's `save`
+> returns `DM_OK | DM_SAVE_QUEUE_FULL`; `del` returns `DM_OK |
+> DM_DELETE_QUEUE_FULL`; `slot_store` passes them through untranslated.
 
 **Deliberate flattening:** a synchronous return *could* type-hold an async-only value
 (`DM_SAVE_FAILED`); the type system doesn't forbid it. Accepted on purpose — one
@@ -110,8 +135,9 @@ typedef struct slot_store slot_store;
 
 /* The NVS sink — slot_store's only downward dependency for persistence, injected
  * at init so the dual-write ordering is host-testable against a fake (§4). save/
- * del are the ENQUEUE step (return DM_OK | DM_QUEUE_FULL); the async outcome of a
- * delete comes back via slot_store_complete_delete(). RAM slots never reach it. */
+ * del are the ENQUEUE step (save: DM_OK | DM_SAVE_QUEUE_FULL; del: DM_OK |
+ * DM_DELETE_QUEUE_FULL — split per §2.0); the async outcome of a delete comes
+ * back via slot_store_complete_delete(). RAM slots never reach it. */
 typedef struct {
     dm_result (*save)(void *ctx, int slot, const struct dm_slot *s, uint32_t generation);
     dm_result (*del)(void *ctx, int slot, uint32_t generation);
@@ -125,9 +151,12 @@ bool            slot_store_is_empty(const slot_store *s, int idx);
 const dm_slot  *slot_store_get(const slot_store *s, int idx);   /* NULL if empty */
 int             slot_store_count(const slot_store *s, slot_class cls); /* NVS|RAM|ALL */
 
-/* Mutations — each handles its own persistence for NVS slots */
+/* Mutations — move/delete handle their own persistence for NVS slots; assign's
+ * persist is the SEPARATE slot_store_persist step, deferred by the machine to
+ * typing-finished (§2.7.3 — ports feedback_post_save_slot) */
 dm_result slot_store_move(slot_store *s, int src, int dst);  /* ordering hidden */
 dm_result slot_store_delete(slot_store *s, int idx);
+dm_result slot_store_persist(slot_store *s, int idx);        /* assign's deferred enqueue */
 
 /* Async delete completion (called by the nvs driver once settings_delete returns).
  * Honors the playing-slot rule + generation staleness internally; returns the
@@ -141,11 +170,19 @@ void     slot_store_draft_reset(slot_store *s);                       /* REC sta
 bool     slot_store_draft_append(slot_store *s, const dm_event *e);   /* listener; false = full */
 uint32_t slot_store_draft_count(const slot_store *s);                 /* guard input */
 dm_result slot_store_draft_chain(slot_store *s, int src);             /* chain slot src into draft */
-dm_result slot_store_draft_commit(slot_store *s, int dst);            /* assign: draft → slot dst */
+dm_result slot_store_draft_commit(slot_store *s, int dst);            /* assign: draft → dst, RAM ONLY */
 
 /* Playback ownership — lets delete-completion avoid zeroing a playing slot */
 void slot_store_mark_playing(slot_store *s, int idx);
 void slot_store_clear_playing(slot_store *s);
+
+/* Restore surface — dm_nvs ONLY (boot settings_load + DM_TEST_RELOAD). load is
+ * a raw populate: no sink echo, no generation bump, clears a stale pending bit;
+ * serialization validation (version/length) stays in dm_nvs, the store defends
+ * only count <= MAX_EVENTS. reset zeroes slots/pending/generations ahead of a
+ * settings_load re-run; the draft is untouched (reload is IDLE-only). */
+bool slot_store_load(slot_store *s, int idx, const dm_event *events, uint32_t count);
+void slot_store_reset(slot_store *s);
 ```
 
 (`slot_store_draft_commit` replaces the old `slot_store_assign` — assign is always
@@ -154,8 +191,16 @@ was a phantom second path. The only producer of an assignable macro is the draft
 
 **Internal invariants (ported fixes):**
 - `move`: write+persist dst first; only on success zero+delete src. On dst enqueue
-  failure, roll dst back, leave src intact. On src delete-enqueue failure, dst is
-  safe; surface the error. *(ports `a2865b3`)*
+  failure, roll dst back, leave src intact (`DM_SAVE_QUEUE_FULL`). On src
+  delete-enqueue failure, dst is safe; surface `DM_DELETE_QUEUE_FULL`. *(ports
+  `a2865b3`)* Same-slot move never reaches the store — the machine's guard turns
+  it into a cancel (§2.7.2).
+- **assign persists late, by design**: `draft_commit` is RAM-only; the machine
+  calls `slot_store_persist` from `dm_machine_typing_finished()` (ports
+  `feedback_post_save_slot`) so the SAVED message types from a settled state and
+  a queue-full outcome can speak afterwards. At feedback levels that type
+  nothing, typing-finished fires synchronously (§2.7.3), which degenerates to
+  the old immediate save — one rule, both old paths.
 - delete-completion: never `memset` a slot that is currently playing back; leave the
   RAM copy for the next op to overwrite. *(ports `fe3689e`)*
 - every async op is stamped with the slot's generation; a completion whose generation
@@ -168,7 +213,7 @@ was a phantom second path. The only producer of an assignable macro is the draft
 **The `dm_nvs_sink` is a test seam, not a second instancing of storage.** ADR-0002 keeps
 `dm_nvs` file-scoped/single-instance with no instance handle; the sink vtable does not
 re-instance it. It exists so `slot_store` (pure) can be host-tested against a fake that
-injects `DM_QUEUE_FULL` and drives `complete_delete` synchronously — the only way to pin
+injects queue-full and drives `complete_delete` synchronously — the only way to pin
 the dual-write ordering with a C compiler (§4). The firmware wires a one-line adapter whose
 `save`/`del` call straight into the file-scoped `dm_nvs` enqueue; there is exactly one sink
 in the real build. The seam is real (a fake adapts it in tests), so by the LANGUAGE rule it
@@ -232,14 +277,39 @@ typedef struct {
     void *ctx;
 } dm_sink;
 
-void dm_render_slot(const dm_slot *slot, dm_locale locale, dm_sink *sink);
+/* Pause/resume state — caller-owned so the renderer stays stateless. Carries
+ * BOTH the position and the modifier state accumulated before the pause (a held
+ * Ctrl from event i-2 still modifies the token at event i). The typed equivalent
+ * of the old preview_idx/preview_mods fields. Zero-init to start. */
+typedef struct { uint32_t idx; uint8_t active_mods; } dm_render_cursor;
+
+/* true = walk complete; false = sink refused space for the next unit — nothing
+ * was emitted for it, cursor holds the resume point, re-enter after drain.
+ * cursor == NULL is a one-shot render from the start (the buffer-sink shape). */
+bool dm_render_slot(const dm_render_slot_view *view, dm_locale locale, dm_sink *sink,
+                    dm_render_cursor *cursor);
 ```
+
+> **The cursor was added at the 2026-06-09 review.** The original draft signature
+> (`void dm_render_slot(slot, locale, sink)`) claimed resumability but could not
+> deliver it: re-entering restarts at event 0, and a sub-view starting at the
+> pause point loses the modifier state accumulated before it. Pinned by
+> `resume_preserves_held_modifier` / `resume_does_not_reemit` (host tests).
 
 Two adapters:
 - **ring sink** — used by the live typing pump; `space_for` returns ring headroom so
-  rendering pauses when the ring is full and resumes on drain.
+  rendering pauses when the ring is full and resumes on drain, re-entering with the
+  same `dm_render_cursor`.
 - **buffer sink** — used by `dm_get_preview_string`; `space_for` checks buffer length,
-  `emit_char` appends to a `char*`.
+  `emit_char` appends to a `char*`; passes a NULL cursor (one-shot).
+
+**Truncation is stop-at-first-non-fit — a deliberate, pinned change (decided
+2026-06-09, same precedent as the step-2 DE/FR tightening).** The old
+`dm_get_preview_string` walk *skipped* an oversized token but kept appending later,
+smaller characters, so a clipped preview could show a sequence with a silently
+missing middle token. `dm_render` instead stops at the first unit that does not fit:
+a truncated preview is always an honest prefix. Observable only when the destination
+buffer is smaller than the preview. Do not "fix" this back to skip-and-continue.
 
 **The sink is char-only — there is no `emit_token`, by design (step-1 decision).** A token
 like `<LCTL+C>` is emitted as its individual characters through `emit_char`; `dm_render`
@@ -288,13 +358,37 @@ work handler, and the `settings` handler. **File-scoped single-instance** per
 save/load buffer, shared — per-instance work queues would cost a kernel stack each for
 unreachable genericity. It therefore takes no instance handle; the per-instance
 `slot_store` calls into it. Serializes via an **aligned local header** *(ports
-`277f0c8`)*. Calls back into `slot_store` for completion (clearing `pending_delete`,
-honoring the playing-slot rule). Compiled only under `PERSIST`.
+`277f0c8`)*. Completion is **delivered on the system work queue** (§3): the storage
+thread finishes the settings op and submits one completion that runs
+`slot_store_complete_delete` + `dm_machine_deliver_async` back-to-back. Compiled
+only under `PERSIST`.
+
+**Three surfaces added at the 2026-06-09 review** (the original draft could not be
+implemented without them):
+
+- **Boot restore.** `dm_settings_set` decodes and validates (version, length,
+  `event_count` bound) exactly as today, then delivers via the narrow restore
+  setters — `slot_store_load()` for slots, `dm_feedback_restore_knobs()` for the
+  feedback level/style/erase keys. Boot restore is a sanctioned upward *delivery*
+  (data handed to its owner), not an upward call into logic; it is the load-time
+  mirror of `deliver_async`.
+- **Knob persistence.** `dm_nvs_save_knobs(level, style, erase)` keeps today's
+  third storage-op type (`DM_STORAGE_OP_SAVE_FEEDBACK`); called by `dm_feedback`
+  when a knob command lands (§2.5). Queue-full is logged, not user-spoken — as
+  today.
+- **Settings export.** `dm_settings_export` (any `settings_save()` full dump) needs
+  the current slots + knobs. At step-7 wiring the shell hands `dm_nvs` the
+  instance's `slot_store *` and `dm_feedback` handle; export reads back **only
+  through the public query API** (`slot_store_get`/`slot_store_count`, knob
+  getters). This is the one documented up-read, anchored to the same
+  `BUILD_ASSERT(<=1)` as the rest of the single-instance internals
+  ([ADR-0002](adr/0002-single-instance-internals.md), fourth tier) and drawn
+  dashed in §1.
 
 **`DM_TEST_RELOAD` lives here.** The test-only flush+reload command (`dm_storage_flush` /
 `dm_storage_test_reload`, behind `CONFIG_..._TEST_RELOAD`) is `dm_nvs`'s own surface — it
-drains the work queue, zeroes RAM, and re-runs `settings_load`, all of which are
-`dm_nvs`-internal mechanics. The behavior shell only *dispatches* the command (it is
+drains the work queue, zeroes RAM via `slot_store_reset()`, and re-runs
+`settings_load`, all of which are `dm_nvs`-internal mechanics. The behavior shell only *dispatches* the command (it is
 ignored unless IDLE, like any other); the machine is not involved because reload is not a
 user-facing transition. This keeps the single-instance `dm_devices[]` iteration in the
 reload path beside the rest of the file-scoped storage code, not leaked into the shell.
@@ -326,9 +420,41 @@ gate (`feedback_enabled_for`) is the other runtime knob and is already the early
 at the top of `speak`. Locale, by contrast, is link-time-fixed and belongs to the render
 table (§2.3) — only style and level vary per keypress.
 
+**The three runtime knobs (level, style, auto-erase) live here, persistence included**
+(2026-06-09). The knob commands arrive as ordinary machine commands (their IDLE-only
+gate is just a legality-matrix row, deleting the hand-rolled state checks); the effect
+adjusts the knob, calls `dm_nvs_save_knobs()` (a thin downward arrow, symmetric with
+`slot_store`'s slot persistence), and speaks the confirmation. Boot restore arrives via
+`dm_feedback_restore_knobs()` (§2.4), and the **ARROW-requires-full-punctuation-locale
+rule lives once, inside that setter** — today it is duplicated between
+`cmd_style_toggle` and `dm_settings_set`; the consolidation preserves the Kconfig-
+documented "persisted ARROW silently ignored on a plain locale" fallback by
+construction.
+
 **Ported invariant:** deferred completions (`deleted`, `delete_failed`,
 `save_failed`) only speak when the machine is IDLE; otherwise they drop rather than
 hijack an active op.
+
+**Below-level is "finish instantly", not "do nothing" (2026-06-09 — the OFF-path
+rule).** Today every feedback function raises its widget notification *before* the
+level gate, and the gated early-return still applies the return-state and reschedules
+timeouts (the `!DM_TYPING_ENABLED` stub block is 20 functions of exactly this). In the
+new stack: the **machine** raises the notification before calling `speak` (so it fires
+at every level by construction), and `speak`'s below-level early-return calls
+`dm_machine_typing_finished()` **synchronously** before returning. typing_finished does
+identical work either way — return-state, timeout reschedule, post-save persist
+(`slot_store_persist`, §2.1), erase kick — so one rule covers OFF, below-level, and
+empty-message, and the stub block is deleted rather than rewritten. Pinned test-first
+in step 5 at each feedback level; this is the easiest quiet-regression in the rewrite.
+
+**Status invariants (ported verbatim, each a parity test):** the STATUS gate is the
+**compile-time** `DM_STATUS_DETAIL` knob, independent of the runtime level; the header
+line renders the filled count + slot-range; iteration is used-slots-only below
+`STATUS_FULL`, all slots at `STATUS_FULL`; each slot's preview streams with a
+continuation cursor and gets its count suffix on completion; status output is excluded
+from auto-erase. Status needs live slot contents *mid-typing*, so `dm_feedback` holds
+the `slot_store *` and reads through its public queries — the read-only
+`dm_feedback → slot_store` arrow in §1.
 
 `feedback_complete` (today's tangle) **splits along the module boundary** (§2.7): the
 *rendering-continuation* half — "is there a next status slot to type?" — stays in
@@ -368,6 +494,13 @@ one instance internally — the single-instance assumption lives *here*, in one 
 beside the accessor and its `BUILD_ASSERT(<=1)`
 ([ADR-0002](adr/0002-single-instance-internals.md)). Compiled only under `EVENTS`.
 
+The full notification inventory — which transitions raise an event and which
+deliberately do not — is pinned in
+[§8](#8-appendix--notification-inventory-parity-checklist).
+Ported quirk to retain: when typing is compiled out (`!DM_TYPING_ENABLED`),
+`dm_get_preview_string` returns the `"(N events)"` fallback instead of a rendered
+preview.
+
 ### 2.7 Interaction contracts — orchestration, completion, draft ownership
 
 The §1 diagram says "arrows point down; no module calls up." Today's code violates this
@@ -393,8 +526,8 @@ concerns sit behind interfaces and obey a fixed order:
    not still be mid-transition when an effect calls back.
 4. **Effect** → `slot_store_move/delete/draft_commit`. The dual-write ordering and
    rollback live *inside* `slot_store_move` and surface only as a `dm_result`
-   (`DM_OK | DM_QUEUE_FULL | DM_SAVE_FAILED`). The machine knows "moved / failed-to-
-   persist", never "dst-before-src".
+   (`DM_OK | DM_SAVE_QUEUE_FULL | DM_DELETE_QUEUE_FULL`). The machine knows
+   "moved / which enqueue failed", never "dst-before-src".
 
 > **Rejected alternative — "machine returns an effect list, caller executes":** reads
 > clean but re-exposes the dst→src ordering to the caller (the exact leak ADR-0001
@@ -404,13 +537,30 @@ concerns sit behind interfaces and obey a fixed order:
 #### 2.7.2 Rejection carries a return-state (data-dependent, not uniform)
 
 A guard rejection is `(dm_result, return_state)`. The return-state is **computed from the
-current state**, mirroring today's helpers exactly:
+current state**, mirroring today's helpers exactly *(table corrected & completed at the
+2026-06-09 review — the original draft missed the recording-context rejections and had a
+phantom "occupied in DELETE" row; occupied in DELETE is the delete success path)*:
 
-| Reject cause | While moving | Otherwise |
-| --- | --- | --- |
-| target occupied (`DM_REJECTED_OCCUPIED`) | → `MOVE_PENDING` | → `PENDING_ASSIGN` *(ports `feedback_slot_full`)* |
-| source/target empty (`DM_REJECTED_EMPTY`) | → `MOVE_PENDING` | → `IDLE` *(ports `feedback_slot_empty`)* |
-| occupied target in DELETE mode | — | → `IDLE` (the one drop-to-idle) |
+| Reject cause | While moving | While recording (chain) | Otherwise |
+| --- | --- | --- | --- |
+| target occupied (`DM_REJECTED_OCCUPIED`) | → `MOVE_PENDING` | — | → `PENDING_ASSIGN` *(ports `feedback_slot_full`)* |
+| source/target empty (`DM_REJECTED_EMPTY`) | → `MOVE_PENDING` | → `RECORDING` *(ports `feedback_chain_empty`)* | → `IDLE` *(ports `feedback_slot_empty`; covers play-empty and the empty target in DELETE — the one drop-to-idle)* |
+| no room (`DM_REJECTED_FULL`) | — | → `RECORDING` *(ports `feedback_chain_no_room`)* | — |
+| recording overflow (draft full) | — | → `PENDING_ASSIGN` + timeout *(ports `feedback_overflow`)* | — |
+
+Two cases that look like rejections but are not:
+
+- **Same-slot move is a cancel, not a rejection.** The machine guard checks
+  `src == dst` *before* calling `slot_store_move`: cancel the timeout, clear the
+  move source, → `IDLE`, speak move-cancelled *(ports `feedback_move_cancelled`)*.
+  It never reaches the store — a naive pass-through would return
+  `DM_REJECTED_OCCUPIED` and turn the cancel affordance into a bogus
+  slot-full stuck in `MOVE_PENDING`.
+- **Recording overflow is a machine event, not a store rejection.** The listener
+  appends via `slot_store_draft_append` (§2.7.4); on `false` the shell issues an
+  internal machine command (`DM_CMD_OVERFLOW`, legality: ALLOWED only in
+  `RECORDING`) so the RECORDING → typing → `PENDING_ASSIGN` transition stays a
+  machine write.
 
 The machine writes the return-state and, if it is a `*_PENDING` state, reschedules
 `assign_timeout_work`. **The timeout is the only escape from a preserved pending state.**
@@ -419,15 +569,18 @@ intentional — it must survive verbatim (also listed as a §2.2 ported invarian
 
 #### 2.7.3 Completion: feedback reports up, the machine transitions
 
-Feedback **never writes `state`.** Two sanctioned up-calls (commands, not writes) replace
-the three illegal up-arrows in today's `feedback_complete` / deferred handlers:
+Feedback **never writes `state`.** Four sanctioned up-calls (commands, not writes —
+the erase pair was added at the 2026-06-09 review) replace the illegal up-arrows in
+today's `feedback_complete` / deferred handlers / erase scheduler:
 
 - **`dm_machine_typing_finished(m)`** — the feedback emitter calls this when the ring
-  drains. The machine applies the `return_state` it parked when it *started* the feedback
-  transition (the return-state lives in the machine now, not in `feedback_return_state`),
-  reschedules any pending-timeout, fires the post-save persist, and kicks auto-erase. The
-  status-cursor "another slot to type?" loop is resolved *inside* `dm_feedback` first and
-  does **not** reach the machine until typing is truly done.
+  drains, **or `speak` calls it synchronously when the level gate types nothing**
+  (§2.5 — the OFF-path rule). The machine applies the `return_state` it parked when it
+  *started* the feedback transition (the return-state lives in the machine now, not in
+  `feedback_return_state`), reschedules any pending-timeout, fires the post-save
+  persist (`slot_store_persist`, §2.1 — ports `feedback_post_save_slot`), and kicks
+  auto-erase. The status-cursor "another slot to type?" loop is resolved *inside*
+  `dm_feedback` first and does **not** reach the machine until typing is truly done.
 - **`dm_machine_deliver_async(m, outcome, slot)`** — the `dm_nvs` deferred handler
   (running on the system queue after `k_work_submit`) calls this for `DELETED /
   SAVE_FAILED / DELETE_FAILED`. The **IDLE-suppression rule lives here, in the machine**:
@@ -435,6 +588,20 @@ the three illegal up-arrows in today's `feedback_complete` / deferred handlers:
   the last `state = IDLE` writes from `dm_feedback` and homes the "deferred only when
   IDLE" invariant in one place (resolving the §2.5-vs-machine ownership question in favor
   of the machine).
+- **`dm_machine_erase_due(m)`** — the erase scheduler's delayable work reports the
+  delay expiring. The machine parks the current state as the erase-return-state
+  (**parked once**: a continuation batch arriving while already in `TYPING_ERASE`
+  keeps the original parked state, as today), writes `TYPING_ERASE`, and asks
+  feedback to emit the backspaces. Everything else stays feedback-internal: the
+  char count (non-RET presses during `TYPING_FEEDBACK` only), the
+  `FB_RING_SIZE−1` batching with re-arm, the status-output exclusion. Batch
+  continuation resolves inside `dm_feedback` before typing-finished is reported —
+  the same rendering-continuation rule as status.
+- **`dm_machine_erase_cancel(m)`** — both cancel paths (any DM binding press, any
+  keycode through the listener) report through here; the machine restores the
+  parked erase-return-state and feedback drains its ring. Today both paths write
+  `state` directly from `dm_feedback_cancel_erase` — that up-write is what this
+  call removes.
 
 #### 2.7.4 Draft ownership: the recording buffer belongs to `slot_store`
 
@@ -467,21 +634,33 @@ and calls `draft_commit` on assign.
 
 ---
 
-## 3. Threading model (unchanged, restated cleanly)
+## 3. Threading model (narrowed at the 2026-06-09 review)
 
 - Behavior handlers + event listener + feedback pump run on the **system work queue**
   (cooperative, single-threaded).
 - `dm_nvs` runs its serialization on a **dedicated work queue** at priority 10.
-- Cross-thread contact points, now localized to `slot_store`/`dm_nvs`:
-  - `pending_delete` — atomic bits.
-  - `slot_generation` — written by behavior thread, read by nvs thread for staleness.
-  - `slots[]` — behavior thread writes on assign; nvs thread `memset`s on delete
-    completion, guarded by `pending_delete` + the playing-slot rule.
-  - feedback is never driven from the nvs thread; completions are deferred to the
-    system queue.
+- **Delete-completion is delivered on the system queue** *(the one deliberate
+  narrowing)*: the storage thread finishes `settings_delete` and submits a single
+  completion that runs `slot_store_complete_delete` + `dm_machine_deliver_async`
+  back-to-back on the system queue. Today the storage thread `memset`s `slots[]`
+  itself and only the *feedback* is deferred; moving the whole completion over
+  shifts the memset by one work-queue hop — unobservable, because the slot already
+  reads empty via `pending_delete` (set on the system queue before the enqueue).
+- Consequence: **every `slot_store` entry point runs on the system work queue.**
+  The store is single-threaded *by contract* — its plain (non-atomic)
+  `pending_delete` words are correct, not a host-test shortcut — and the storage
+  thread never touches `slots[]`, `pending_delete`, or `slot_generation` again.
+  The playing-slot rule stays regardless: zeroing a mid-playback slot would still
+  logically corrupt playback even on one thread.
+- The only remaining cross-thread contact is the storage **msgq** and the op
+  payload it carries (each op copies its slot data + generation stamp at enqueue,
+  as today).
+- Feedback is never driven from the nvs thread; completions are deferred to the
+  system queue (unchanged).
 
-The rewrite does not change these rules — it moves them behind two module interfaces
-so they're documented in one place each instead of spread across three files.
+Apart from the completion hop, the rewrite does not change these rules — it moves
+them behind two module interfaces so they're documented in one place each instead
+of spread across three files.
 
 **Tuning constants are ported verbatim, not re-derived.** `FB_RING_SIZE` (64), the
 storage msgq depth (4), the storage work-queue priority (10), and its stack size (1024)
@@ -560,6 +739,16 @@ recording (already in place).
 > - [x] **Step 1** — `dm_render` pure module, test-first, host tests green (8/8 incl. parity). Render parity **proven against the live old walk**: the keymap-snapshot test captured `[DM SAVED R0: '<LCTL+C>#']`; `dm_render` reproduces `<LCTL+C>` (Ctrl+C) and `#` (US Shift+3) exactly. Old walks remain untouched (parallel-stack, §5.0). CI: gcc host job + keymap-snapshot job both green.
 > - [x] **Step 2** — locale data tables inside `dm_render`. The per-locale `#if`/`switch` ladders in `printable_char_for_keycode` are now `static const dm_keymap` tables (one per locale, keyed by keycode via a small linear scan; letters stay algorithmic). US/UK behavior unchanged (parity test still green); **plain locales (DE/FR) deliberately tightened** to letters/digits/space only (the old code fell through to the US punctuation branch, but the encoder never emits punctuation on a plain locale, so this is unobservable through real recording — confirmed and chosen 2026-06-09). New behavior pinned by `de_plain_digit` / `de_plain_shifted_punctuation_is_token`. Host tests 10/10. **Footprint checkpoint:** the ARM/gcc toolchain is not on the dev box, so the quantitative `dm_render` flash number is deferred to CI / the step-9 pass; qualitatively the change is flash-neutral-to-negative by construction — small rodata tables (US ≈ 66 B, UK ≈ 69 B, plain ≈ 33 B, shared digit rows folded via macro) replace branch-heavy `switch`/`#if` instruction sequences and per-locale jump tables.
 > - [x] **Step 3** — `slot_store` pure module, test-first, host tests green (25/25, +15 store). Dual-write ordering + rollback are internal and pinned by a fake `dm_nvs_sink`: move with dst-persist-enqueue-fail rolls dst back (src intact); dst-ok/src-delete-fail keeps dst safe and surfaces the error; the happy path's `S{dst}D{src}` ordering is asserted via a sink trace. Delete-while-playing skips the RAM zero on completion (`fe3689e`); a stale-generation completion is a no-op; the draft surface (append-to-`MAX_EVENTS`, chain empty/no-room, commit→slot) is covered. New shared headers: `dm_result.h`, `dm_config.h` (host-overridable sizing), `slot_store.h` + white-box `slot_store_priv.h`. Old `cmd_slot`/storage path untouched (parallel-stack). **`dm_result` gained `DM_REJECTED_FULL`** for the chain/draft-overflow rejection — see §2.0.
+> - [x] **2026-06-09 review amendments** — the plan was evaluated against the live old
+>   code; gaps and contradictions were resolved and folded into §§1, 2.0–2.7, 3, 8.
+>   Landed in code immediately (pure modules, test-first, host suite 34/34): the
+>   per-op queue-full split (`DM_SAVE_QUEUE_FULL`/`DM_DELETE_QUEUE_FULL`), the
+>   RAM-only `draft_commit` + deferred `slot_store_persist`, the
+>   `slot_store_load`/`slot_store_reset` restore surface, and the `dm_render_cursor`
+>   pause/resume (held-modifier state pinned). Deferred to their natural steps:
+>   machine-side contracts (§2.7.2 completed table, move-cancel guard, `DM_CMD_OVERFLOW`,
+>   erase up-calls, OFF-path rule — step 4/5), knob ownership + restore wiring (steps
+>   5–7), export read-back (step 7).
 > - [ ] Steps 4–7 — parallel stack (`dm_machine`, new `dm_feedback`, `dm_events`, new shell).
 > - [ ] **Step 8** — single cut-over. [ ] **Step 9** — footprint pass.
 
@@ -667,6 +856,13 @@ output matches the old path's. No old call site is repointed until the single cu
    composes the new stack (machine + store + render + feedback + events). Still **not** wired
    to ZMK; reachable only from the parity harness. At the end of this step the *entire* new
    path exists and runs the full `native_sim` parity corpus at parity with the old path.
+   **Shell inventory checklist** (definition-of-done; easy to drop at cut-over, all live
+   today): build-time keymap validation macros (`DM_VALIDATE_*`), behavior metadata
+   tables, param2 range checks returning `-EINVAL`, the BUILD_ASSERTs (8-byte `dm_event`,
+   slot limits, single instance, zero-slot warning), `suppress_recording` ownership (the
+   shell owns the flag — it owns the listener; emitters set/clear through one
+   shell-provided inline), IDLE-only `DM_TEST_RELOAD` dispatch, and the wiring handed to
+   `dm_nvs` at init (sink adapter + export read-back references, §2.4).
 8. **The cut-over (the one and only switch).** This is the sole step where user-visible
    behavior *can* change. Preconditions: the full new stack (steps 1–7) is green and the
    parity harness (§5.2) shows the new shell matching the old path across the entire
@@ -763,3 +959,50 @@ Recorded here so they are not re-litigated; the load-bearing ones became ADRs.
 | Rejection return-state | Rejection carries a data-dependent return-state (occupied/empty × moving-or-not); preserves the pending state, timeout is the only escape. Not a uniform drop-to-IDLE. | §2.7.2, §2.2 |
 | Completion up-calls | Feedback never writes `state`; it reports up via `dm_machine_typing_finished()` / `dm_machine_deliver_async()`. The deferred IDLE-suppression rule lives in the machine. **Designed and tested in step 4** (new machine, test-first) — the call-graph inversion is the riskiest change, proven in the new stack under test against the old path as oracle, never spliced into the old feedback bodies. | §2.7.3, §5 |
 | Draft buffer owner | The recording buffer belongs to `slot_store` (slot-to-slot byte work), behind a `draft_*` surface — not `dm_machine`, not a new recorder module. | §2.7.4 |
+
+**Added at the 2026-06-09 review** (plan evaluated against the live old code):
+
+| Decision | Resolution | Where |
+| --- | --- | --- |
+| Queue-full granularity | Split per op: `DM_SAVE_QUEUE_FULL` / `DM_DELETE_QUEUE_FULL` (replaced one `DM_QUEUE_FULL`) — a move can fail either way with distinct messages naming different slots. | §2.0 |
+| Assign persist timing | `draft_commit` is RAM-only; the machine fires `slot_store_persist` from `typing_finished` (ports `feedback_post_save_slot`). Resolved the §2.1-vs-§2.7.3 contradiction in favor of parity. | §2.1, §2.7.3 |
+| Render resumability | Caller-owned `dm_render_cursor {idx, active_mods}`; the draft signature could not actually resume (modifier state lost across the pause). | §2.3 |
+| Preview truncation | Stop-at-first-non-fit (honest prefix), deliberately replacing the old skip-and-continue. Observable only with a too-small widget buffer. | §2.3 |
+| Restore surface | `slot_store_load` / `slot_store_reset` + `dm_feedback_restore_knobs`: boot/TEST_RELOAD restore is a sanctioned upward *delivery* by `dm_nvs`; validation stays in `dm_nvs`. | §2.1, §2.4 |
+| Export read-back | `dm_nvs` holds the instance's `slot_store *`/`dm_feedback` refs from step-7 wiring; reads via public queries only. A plain pointer, not a vtable — nothing adapts the seam (deletion test). | §2.4, ADR-0002 |
+| Knob ownership | Level/style/erase live in `dm_feedback`, persist via `dm_nvs_save_knobs`; the ARROW-on-plain-locale rule consolidates into the restore setter (was duplicated). | §2.5 |
+| Same-slot move | A cancel handled in the machine guard before `slot_store_move` — never a store rejection. | §2.7.2 |
+| Recording overflow | A machine command (`DM_CMD_OVERFLOW`) raised by the shell when `draft_append` returns false; → `PENDING_ASSIGN`. | §2.7.2 |
+| Auto-erase surface | Two more machine up-calls (`erase_due` / `erase_cancel`); counting, batching, and the status exclusion stay feedback-internal. | §2.7.3 |
+| OFF-path rule | Below-level `speak` calls `typing_finished` synchronously; the machine raises notifications before `speak`, so they fire at every level. Deletes the 20-function stub block. | §2.5, §2.7.3 |
+| Threading narrowing | Delete-completion delivered on the system queue; `slot_store` single-threaded by contract; storage thread never touches slot state. | §3 |
+
+---
+
+## 8. Appendix — notification inventory (parity checklist)
+
+`zmk_dynamic_macro_state_changed` notifications, transcribed from the old code.
+In the new stack they are raised by **the machine** (via `dm_events`), *before*
+feedback speaks — so they fire **regardless of feedback level**, as today (every
+old feedback function raises before its level gate). The parity harness asserts
+this inventory; widgets depend on it.
+
+| Notification | Raised when |
+| --- | --- |
+| `RECORDING_STARTED` | REC accepted (incl. re-record / discard-and-restart) |
+| `RECORDING_STOPPED` | STP with a non-empty draft |
+| `SAVED` | assign committed |
+| `DELETED` | RAM delete, or NVS delete-completion (deferred, IDLE-gated speech) |
+| `MOVED` | move completed (slot = dst) |
+| `PLAY_STARTED` / `PLAY_FINISHED` | playback start / last event emitted |
+| `PREVIEW_READY` | slot pressed in PREVIEW_PENDING |
+| `ERROR_NO_RECORDING` | STP with an empty draft |
+| `ERROR_SLOT_EMPTY` | empty-slot guard rejection (play/delete/move-source/chain) |
+| `ERROR_OVERFLOW` | recording draft full |
+| `ERROR_SAVE_FAILED` / `ERROR_DELETE_FAILED` | async NVS outcome (deferred) |
+| `ERROR_QUEUE_FULL` | save **or** delete enqueue refused (one event type for both, even though the typed messages differ — ported quirk) |
+
+**Deliberately no notification** (ported): slot-occupied rejections
+(`feedback_slot_full`), move prompt / source-selected / cancelled, chain insert /
+empty / no-room, status output, and the knob commands (level/style/erase). Do not
+"complete" these — widgets were never told about them.

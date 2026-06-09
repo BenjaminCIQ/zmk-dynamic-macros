@@ -45,7 +45,7 @@ Target modules:
 | `dm_machine` | `state`, timeouts, transition table | `dm_machine_command()`, `dm_machine_state()` |
 | `slot_store` | `slots[]`, `pending_delete`, `slot_generation` | `assign / move / delete / get`; dual-write hidden |
 | `dm_nvs` | settings serialization, async work queue | enqueue save/delete; calls back into store |
-| `dm_render` | nothing (pure) | `dm_render_slot(slot, locale, sink)` → ring or buffer |
+| `dm_render` | nothing (pure) | `dm_render_slot(view, locale, sink, cursor)` → ring or buffer |
 | `dm_feedback` | ring, preview cursor, erase | message builder over `dm_render` + emit pump |
 | `dm_events` | notification raising + query projection | `raise()`, read-only `dm_get_*` |
 

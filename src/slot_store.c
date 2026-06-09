@@ -116,23 +116,33 @@ dm_result slot_store_move(slot_store *s, int src, int dst) {
     s->slot_generation[dst]++;
     memcpy(&s->slots[dst], &s->slots[src], sizeof(struct dm_slot));
 
-    if (nvs_save(s, dst) != DM_OK) {
-        /* roll back dst; src untouched */
+    dm_result rc = nvs_save(s, dst);
+    if (rc != DM_OK) {
+        /* roll back dst; src untouched. The sink's code (DM_SAVE_QUEUE_FULL)
+         * names the failing op so feedback can name the right slot. */
         s->slot_generation[dst]++;
         zero_slot(s, dst);
-        return DM_QUEUE_FULL;
+        return rc;
     }
 
     s->pending_delete[src] = false;
     s->slot_generation[src]++;
     zero_slot(s, src);
 
-    if (nvs_delete(s, src) != DM_OK) {
+    rc = nvs_delete(s, src);
+    if (rc != DM_OK) {
         /* dst is safe; src's NVS copy lingers and may reappear on reboot */
-        return DM_QUEUE_FULL;
+        return rc;
     }
 
     return DM_OK;
+}
+
+dm_result slot_store_persist(slot_store *s, int idx) {
+    if (!idx_valid(idx)) {
+        return DM_REJECTED_EMPTY;
+    }
+    return nvs_save(s, idx);
 }
 
 /* ---- delete --------------------------------------------------------------- */
@@ -223,7 +233,32 @@ dm_result slot_store_draft_commit(slot_store *s, int dst) {
     s->pending_delete[dst] = false;
     s->slot_generation[dst]++;
     memcpy(&s->slots[dst], &s->draft, sizeof(struct dm_slot));
-    return nvs_save(s, dst);
+    /* RAM only — the persist is slot_store_persist(), fired by the machine at
+     * typing-finished (ports feedback_post_save_slot). */
+    return DM_OK;
+}
+
+/* ---- restore surface (dm_nvs boot load + DM_TEST_RELOAD) -------------------- */
+
+bool slot_store_load(slot_store *s, int idx, const struct dm_event *events, uint32_t count) {
+    if (!idx_valid(idx) || count > MAX_EVENTS) {
+        return false;
+    }
+    zero_slot(s, idx);
+    if (count > 0) {
+        memcpy(s->slots[idx].events, events, count * sizeof(struct dm_event));
+    }
+    s->slots[idx].event_count = count;
+    s->pending_delete[idx] = false;
+    return true;
+}
+
+void slot_store_reset(slot_store *s) {
+    for (int i = 0; i < MAX_SLOTS; i++) {
+        zero_slot(s, i);
+        s->pending_delete[i] = false;
+        s->slot_generation[i] = 0;
+    }
 }
 
 /* ---- playback ownership --------------------------------------------------- */

@@ -76,11 +76,39 @@ typedef struct {
 } dm_render_slot_view;
 
 /*
- * Walk `view`'s events for the given `locale`, emitting the preview to `sink`.
- * Pure: no allocation, no I/O, no global state. Stops early (resumably) if the
- * sink signals it is full via space_for.
+ * Resume cursor for the paused walk. The ring sink pauses rendering on
+ * backpressure (space_for == false) and re-enters after drain; the cursor is
+ * what survives the pause, and it must carry BOTH halves of the walk state:
+ * the position AND the modifier state accumulated from events before the pause
+ * (a held Ctrl from event i-2 still modifies the token at event i). A plain
+ * caller-owned value so the renderer itself stays stateless and re-entrant —
+ * the typed equivalent of the old preview_idx/preview_mods fields.
+ * Zero-initialize to start a walk from the beginning.
  */
-void dm_render_slot(const dm_render_slot_view *view, dm_locale locale, dm_sink *sink);
+typedef struct {
+    uint32_t idx;         /* next event to consider */
+    uint8_t  active_mods; /* modifiers held by events before idx */
+} dm_render_cursor;
+
+/*
+ * Walk `view`'s events for the given `locale`, emitting the preview to `sink`.
+ * Pure: no allocation, no I/O, no global state.
+ *
+ * Returns true when the walk completed. Returns false when the sink refused
+ * space for the next unit: nothing was emitted for that unit, and `cursor`
+ * holds the resume point — call again with the same cursor after the sink
+ * drains. `cursor` may be NULL for a one-shot render from the start (the
+ * buffer-sink shape); a NULL-cursor walk that runs out of space just stops.
+ *
+ * Truncation is stop-at-first-non-fit BY DESIGN (decided 2026-06-09): a
+ * truncated preview is always an honest prefix. The old dm_get_preview_string
+ * walk instead skipped an oversized token and kept appending later, smaller
+ * characters, which could show a sequence with a silently-missing middle
+ * token. Observable only when the destination buffer is smaller than the
+ * preview; pinned by the truncation tests. Do not "fix" this back.
+ */
+bool dm_render_slot(const dm_render_slot_view *view, dm_locale locale, dm_sink *sink,
+                    dm_render_cursor *cursor);
 
 #ifdef __cplusplus
 }

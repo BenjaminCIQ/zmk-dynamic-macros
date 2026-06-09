@@ -290,22 +290,26 @@ static void emit_token(dm_sink *sink, dm_locale locale, uint8_t mods, uint16_t u
     }
 }
 
-void dm_render_slot(const dm_render_slot_view *view, dm_locale locale, dm_sink *sink) {
+bool dm_render_slot(const dm_render_slot_view *view, dm_locale locale, dm_sink *sink,
+                    dm_render_cursor *cursor) {
     if (!view || !sink) {
-        return;
+        return true;
     }
 
-    uint8_t active_mods = 0;
+    /* One-shot callers pass NULL; the walk then starts from the beginning and
+     * a pause is just a stop (nothing to resume into). */
+    dm_render_cursor local = {0};
+    dm_render_cursor *cur = cursor ? cursor : &local;
 
-    for (uint32_t i = 0; i < view->event_count; i++) {
-        const struct dm_event *ev = &view->events[i];
+    for (; cur->idx < view->event_count; cur->idx++) {
+        const struct dm_event *ev = &view->events[cur->idx];
 
         if (is_modifier_key(ev->usage_page, ev->keycode)) {
             uint8_t mod_bit = (uint8_t)(1u << (ev->keycode - 0xE0));
             if (ev->pressed) {
-                active_mods |= mod_bit;
+                cur->active_mods |= mod_bit;
             } else {
-                active_mods &= (uint8_t)~mod_bit;
+                cur->active_mods &= (uint8_t)~mod_bit;
             }
             continue;
         }
@@ -314,21 +318,22 @@ void dm_render_slot(const dm_render_slot_view *view, dm_locale locale, dm_sink *
             continue;
         }
 
-        uint8_t mods = active_mods | ev->implicit_mods | ev->explicit_mods;
+        uint8_t mods = cur->active_mods | ev->implicit_mods | ev->explicit_mods;
         char c;
 
-        if (is_replayable(locale, ev, active_mods) &&
+        if (is_replayable(locale, ev, cur->active_mods) &&
             printable_char_for_keycode(locale, ev->keycode, (mods & DM_MOD_SHIFT_MASK) != 0, &c)) {
             if (!sink->space_for(sink->ctx, 1)) {
-                return; /* ring backpressure: resume after drain */
+                return false; /* backpressure: cursor points at this unit */
             }
             sink->emit_char(sink->ctx, c);
         } else {
             uint8_t size = token_size(locale, mods, ev->usage_page, ev->keycode);
             if (!sink->space_for(sink->ctx, size)) {
-                return;
+                return false;
             }
             emit_token(sink, locale, mods, ev->usage_page, ev->keycode);
         }
     }
+    return true;
 }

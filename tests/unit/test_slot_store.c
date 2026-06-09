@@ -17,8 +17,18 @@
  * via the private layout to assert the dual-write outcome directly.
  *
  * The fake dm_nvs sink records the last op and can be armed to fail the next
- * enqueue (DM_QUEUE_FULL), letting the ordering + rollback be exercised with
- * nothing but a C compiler.
+ * enqueue (DM_SAVE_QUEUE_FULL / DM_DELETE_QUEUE_FULL), letting the ordering +
+ * rollback be exercised with nothing but a C compiler.
+ *
+ * Amendments (2026-06-09 review):
+ *   - queue-full is split per op (save vs delete) so the machine can name the
+ *     failing op AND slot with no out-of-band knowledge (§2.0)
+ *   - draft_commit is RAM-only; persistence is the separate slot_store_persist
+ *     enqueue, fired by the machine at typing-finished (§2.1/§2.7.3, ports
+ *     feedback_post_save_slot)
+ *   - slot_store_load / slot_store_reset are the dm_nvs restore surface (boot
+ *     settings_load + DM_TEST_RELOAD): populate without persist echo or
+ *     generation bump
  */
 
 #include <stdbool.h>
@@ -60,7 +70,7 @@ static dm_result fake_save(void *ctx, int slot, const struct dm_slot *s, uint32_
     (void)s;
     if (f->fail_next_save) {
         f->fail_next_save = false;
-        return DM_QUEUE_FULL;
+        return DM_SAVE_QUEUE_FULL;
     }
     f->save_calls++;
     f->last_save_slot = slot;
@@ -73,7 +83,7 @@ static dm_result fake_del(void *ctx, int slot, uint32_t generation) {
     struct fake_nvs *f = ctx;
     if (f->fail_next_del) {
         f->fail_next_del = false;
-        return DM_QUEUE_FULL;
+        return DM_DELETE_QUEUE_FULL;
     }
     f->del_calls++;
     f->last_del_slot = slot;
@@ -84,9 +94,11 @@ static dm_result fake_del(void *ctx, int slot, uint32_t generation) {
 
 /* ---- fixtures -------------------------------------------------------------- */
 
-/* NVS slots are [0, NVS_SLOTS); pick two low indices that are both NVS-backed. */
+/* NVS slots are [0, NVS_SLOTS); pick two low indices that are both NVS-backed.
+ * RAM slots are [NVS_SLOTS, MAX_SLOTS). */
 #define NVS_A 0
 #define NVS_B 1
+#define RAM_A NVS_SLOTS
 
 static struct fake_nvs g_nvs;
 static slot_store      g_store;
@@ -118,7 +130,8 @@ ZTEST(slot_store, move_dst_persist_fail_rolls_back) {
     g_nvs.fail_next_save = true; /* dst save can't even enqueue */
     dm_result r = slot_store_move(s, NVS_A, NVS_B);
 
-    zassert_equal(r, DM_QUEUE_FULL, "dst enqueue failure surfaces as DM_QUEUE_FULL");
+    zassert_equal(r, DM_SAVE_QUEUE_FULL,
+                  "dst enqueue failure surfaces as DM_SAVE_QUEUE_FULL (names the failing op)");
     /* src untouched: same events, same generation, no delete attempted */
     zassert_equal(s->slots[NVS_A].event_count, 3, "src kept its events");
     zassert_equal(s->slot_generation[NVS_A], src_gen_before, "src generation unchanged");
@@ -135,7 +148,8 @@ ZTEST(slot_store, move_src_delete_fail_keeps_dst) {
     g_nvs.fail_next_del = true; /* dst saves fine; src delete can't enqueue */
     dm_result r = slot_store_move(s, NVS_A, NVS_B);
 
-    zassert_equal(r, DM_QUEUE_FULL, "src delete failure surfaces as DM_QUEUE_FULL");
+    zassert_equal(r, DM_DELETE_QUEUE_FULL,
+                  "src delete failure surfaces as DM_DELETE_QUEUE_FULL (names the failing op)");
     zassert_equal(s->slots[NVS_B].event_count, 2, "dst persisted and kept");
     zassert_equal(g_nvs.save_calls, 1, "dst was saved exactly once");
     /* dst is written+persisted BEFORE src is deleted: ordering witness */
@@ -241,7 +255,10 @@ ZTEST(slot_store, draft_append_until_full) {
     zassert_false(slot_store_draft_append(s, &e), "append past MAX_EVENTS reports full");
 }
 
-ZTEST(slot_store, draft_commit_copies_to_slot) {
+/* Commit is RAM-only (§2.1 amendment): the persist is a separate enqueue the
+ * machine fires at typing-finished (ports feedback_post_save_slot — the SAVED
+ * message types from a settled state BEFORE the enqueue can fail). */
+ZTEST(slot_store, draft_commit_copies_to_slot_ram_only) {
     slot_store *s = fresh_store();
     slot_store_draft_reset(s);
     struct dm_event e1 = {.keycode = 0x04}, e2 = {.keycode = 0x05};
@@ -252,7 +269,54 @@ ZTEST(slot_store, draft_commit_copies_to_slot) {
     zassert_equal(r, DM_OK, "commit into an empty NVS slot succeeds");
     zassert_equal(s->slots[NVS_A].event_count, 2, "draft copied into the slot");
     zassert_equal(s->slots[NVS_A].events[1].keycode, 0x05, "draft bytes landed in order");
-    zassert_equal(g_nvs.save_calls, 1, "committing an NVS slot persists it");
+    zassert_equal(g_nvs.save_calls, 0, "commit does NOT touch the sink (persist is deferred)");
+}
+
+/* ---- persist: the deferred enqueue step (§2.1 / §2.7.3) --------------------- */
+ZTEST(slot_store, persist_enqueues_committed_slot) {
+    slot_store *s = fresh_store();
+    slot_store_draft_reset(s);
+    struct dm_event e = {.keycode = 0x04};
+    slot_store_draft_append(s, &e);
+    slot_store_draft_commit(s, NVS_A);
+
+    dm_result r = slot_store_persist(s, NVS_A);
+    zassert_equal(r, DM_OK, "persist of a committed NVS slot enqueues");
+    zassert_equal(g_nvs.save_calls, 1, "exactly one save reached the sink");
+    zassert_equal(g_nvs.last_save_slot, NVS_A, "the committed slot was saved");
+    zassert_equal(g_nvs.last_save_gen, s->slot_generation[NVS_A],
+                  "save is stamped with the slot's current generation");
+}
+
+ZTEST(slot_store, persist_queue_full_surfaces) {
+    slot_store *s = fresh_store();
+    seed_slot(s, NVS_A, 1);
+
+    g_nvs.fail_next_save = true;
+    dm_result r = slot_store_persist(s, NVS_A);
+    zassert_equal(r, DM_SAVE_QUEUE_FULL, "saturated queue surfaces as DM_SAVE_QUEUE_FULL");
+}
+
+ZTEST(slot_store, persist_ram_slot_is_noop) {
+    slot_store *s = fresh_store();
+    seed_slot(s, RAM_A, 1);
+
+    dm_result r = slot_store_persist(s, RAM_A);
+    zassert_equal(r, DM_OK, "RAM slot persist is a successful no-op");
+    zassert_equal(g_nvs.save_calls, 0, "RAM slots never reach the sink");
+}
+
+/* ---- delete enqueue failure rolls the pending bit back ---------------------- */
+ZTEST(slot_store, delete_enqueue_full_rolls_back_pending) {
+    slot_store *s = fresh_store();
+    seed_slot(s, NVS_A, 3);
+
+    g_nvs.fail_next_del = true;
+    dm_result r = slot_store_delete(s, NVS_A);
+
+    zassert_equal(r, DM_DELETE_QUEUE_FULL, "saturated queue surfaces as DM_DELETE_QUEUE_FULL");
+    zassert_false(s->pending_delete[NVS_A], "pending bit rolled back on enqueue failure");
+    zassert_equal(s->slots[NVS_A].event_count, 3, "slot contents untouched");
 }
 
 ZTEST(slot_store, draft_commit_rejects_occupied) {
@@ -295,4 +359,56 @@ ZTEST(slot_store, draft_chain_appends_slot_events) {
     dm_result r = slot_store_draft_chain(s, NVS_A);
     zassert_equal(r, DM_OK, "chaining a non-empty slot that fits succeeds");
     zassert_equal(slot_store_draft_count(s), 4, "draft grew by the chained slot's events");
+}
+
+/* ---- restore surface: boot settings_load + DM_TEST_RELOAD (§2.1 amendment) -- */
+
+/* Boot load is a raw populate: no persist echo back into the sink, no generation
+ * bump, pending bit cleared — exactly what dm_settings_set does today. */
+ZTEST(slot_store, load_populates_without_persist_echo) {
+    slot_store *s = fresh_store();
+    struct dm_event evs[2] = {{.keycode = 0x04}, {.keycode = 0x05}};
+    s->pending_delete[NVS_A] = true; /* stale pending state must not survive a load */
+
+    bool ok = slot_store_load(s, NVS_A, evs, 2);
+
+    zassert_true(ok, "valid load accepted");
+    zassert_equal(s->slots[NVS_A].event_count, 2, "loaded events landed");
+    zassert_equal(s->slots[NVS_A].events[1].keycode, 0x05, "loaded bytes in order");
+    zassert_equal(g_nvs.save_calls, 0, "load never echoes back into the sink");
+    zassert_equal(s->slot_generation[NVS_A], 0, "load does not bump the generation");
+    zassert_false(s->pending_delete[NVS_A], "load clears a stale pending bit");
+}
+
+/* Serialization validation (version/length) is dm_nvs's job; the store only
+ * defends its own array bound. */
+ZTEST(slot_store, load_rejects_overflow) {
+    slot_store *s = fresh_store();
+    struct dm_event evs[1] = {{.keycode = 0x04}};
+
+    bool ok = slot_store_load(s, NVS_A, evs, MAX_EVENTS + 1);
+
+    zassert_false(ok, "count past MAX_EVENTS is rejected");
+    zassert_equal(s->slots[NVS_A].event_count, 0, "slot untouched on rejected load");
+}
+
+/* DM_TEST_RELOAD zeroes slots, pending bits, and generations before re-running
+ * settings_load. The draft is NOT touched (reload only dispatches from IDLE;
+ * parity with dm_storage_test_reload, which never clears recording_buffer). */
+ZTEST(slot_store, reset_clears_slots_pending_generations) {
+    slot_store *s = fresh_store();
+    seed_slot(s, NVS_A, 3);
+    seed_slot(s, RAM_A, 2);
+    s->pending_delete[NVS_B] = true;
+    s->slot_generation[NVS_A] = 7;
+    struct dm_event e = {.keycode = 0x09};
+    slot_store_draft_append(s, &e);
+
+    slot_store_reset(s);
+
+    zassert_equal(s->slots[NVS_A].event_count, 0, "NVS slot zeroed");
+    zassert_equal(s->slots[RAM_A].event_count, 0, "RAM slot zeroed");
+    zassert_false(s->pending_delete[NVS_B], "pending bits cleared");
+    zassert_equal(s->slot_generation[NVS_A], 0, "generations zeroed");
+    zassert_equal(slot_store_draft_count(s), 1, "draft survives a reset (reload is IDLE-only)");
 }
