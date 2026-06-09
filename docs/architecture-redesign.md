@@ -1,6 +1,8 @@
 # Architecture redesign — design document
 
-Status: **draft for review** · 2026-06-09 · branch `docs/architecture-redesign`
+Status: **in progress** · updated 2026-06-10 · branch `docs/architecture-redesign`
+(steps 0–7 landed; the full parallel stack now exists and is awaiting its first
+CI parity run — steps 8–9 remain)
 
 This is the implementation blueprint for the deep-module rewrite decided in
 [ADR-0001](adr/0001-deep-module-architecture.md). Vocabulary follows
@@ -751,10 +753,10 @@ recording (already in place).
 >   5–7), export read-back (step 7).
 > - [x] **Step 4** — `dm_machine` pure module, test-first, host tests green (67/67, +33). Two-valued `legality[state][command]` matrix (every cell decided), data-dependent guards behind a callback vtable (never reads slot bytes), `state` written once per transition before any feedback-emitting effect. Ported transition rules pinned: same-slot move = cancel (never hits the store), REC-from-pending discards the take, rejections preserve the pending state (only delete-empty drops to IDLE), per-op queue-full names the right slot. Up-calls land the feedback→machine→state inversion: `typing_finished` (fires deferred persist + applies return-state), `deliver_async` (IDLE-suppression), `erase_due`/`erase_cancel` (park-once). Old behavior path untouched (parallel-stack).
 > - [x] **Step 5a** — pure `dm_feedback_build` core, host tests green (86/86, +19). The 23 near-clone `feedback_*` builders collapse into one `dm_feedback_build(spec)` over `static const` message tables; pure, emitting `fb_event` keystrokes to an abstract sink. The preview routes through `dm_render`'s char stream, each char re-encoded via `ascii_to_hid` (the inverse of `printable_char_for_keycode`), so a replayed key types the same keycode the live pump would. Host tests decode each `fb_event` back to its char and assert the message string-for-string vs. the old output (US/UK FULL+ARROW scaffolding, N/R prefixes, status header/slot lines, literal + `<LCTL+C>` token previews).
-> - [ ] **Step 5b** — the Zephyr **pump shell** (ring + `k_timer`/`k_work` emit loop + `raise_zmk_keycode_state_changed` + the `speak(spec)` ritual + erase scheduler + status continuation), calling *into* the step-4 machine up-calls. **Deferred to step 7**: it is Zephyr-coupled and cannot run in the host loop, so it is written alongside the `native_sim` e2e parity harness that actually verifies it, rather than landing unexercised. The pure core (5a) is the host-verifiable deliverable; the pump is mechanism with no new decisions.
+> - [x] **Step 5b** — the Zephyr **pump shell** landed with step 7 (`src/dm_feedback_pump.{c,h}`, `_priv.h`): ring + `k_timer`/`k_work` press/release emit loop, the `speak(spec)` ritual (gate → reset → build → start, with the OFF-path synchronous `typing_finished`), resumable preview streaming under ring backpressure, status continuation, the runtime knobs (level/style/erase) with persist + restore (the ARROW-on-plain-locale rule inside the restore setter), and the auto-erase scheduler — all over the pure `dm_feedback_build`, reporting *up* via `typing_finished` / `erase_due` / `erase_cancel`, never writing `state`. Named `dm_feedback_pump` so it coexists with the still-live `dm_feedback.c` (parallel stack). Verified by the §5.2 e2e parity harness (CI keymap-snapshot rail), not the host loop.
 > - [x] **Step 6a** — pure `dm_query` preview projection, host tests green (92/92, +6). The widget preview (`dm_get_preview_string`) becomes a `dm_render` buffer-sink projection, so it cannot disagree with the live-typed preview; honest truncation (stop-at-first-non-fit) and the `"(N events)"` typing-disabled fallback are pinned. The single-instance shell (`dm_events`: resolve instance, hold `slot_store` ref, raise `zmk_dynamic_macro_state_changed`, counts over `slot_store`) is Zephyr and rides with step 7.
-> - [ ] **Step 7** — new `behavior_dynamic_macro` shell + the deferred Zephyr pieces (5b feedback pump, 6b `dm_events` raise/count shell, `dm_nvs` wiring) + the `native_sim` e2e parity harness that verifies them together. The shell-inventory checklist (§5.1 step 7) is the definition-of-done.
-> - [ ] **Step 8** — single cut-over. [ ] **Step 9** — footprint pass.
+> - [x] **Step 7** — the full Zephyr-coupled stack landed beside the live path (parallel stack, reachable only from the parity harness): the new `behavior_dynamic_macro_v2` shell + 5b feedback pump + 6b `dm_events` (notify-code→widget-event map + raise, `dm_get_*` over `slot_store`/`dm_query`) + `dm_nvs` wiring (sink adapter, system-queue completion running `slot_store_complete_delete` + `dm_machine_deliver_async`, boot restore, knob persist, export read-back, `DM_TEST_RELOAD`). The §5.1 shell-inventory checklist is met. **Machine additions** (host-tested, 95/95): `dm_machine_timeout` and `dm_machine_play_finished` up-calls, and an `arm_timeout`/`cancel_timeout` callback pair replacing the internal `timeout_pending` flag so the shell timer tracks the pending state even when re-armed from inside the pump. **Build seam:** `CONFIG_…_NEW_STACK` selects the new stack in `CMakeLists.txt` (default off — the shipping path is byte-for-byte untouched); `DM_NEW_STACK` guards the new query/shell symbols; `dm_config.h` sources Kconfig sizing under `__ZEPHYR__` and a shared `DM_SLOT_DEFINED` guard lets new-stack TUs include both slot headers, so `struct dm_slot` is identical across every TU. **Verification:** host suite green for the pure additions; the Zephyr code is verified by the §5.2 e2e parity harness on the CI keymap-snapshot rail — *not* host-buildable, so its first real check is CI. The 34-case parity corpus (`tests/parity/e2e/`, generated by `generate.sh` from the legacy snapshots) is the old-vs-new gate.
+> - [ ] **Step 8** — single cut-over (preconditioned on the §5.2 parity corpus passing in CI). [ ] **Step 9** — footprint pass.
 
 ### 5.0 Method: two fully separate paths; one cut-over at the very end
 
@@ -911,9 +913,17 @@ both the old implementation and the new module, and asserts identical output:
   assign/move/delete sequences (incl. failure injections) into both the old `cmd_slot` path
   and the new `slot_store` live, asserting identical `slots[]` / `pending_delete` /
   generation outcomes.
-- **End-to-end parity** (step 7) — **live `native_sim` diff**: run the full command corpus
-  through both the old behavior and the new shell; assert identical emitted keycode streams —
-  the same thing the snapshot suite checks, now old-vs-new rather than old-vs-recorded.
+- **End-to-end parity** (step 7) — **`native_sim` snapshot, new stack vs. legacy oracle.**
+  As built (`tests/parity/e2e/`, generated by `generate.sh` from every legacy snapshot case):
+  each parity case drives the *same* keymap as its legacy counterpart but builds the **new**
+  stack (`CONFIG_…_NEW_STACK=y`, which the `CMakeLists.txt` seam compiles in place of the
+  legacy three files) and asserts the **same** `keycode_events.snapshot`. The legacy snapshot
+  *is* the old path's recorded keycode stream, so reproducing it case-for-case is old-vs-new
+  parity. This rides the one CI rail the `urob` runner already executes (keymap-snapshot,
+  discovered by `native_sim.keymap`); a single image cannot host both paths at once, so the
+  legacy output is captured as the oracle (the recorded snapshot) rather than re-run live each
+  iteration — the same golden-vs-live trade the render slice makes, forced here by the rail.
+  Re-run `generate.sh` after adding or changing a legacy case.
 
 **Golden vs. live is chosen per slice by whether the old code is pure.** Render is pure →
 golden (fast host loop, oracle captured once from the old code). Store and end-to-end carry

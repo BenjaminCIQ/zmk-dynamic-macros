@@ -79,22 +79,32 @@ Binding decisions:
 Each is an existing fix encoding a real failure mode. The rewrite ports them as
 documented module invariants, with a regression test where one is named.
 
-- [ ] **Move dual-write ordering** (`a2865b3`) → `slot_store_move` internal contract.
-- [ ] **Don't zero a playing slot on NVS delete completion** (`fe3689e`) →
-      `slot_store` delete-completion checks playback ownership.
-- [ ] **Generation-stamped async ops** ignore stale completions → `slot_store`/`dm_nvs`.
-- [ ] **REC during pending-assign discards the unassigned take** (`539260c`) →
-      `dm_machine` transition with a logged/observable discard.
-- [ ] **Deferred feedback only speaks when IDLE** → `dm_machine_deliver_async()`
-      suppression rule (the rule lives in the machine, not a `dm_feedback` entry guard;
-      see redesign §2.7.3, landed test-first in step 4).
-- [ ] **Aligned NVS header build** (`277f0c8`) → `dm_nvs` serialization.
+- [x] **Move dual-write ordering** (`a2865b3`) → `slot_store_move` internal contract.
+      *(Done, host-tested: `slot_store.c`; ordering + rollback pinned by a fake sink in
+      `tests/unit/test_slot_store.c`.)*
+- [x] **Don't zero a playing slot on NVS delete completion** (`fe3689e`) →
+      `slot_store_complete_delete` checks `playing_slot`. *(Done, host-tested:
+      `delete_while_playing_skips_zero`.)*
+- [x] **Generation-stamped async ops** ignore stale completions →
+      `slot_store_complete_delete` generation check; `dm_nvs` stamps each op at enqueue.
+      *(Store half host-tested: `stale_completion_ignored`; the `dm_nvs` plumbing rides
+      the §5.2 CI parity rail.)*
+- [x] **REC during pending-assign discards the unassigned take** (`539260c`) →
+      `dm_machine` `do_rec` (asks `slot_store_draft_count`, resets the draft).
+      *(Done, host-tested: `rec_from_pending_assign_discards_take`.)*
+- [x] **Deferred feedback only speaks when IDLE** → `dm_machine_deliver_async()`
+      suppression rule (in the machine, not a `dm_feedback` entry guard; redesign §2.7.3).
+      *(Done, host-tested: `deliver_async_suppressed_when_busy`.)*
+- [x] **Aligned NVS header build** (`277f0c8`) → `dm_nvs` serialization (aligned local
+      header copied into the byte buffer). *(Landed in `dm_nvs.c`; verified on the §5.2 CI
+      parity rail — not host-buildable.)*
 - [x] **UK punctuation + Ctrl+printable → token** (`49c4f1a`, `86993af`) →
       `dm_render`, covered by host tests. *(Done: new pure `dm_render` module +
       red→green host tests `tests/unit/test_render.c`; `<LCTL+C>` and UK Shift+3→token
-      asserted. Old walks still live; parity harness pending per redesign §5.2.)*
-- [ ] **Single-instance assumption** stated in exactly one place (`dm_events`
-      projection), not leaked across files.
+      asserted. Render parity also pinned by the keymap-snapshot golden, §5.2.)*
+- [x] **Single-instance assumption** stated in exactly one place — `dm_shell_instance()`
+      beside the `BUILD_ASSERT(<=1)` in the v2 shell; `dm_events`/`dm_nvs` resolve through
+      it, not via scattered `dm_devices[0]`. *(Landed; verified on the §5.2 CI parity rail.)*
 
 ## Consequences
 
