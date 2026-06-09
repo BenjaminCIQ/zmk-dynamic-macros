@@ -1,0 +1,12 @@
+# Twister test case for the pure-core unit suite (redesign §4.1).
+# Built as native_sim under `west test`, alongside the snapshot suite.
+tests:
+  zmk.behavior.dynamic_macro.unit:
+    platform_allow:
+      - native_sim
+    integration_platforms:
+      - native_sim
+    tags:
+      - dynamic_macro
+      - unit
+    harness: test

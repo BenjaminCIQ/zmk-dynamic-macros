@@ -1,0 +1,9 @@
+# Standalone host-build artifacts (tests/unit/Makefile and the MSVC/cl loop).
+# The Ztest build runs out-of-tree under west/Twister, so nothing it produces
+# lands here.
+dm_unit_host
+dm_unit_host.exe
+*.obj
+*.o
+*.pdb
+*.ilk
