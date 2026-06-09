@@ -23,7 +23,7 @@ TEST_SRCS := $(wildcard test_*.c)
 
 # Pure-core module sources under test, compiled directly (Zephyr-free). Add each
 # module's .c here as steps 1/3/4 extract them (mirrors run-host.ps1).
-MODULE_SRCS := $(REPO)/src/dm_render.c
+MODULE_SRCS := $(REPO)/src/dm_render.c $(REPO)/src/slot_store.c
 
 SRCS      := host_runner.c $(TEST_SRCS) $(MODULE_SRCS)
 

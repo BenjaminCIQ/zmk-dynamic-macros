@@ -81,8 +81,18 @@ typedef enum {
     DM_DELETE_FAILED,      /* NVS delete failed (async only) */
     DM_REJECTED_OCCUPIED,  /* target slot not empty */
     DM_REJECTED_EMPTY,     /* source/target slot empty */
+    DM_REJECTED_FULL,      /* recording draft / chain would overflow MAX_EVENTS */
 } dm_result;
 ```
+
+> **`DM_REJECTED_FULL` was added at step 3** (not in the original draft). The
+> chain-no-room rejection (old `feedback_chain_no_room`) has a *distinct*
+> user-facing message from both slot-empty and storage-queue-full, so collapsing
+> it onto `DM_QUEUE_FULL` would force feedback (step 5) to disambiguate
+> buffer-full from msgq-full by out-of-band knowledge — the exact thing this enum
+> exists to prevent. One code per distinct outcome keeps the feedback dispatch
+> type-checked. `slot_store_draft_chain` returns it; `draft_empty` reuses
+> `DM_REJECTED_EMPTY` (the old code likewise reused the slot-empty message).
 
 **Deliberate flattening:** a synchronous return *could* type-hold an async-only value
 (`DM_SAVE_FAILED`); the type system doesn't forbid it. Accepted on purpose — one
@@ -98,6 +108,18 @@ ordering and rollback are **internal**; callers never see them.
 ```c
 typedef struct slot_store slot_store;
 
+/* The NVS sink — slot_store's only downward dependency for persistence, injected
+ * at init so the dual-write ordering is host-testable against a fake (§4). save/
+ * del are the ENQUEUE step (return DM_OK | DM_QUEUE_FULL); the async outcome of a
+ * delete comes back via slot_store_complete_delete(). RAM slots never reach it. */
+typedef struct {
+    dm_result (*save)(void *ctx, int slot, const struct dm_slot *s, uint32_t generation);
+    dm_result (*del)(void *ctx, int slot, uint32_t generation);
+    void *ctx;
+} dm_nvs_sink;
+
+void slot_store_init(slot_store *s, const dm_nvs_sink *sink);  /* sink NULL only if RAM-only */
+
 /* Queries */
 bool            slot_store_is_empty(const slot_store *s, int idx);
 const dm_slot  *slot_store_get(const slot_store *s, int idx);   /* NULL if empty */
@@ -106,6 +128,11 @@ int             slot_store_count(const slot_store *s, slot_class cls); /* NVS|RA
 /* Mutations — each handles its own persistence for NVS slots */
 dm_result slot_store_move(slot_store *s, int src, int dst);  /* ordering hidden */
 dm_result slot_store_delete(slot_store *s, int idx);
+
+/* Async delete completion (called by the nvs driver once settings_delete returns).
+ * Honors the playing-slot rule + generation staleness internally; returns the
+ * filtered outcome (DM_OK | DM_DELETE_FAILED). */
+dm_result slot_store_complete_delete(slot_store *s, int idx, uint32_t generation, bool ok);
 
 /* Draft buffer (the recording buffer) — a dm_slot-shaped staging area, owned here
  * because every operation on it is slot-to-slot byte work (see §2.7 / Risk 3). The
@@ -134,8 +161,18 @@ was a phantom second path. The only producer of an assignable macro is the draft
 - every async op is stamped with the slot's generation; a completion whose generation
   is stale is ignored.
 - `draft_append` returns `false` when the draft is at `MAX_EVENTS` (the recording-overflow
-  guard input); `draft_chain` rejects a chain that is empty or would not fit, as a
-  `dm_result`. The draft is plain RAM — no persistence — until `draft_commit`.
+  guard input); `draft_chain` rejects a chain that is empty (`DM_REJECTED_EMPTY`) or would
+  not fit (`DM_REJECTED_FULL`), as a `dm_result`. The draft is plain RAM — no persistence —
+  until `draft_commit`.
+
+**The `dm_nvs_sink` is a test seam, not a second instancing of storage.** ADR-0002 keeps
+`dm_nvs` file-scoped/single-instance with no instance handle; the sink vtable does not
+re-instance it. It exists so `slot_store` (pure) can be host-tested against a fake that
+injects `DM_QUEUE_FULL` and drives `complete_delete` synchronously — the only way to pin
+the dual-write ordering with a C compiler (§4). The firmware wires a one-line adapter whose
+`save`/`del` call straight into the file-scoped `dm_nvs` enqueue; there is exactly one sink
+in the real build. The seam is real (a fake adapts it in tests), so by the LANGUAGE rule it
+earns the vtable — unlike the cadence (§2.5), which nothing adapts.
 
 ### 2.2 `dm_machine` — the only state writer
 
@@ -522,7 +559,8 @@ recording (already in place).
 > - [x] **Step 0** — dual-mode harness. Host rail green locally (`tests/unit/run-host.ps1`, MSVC) and in CI via plain `gcc` (`.github/workflows/host-tests.yml`). (A Twister rail was tried and abandoned — the `urob` Nix shell has no pip for Twister's deps, and ZMK upstream itself uses no Ztest; host-gcc is the rail.)
 > - [x] **Step 1** — `dm_render` pure module, test-first, host tests green (8/8 incl. parity). Render parity **proven against the live old walk**: the keymap-snapshot test captured `[DM SAVED R0: '<LCTL+C>#']`; `dm_render` reproduces `<LCTL+C>` (Ctrl+C) and `#` (US Shift+3) exactly. Old walks remain untouched (parallel-stack, §5.0). CI: gcc host job + keymap-snapshot job both green.
 > - [x] **Step 2** — locale data tables inside `dm_render`. The per-locale `#if`/`switch` ladders in `printable_char_for_keycode` are now `static const dm_keymap` tables (one per locale, keyed by keycode via a small linear scan; letters stay algorithmic). US/UK behavior unchanged (parity test still green); **plain locales (DE/FR) deliberately tightened** to letters/digits/space only (the old code fell through to the US punctuation branch, but the encoder never emits punctuation on a plain locale, so this is unobservable through real recording — confirmed and chosen 2026-06-09). New behavior pinned by `de_plain_digit` / `de_plain_shifted_punctuation_is_token`. Host tests 10/10. **Footprint checkpoint:** the ARM/gcc toolchain is not on the dev box, so the quantitative `dm_render` flash number is deferred to CI / the step-9 pass; qualitatively the change is flash-neutral-to-negative by construction — small rodata tables (US ≈ 66 B, UK ≈ 69 B, plain ≈ 33 B, shared digit rows folded via macro) replace branch-heavy `switch`/`#if` instruction sequences and per-locale jump tables.
-> - [ ] Steps 3–7 — parallel stack (`slot_store`, `dm_machine`, new `dm_feedback`, `dm_events`, new shell).
+> - [x] **Step 3** — `slot_store` pure module, test-first, host tests green (25/25, +15 store). Dual-write ordering + rollback are internal and pinned by a fake `dm_nvs_sink`: move with dst-persist-enqueue-fail rolls dst back (src intact); dst-ok/src-delete-fail keeps dst safe and surfaces the error; the happy path's `S{dst}D{src}` ordering is asserted via a sink trace. Delete-while-playing skips the RAM zero on completion (`fe3689e`); a stale-generation completion is a no-op; the draft surface (append-to-`MAX_EVENTS`, chain empty/no-room, commit→slot) is covered. New shared headers: `dm_result.h`, `dm_config.h` (host-overridable sizing), `slot_store.h` + white-box `slot_store_priv.h`. Old `cmd_slot`/storage path untouched (parallel-stack). **`dm_result` gained `DM_REJECTED_FULL`** for the chain/draft-overflow rejection — see §2.0.
+> - [ ] Steps 4–7 — parallel stack (`dm_machine`, new `dm_feedback`, `dm_events`, new shell).
 > - [ ] **Step 8** — single cut-over. [ ] **Step 9** — footprint pass.
 
 ### 5.0 Method: two fully separate paths; one cut-over at the very end

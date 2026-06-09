@@ -1,0 +1,237 @@
+/*
+ * Copyright (c) 2026 Benjamin H
+ *
+ * SPDX-License-Identifier: MIT
+ *
+ * slot_store — deep storage module (redesign §2.1, rewrite step 3).
+ *
+ * Owns slots[], pending_delete, slot_generation, and the recording draft. The
+ * RAM+NVS dual-write ordering and rollback live HERE and surface only as a
+ * dm_result; no caller sees "dst-before-src" (§2.7.1). Ported verbatim from the
+ * old cmd_slot MOVE_PENDING / DELETE_PENDING / PENDING_ASSIGN bodies and the
+ * dm_storage delete-completion handler, now pure and host-tested.
+ *
+ * PURE: no Zephyr, no I/O. Persistence is reached through the injected
+ * dm_nvs_sink; the generation-stamp staleness check is plain arithmetic.
+ */
+
+#include <string.h>
+
+#include <zmk-behavior-dynamic-macros/slot_store.h>
+#include "slot_store_priv.h"
+
+static bool slot_is_nvs(int idx) {
+    return idx >= 0 && idx < NVS_SLOTS;
+}
+
+static bool idx_valid(int idx) {
+    return idx >= 0 && idx < MAX_SLOTS;
+}
+
+/* Raw RAM-occupancy: a slot is empty if it has no events OR is pending delete
+ * (the NVS copy is on its way out and the RAM copy is stale). Mirrors the old
+ * slot_is_empty() in dm_internal.h. */
+static bool slot_empty(const slot_store *s, int idx) {
+    return s->slots[idx].event_count == 0 || s->pending_delete[idx];
+}
+
+static void zero_slot(slot_store *s, int idx) {
+    memset(&s->slots[idx], 0, sizeof(struct dm_slot));
+}
+
+void slot_store_init(slot_store *s, const dm_nvs_sink *sink) {
+    memset(s, 0, sizeof(*s));
+    s->playing_slot = -1;
+    s->sink = sink;
+}
+
+/* ---- queries -------------------------------------------------------------- */
+
+bool slot_store_is_empty(const slot_store *s, int idx) {
+    if (!idx_valid(idx)) {
+        return true;
+    }
+    return slot_empty(s, idx);
+}
+
+const struct dm_slot *slot_store_get(const slot_store *s, int idx) {
+    if (!idx_valid(idx) || slot_empty(s, idx)) {
+        return NULL;
+    }
+    return &s->slots[idx];
+}
+
+int slot_store_count(const slot_store *s, slot_class cls) {
+    int lo = (cls == DM_SLOT_CLASS_RAM) ? NVS_SLOTS : 0;
+    int hi = (cls == DM_SLOT_CLASS_NVS) ? NVS_SLOTS : MAX_SLOTS;
+    int n = 0;
+    for (int i = lo; i < hi; i++) {
+        if (!slot_empty(s, i)) {
+            n++;
+        }
+    }
+    return n;
+}
+
+/* ---- persistence helpers (NVS slots only) --------------------------------- */
+
+static dm_result nvs_save(slot_store *s, int idx) {
+    if (!slot_is_nvs(idx) || s->sink == NULL) {
+        return DM_OK; /* RAM slot: nothing to persist */
+    }
+    return s->sink->save(s->sink->ctx, idx, &s->slots[idx], s->slot_generation[idx]);
+}
+
+static dm_result nvs_delete(slot_store *s, int idx) {
+    if (!slot_is_nvs(idx) || s->sink == NULL) {
+        return DM_OK;
+    }
+    return s->sink->del(s->sink->ctx, idx, s->slot_generation[idx]);
+}
+
+/* ---- move (ports a2865b3) -------------------------------------------------- */
+
+dm_result slot_store_move(slot_store *s, int src, int dst) {
+    if (!idx_valid(src) || !idx_valid(dst)) {
+        return DM_REJECTED_EMPTY;
+    }
+    if (slot_empty(s, src)) {
+        return DM_REJECTED_EMPTY;
+    }
+    if (!slot_empty(s, dst)) {
+        return DM_REJECTED_OCCUPIED;
+    }
+
+    /*
+     * Two independent NVS ops (write dst, delete src) with no atomicity. Order
+     * them so the only reachable failure is a benign transient duplicate, never
+     * data loss:
+     *   1. Commit dst in RAM and persist it. If the save can't even be enqueued,
+     *      roll dst back and leave src fully intact -- nothing lost.
+     *   2. Only once dst's save is queued, zero src in RAM and delete it from
+     *      storage. If THAT delete can't be enqueued, dst is already safe; src
+     *      may resurrect on reboot, so surface the failure.
+     */
+    s->pending_delete[dst] = false;
+    s->slot_generation[dst]++;
+    memcpy(&s->slots[dst], &s->slots[src], sizeof(struct dm_slot));
+
+    if (nvs_save(s, dst) != DM_OK) {
+        /* roll back dst; src untouched */
+        s->slot_generation[dst]++;
+        zero_slot(s, dst);
+        return DM_QUEUE_FULL;
+    }
+
+    s->pending_delete[src] = false;
+    s->slot_generation[src]++;
+    zero_slot(s, src);
+
+    if (nvs_delete(s, src) != DM_OK) {
+        /* dst is safe; src's NVS copy lingers and may reappear on reboot */
+        return DM_QUEUE_FULL;
+    }
+
+    return DM_OK;
+}
+
+/* ---- delete --------------------------------------------------------------- */
+
+dm_result slot_store_delete(slot_store *s, int idx) {
+    if (!idx_valid(idx) || slot_empty(s, idx)) {
+        return DM_REJECTED_EMPTY;
+    }
+
+    if (slot_is_nvs(idx) && s->sink != NULL) {
+        s->pending_delete[idx] = true;
+        dm_result rc = nvs_delete(s, idx);
+        if (rc != DM_OK) {
+            s->pending_delete[idx] = false;
+            return rc;
+        }
+        return DM_OK; /* RAM zero happens on slot_store_complete_delete */
+    }
+
+    /* RAM slot: zero immediately. */
+    s->slots[idx].event_count = 0;
+    return DM_OK;
+}
+
+dm_result slot_store_complete_delete(slot_store *s, int idx, uint32_t generation, bool ok) {
+    if (!idx_valid(idx)) {
+        return DM_OK;
+    }
+    /* Ignore a completion the slot has moved past (reassigned/redeleted). */
+    if (!s->pending_delete[idx] || s->slot_generation[idx] != generation) {
+        return DM_OK;
+    }
+
+    if (!ok) {
+        s->pending_delete[idx] = false;
+        return DM_DELETE_FAILED;
+    }
+
+    /* Don't zero a slot that is currently being played back (ports fe3689e):
+     * the NVS copy is already gone, the RAM copy lingers harmlessly until the
+     * next op overwrites it. */
+    if (s->playing_slot != idx) {
+        zero_slot(s, idx);
+    }
+    s->pending_delete[idx] = false;
+    return DM_OK;
+}
+
+/* ---- draft buffer (§2.7.4) ------------------------------------------------ */
+
+void slot_store_draft_reset(slot_store *s) {
+    s->draft.event_count = 0;
+}
+
+bool slot_store_draft_append(slot_store *s, const struct dm_event *e) {
+    if (s->draft.event_count >= MAX_EVENTS) {
+        return false;
+    }
+    s->draft.events[s->draft.event_count++] = *e;
+    return true;
+}
+
+uint32_t slot_store_draft_count(const slot_store *s) {
+    return s->draft.event_count;
+}
+
+dm_result slot_store_draft_chain(slot_store *s, int src) {
+    if (!idx_valid(src) || slot_empty(s, src)) {
+        return DM_REJECTED_EMPTY;
+    }
+    uint32_t remaining = MAX_EVENTS - s->draft.event_count;
+    if (s->slots[src].event_count > remaining) {
+        return DM_REJECTED_FULL;
+    }
+    memcpy(&s->draft.events[s->draft.event_count], s->slots[src].events,
+           s->slots[src].event_count * sizeof(struct dm_event));
+    s->draft.event_count += s->slots[src].event_count;
+    return DM_OK;
+}
+
+dm_result slot_store_draft_commit(slot_store *s, int dst) {
+    if (!idx_valid(dst)) {
+        return DM_REJECTED_OCCUPIED;
+    }
+    if (!slot_empty(s, dst)) {
+        return DM_REJECTED_OCCUPIED;
+    }
+    s->pending_delete[dst] = false;
+    s->slot_generation[dst]++;
+    memcpy(&s->slots[dst], &s->draft, sizeof(struct dm_slot));
+    return nvs_save(s, dst);
+}
+
+/* ---- playback ownership --------------------------------------------------- */
+
+void slot_store_mark_playing(slot_store *s, int idx) {
+    s->playing_slot = idx;
+}
+
+void slot_store_clear_playing(slot_store *s) {
+    s->playing_slot = -1;
+}
