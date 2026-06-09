@@ -7,3 +7,7 @@ dm_unit_host.exe
 *.o
 *.pdb
 *.ilk
+
+# Machine-local MSVC convenience runner (not a portable test rail; the Makefile
+# and `west test` in CI are). Discovers VsDevCmd via vswhere, but stays local.
+run-host.ps1

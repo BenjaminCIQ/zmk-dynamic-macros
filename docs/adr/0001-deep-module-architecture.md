@@ -89,8 +89,10 @@ documented module invariants, with a regression test where one is named.
       suppression rule (the rule lives in the machine, not a `dm_feedback` entry guard;
       see redesign §2.7.3, landed test-first in step 4).
 - [ ] **Aligned NVS header build** (`277f0c8`) → `dm_nvs` serialization.
-- [ ] **UK punctuation + Ctrl+printable → token** (`49c4f1a`, `86993af`) →
-      `dm_render`, covered by host tests.
+- [x] **UK punctuation + Ctrl+printable → token** (`49c4f1a`, `86993af`) →
+      `dm_render`, covered by host tests. *(Done: new pure `dm_render` module +
+      red→green host tests `tests/unit/test_render.c`; `<LCTL+C>` and UK Shift+3→token
+      asserted. Old walks still live; parity harness pending per redesign §5.2.)*
 - [ ] **Single-instance assumption** stated in exactly one place (`dm_events`
       projection), not leaked across files.
 
