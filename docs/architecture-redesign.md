@@ -480,20 +480,21 @@ specs. This split is deliberate; see [ADR-0001](adr/0001-deep-module-architectur
 The repo today has **only** native_sim snapshot tests (`tests/core/*` etc.), discovered
 and run by ZMK's `run-test.sh` via `urob/zmk-actions` — that runner finds test cases
 **solely by `native_sim.keymap`** and diffs emitted keycode snapshots; it does **not** run
-Ztest/Twister. There is no host unit-test target. We add one, running the *same* assertions
-two ways:
+Ztest/Twister (and the `urob` Nix shell lacks Twister's Python deps, with no pip to add
+them — so a Twister rail was tried and abandoned). Even ZMK upstream has *no* Ztest suites;
+its behavior tests are all keymap-snapshot. So we do not fight the ecosystem:
 
-- **Ztest under Twister** — `zassert_*` assertions in a `tests/unit/` Ztest suite, run by a
-  **dedicated `west twister` CI job** (`.github/workflows/unit-tests.yml`), separate from the
-  keymap-snapshot job. (The snapshot runner cannot discover these — hence its own workflow.)
-- **Standalone host compile** — the same Zephyr-free `.c` modules + test files compiled
-  directly (`cc`/`cl` via `tests/unit/Makefile` or `run-host.ps1`), giving a **sub-second
-  local red-green loop**. A thin `ztest_shim.h` maps `zassert_equal` etc. to plain
-  `assert()` when compiled off-Zephyr.
-
-The standalone compile is also a *decoupling proof*: if a pure module fails to compile
-without Zephyr, the decoupling has regressed — the harness catches it. The two rails are
-deliberate: the host loop is the fast local proof, the Twister job is the durable CI proof.
+- **Pure-core tests run as a standalone host binary, in CI via plain `gcc`** — the Zephyr-free
+  `.c` modules + test files compiled directly (`tests/unit/Makefile`; `run-host.ps1` is the
+  MSVC equivalent), giving a **sub-second loop locally** and a trivial Ubuntu CI job
+  (`.github/workflows/host-tests.yml`: `apt gcc` + `make`). This is the *truest* expression
+  of ADR-0001's host-testable goal — the pure core tests with nothing but a C compiler. A
+  thin `ztest_shim.h` maps `zassert_*` to `assert()`/`printf` off-Zephyr; the same source
+  also compiles as Ztest should a Zephyr rail ever be wanted.
+- **The standalone compile doubles as a decoupling proof**: if a pure module fails to compile
+  without Zephyr, the decoupling has regressed — the host build breaks immediately.
+- **Anything that needs the live old code** (the render parity golden capture) uses the
+  **keymap-snapshot** mechanism the `urob` job already runs reliably — see §5.2.
 
 ### 4.2 First failing tests (written before their modules exist)
 
@@ -518,8 +519,8 @@ recording (already in place).
 ## 5. Sequencing — keep the build green at every step
 
 > **Progress** (updated as steps land):
-> - [x] **Step 0** — dual-mode harness. Host rail green (`tests/unit/run-host.ps1`, local MSVC). **CI Ztest rail:** the existing `urob/zmk-actions` job discovers tests *only* by `native_sim.keymap` (ZMK `run-test.sh`) and never ran the Ztest suites — a dedicated **Twister workflow** (`.github/workflows/unit-tests.yml`) is being added to run `tests/unit` + `tests/parity` for real.
-> - [~] **Step 1** — `dm_render` pure module built test-first, host tests green (7/7). Render parity harness (§5.2) built; **remaining:** golden captured from the old walk via the Twister job, then the host parity test asserts against it.
+> - [x] **Step 0** — dual-mode harness. Host rail green locally (`tests/unit/run-host.ps1`, MSVC) and in CI via plain `gcc` (`.github/workflows/host-tests.yml`). (A Twister rail was tried and abandoned — the `urob` Nix shell has no pip for Twister's deps, and ZMK upstream itself uses no Ztest; host-gcc is the rail.)
+> - [~] **Step 1** — `dm_render` pure module built test-first, host tests green (7/7). Render parity harness (§5.2) built; **remaining:** capture the old-walk golden via a keymap-snapshot test (`tests/parity/render/`), decode it into `golden_us.h`, then the host parity test asserts `dm_render` == old output.
 > - [ ] Steps 2–7 — parallel stack (locale tables, `slot_store`, `dm_machine`, new `dm_feedback`, `dm_events`, new shell).
 > - [ ] **Step 8** — single cut-over. [ ] **Step 9** — footprint pass.
 
@@ -655,12 +656,16 @@ both the old implementation and the new module, and asserts identical output:
   (`dm_get_preview_string`) is a *pure deterministic function* of (slot, locale): no async,
   no state, no timing. The old walk lives in Zephyr-coupled code and cannot link into the
   pure host loop, so instead of running it live each iteration we capture its output **once**
-  per corpus case as a golden table, and the fast host test asserts `dm_render` matches the
-  golden. Faithfulness to the live old code is preserved by a one-shot `native_sim` **capture
-  test** that runs `dm_get_preview_string` over the *same shared corpus* and emits the golden
-  strings — so the golden is recorded *from the old code*, not hand-written, and re-captured
-  if the corpus changes. The corpus (`dm_event[]` cases) lives in a pure shared header so the
-  host test and the capture test consume identical inputs.
+  as a golden table, and the fast host (`gcc`) test asserts `dm_render` matches the golden.
+  Faithfulness to the live old code is preserved by a **keymap-snapshot capture test**
+  (`tests/parity/render/native_sim.keymap`) — it records token-producing keys (Ctrl+C,
+  Shift+3, …), saves at VERBOSE + US locale so the **old walk types the preview**, and the
+  emitted-keycode snapshot is the live old output. That snapshot is decoded **once** into
+  `golden_us.h`; the decode is cross-checked against the independent first-principles
+  assertions in `test_render.c`, so the golden is anchored to the old code, not to the new
+  renderer. (The keymap-snapshot rail is the one the `urob` CI already runs reliably; a
+  bespoke per-corpus keymap was judged not worth the fiddly mock-keypress + decode work for
+  the token cases the existing feedback snapshots and a single targeted keymap already cover.)
 - **Store parity** (step 3+) — **live `native_sim` diff**, because the old slot handling is
   *not* a pure function: it involves `pending_delete`, generation stamping, async NVS
   completion, and ordering. A static golden could not capture that, so this slice drives

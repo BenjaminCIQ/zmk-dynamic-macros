@@ -1,0 +1,36 @@
+name: Host tests (pure core)
+
+# Runs the pure-core unit + render-parity tests as a standalone host binary with
+# plain gcc — NO Zephyr, NO Twister, NO container. This is the durable CI proof
+# of ADR-0001's host-testable goal: the pure core (dm_render, slot_store,
+# dm_machine) tests with nothing but a C compiler, in seconds. The keymap
+# snapshot job (test-main.yml) remains the rail for behavior/e2e + golden capture.
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "include/**"
+      - "src/**"
+      - "tests/unit/**"
+      - "tests/parity/**"
+      - ".github/workflows/host-tests.yml"
+  pull_request:
+    paths:
+      - "include/**"
+      - "src/**"
+      - "tests/unit/**"
+      - "tests/parity/**"
+      - ".github/workflows/host-tests.yml"
+
+jobs:
+  host-tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Build and run the host unit suite
+        working-directory: tests/unit
+        run: make

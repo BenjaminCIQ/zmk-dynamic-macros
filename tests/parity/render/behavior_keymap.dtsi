@@ -1,0 +1,38 @@
+/*
+ * Keymap for the render-parity golden capture (redesign §5.2, Option A).
+ *
+ * Records token-producing keys (Ctrl+C, Shift+3) into a slot and saves it at
+ * VERBOSE feedback + US locale, so the OLD walk types the preview as keystrokes.
+ * The captured keycode_events.snapshot is the live old-walk output; decode it
+ * once into tests/parity/render/golden_us.h and assert dm_render matches.
+ *
+ * Positions (row,col):
+ *   (0,0) REC   (0,1) STP
+ *   (1,0) SLOT_RAM 0
+ *   (2,0) Ctrl+C   (2,1) Shift+3
+ */
+
+#include <dt-bindings/zmk/keys.h>
+#include <behaviors.dtsi>
+#include <dt-bindings/zmk/kscan_mock.h>
+#include <behaviors/dynamic_macro.dtsi>
+#include <dt-bindings/zmk/dynamic_macros.h>
+
+&kscan {
+    rows = <3>;
+    columns = <2>;
+    exit-after;
+};
+
+/ {
+    keymap {
+        compatible = "zmk,keymap";
+        default_layer {
+            bindings = <
+                &dm DM_REC 0        &dm DM_STP 0
+                &dm DM_SLOT_RAM 0   &none
+                &kp LC(C)           &kp LS(N3)
+            >;
+        };
+    };
+};

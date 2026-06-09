@@ -1,9 +1,9 @@
 # Standalone host build for the pure-core unit tests (redesign §4.1).
 #
-# Sub-second local red-green loop with plain cc and NO Zephyr. The SAME test
-# .c files are also compiled as Ztest under `west test` (see testcase.yaml);
-# this target is the fast loop and doubles as a decoupling proof — if a pure
-# module stops compiling without Zephyr, `make` breaks here.
+# Plain `cc`, NO Zephyr — this IS the CI rail for the pure core (a gcc job runs
+# `make` here; see .github/workflows/host-tests.yml) as well as the sub-second
+# local loop. It doubles as a decoupling proof: if a pure module stops compiling
+# without Zephyr, `make` breaks here. (run-host.ps1 is the equivalent MSVC loop.)
 #
 # Usage (from tests/unit/):
 #   make          # build + run
@@ -18,10 +18,14 @@ CFLAGS  := -std=c11 -Wall -Wextra -Werror -g -O0 \
            -I$(REPO)/tests/parity -I$(REPO)/tests/parity/render
 
 # Every test_*.c is a unit-test translation unit. host_runner.c provides main()
-# and the registry storage. As pure-core modules are extracted (steps 1/3/4),
-# add their Zephyr-free .c here alongside the test that drives them.
+# and the registry storage.
 TEST_SRCS := $(wildcard test_*.c)
-SRCS      := host_runner.c $(TEST_SRCS)
+
+# Pure-core module sources under test, compiled directly (Zephyr-free). Add each
+# module's .c here as steps 1/3/4 extract them (mirrors run-host.ps1).
+MODULE_SRCS := $(REPO)/src/dm_render.c
+
+SRCS      := host_runner.c $(TEST_SRCS) $(MODULE_SRCS)
 
 BIN := dm_unit_host
 
