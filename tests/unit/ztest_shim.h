@@ -61,6 +61,7 @@ struct dm_host_test {
 extern struct dm_host_test dm_host_tests[DM_MAX_HOST_TESTS];
 extern int dm_host_test_count;
 extern int dm_host_failures;
+extern int dm_host_skipped; /* set by ztest_test_skip() for the current test */
 
 static inline void dm_host_register(const char *suite, const char *name, dm_host_test_fn fn) {
     if (dm_host_test_count < DM_MAX_HOST_TESTS) {
@@ -97,6 +98,14 @@ static inline void dm_host_register(const char *suite, const char *name, dm_host
 
 /* ZTEST_SUITE in real Ztest declares a suite; on host it is a harmless no-op. */
 #define ZTEST_SUITE(name, ...) struct dm_host_unused_##name
+
+/* Skip the current test (e.g. a golden not yet captured). On host this prints a
+ * note and returns from the test body without counting a failure. */
+#define ztest_test_skip()                                                                          \
+    do {                                                                                           \
+        dm_host_skipped = 1;                                                                        \
+        return;                                                                                    \
+    } while (0)
 
 /* ---- Assertion surface (minimal; grow as tests need it) ----------------- */
 

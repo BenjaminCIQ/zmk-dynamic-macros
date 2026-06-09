@@ -1,0 +1,15 @@
+# Twister case for the render-parity capture test (redesign §5.2).
+# Runs as native_sim; its product is the golden strings printed to the log,
+# captured from the live old dm_get_preview_string.
+tests:
+  zmk.behavior.dynamic_macro.parity.render_capture:
+    platform_allow:
+      - native_sim
+    integration_platforms:
+      - native_sim
+    tags:
+      - dynamic_macro
+      - parity
+    harness: test
+    extra_args:
+      - DTC_OVERLAY_FILE=app.overlay

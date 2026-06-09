@@ -18,25 +18,33 @@
 struct dm_host_test dm_host_tests[DM_MAX_HOST_TESTS];
 int dm_host_test_count = 0;
 int dm_host_failures = 0;
+int dm_host_skipped = 0;
 
 int main(void) {
     int failed_tests = 0;
+    int skipped_tests = 0;
 
     printf("dm unit tests (host build) — %d test(s)\n", dm_host_test_count);
 
     for (int i = 0; i < dm_host_test_count; i++) {
         int before = dm_host_failures;
+        dm_host_skipped = 0;
         dm_host_tests[i].fn();
-        bool ok = (dm_host_failures == before);
-        printf("  [%s] %s.%s\n", ok ? "PASS" : "FAIL", dm_host_tests[i].suite,
-               dm_host_tests[i].name);
-        if (!ok) {
+        const char *verdict;
+        if (dm_host_skipped) {
+            verdict = "SKIP";
+            skipped_tests++;
+        } else if (dm_host_failures != before) {
+            verdict = "FAIL";
             failed_tests++;
+        } else {
+            verdict = "PASS";
         }
+        printf("  [%s] %s.%s\n", verdict, dm_host_tests[i].suite, dm_host_tests[i].name);
     }
 
-    printf("%s — %d passed, %d failed\n", failed_tests == 0 ? "OK" : "FAILED",
-           dm_host_test_count - failed_tests, failed_tests);
+    printf("%s — %d passed, %d failed, %d skipped\n", failed_tests == 0 ? "OK" : "FAILED",
+           dm_host_test_count - failed_tests - skipped_tests, failed_tests, skipped_tests);
 
     return failed_tests == 0 ? 0 : 1;
 }

@@ -1,0 +1,10 @@
+/*
+ * DT scaffold for the render-parity capture Ztest: a single dynamic-macro
+ * instance + mock kscan, so dm_devices[0] exists and the EVENTS query API is
+ * resolvable. Reuses the same shape as the snapshot suite's behavior_keymap.dtsi
+ * (the capture test does not press keys; it calls dm_get_preview_string directly
+ * after poking slot 0, so the keymap bindings are present only to instantiate
+ * the behavior).
+ */
+
+#include "../../core/behavior_keymap.dtsi"

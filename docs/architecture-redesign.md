@@ -647,19 +647,32 @@ Because the new stack is test-only until step 8, its correctness is established 
 parity harness drives the *same* input (a command/keycode sequence, or a slot's events) into
 both the old implementation and the new module, and asserts identical output:
 
-- **Render parity** (step 1+): feed a corpus of slots through both the old
-  `dm_get_preview_string` / `render_slot_contents_stream` walks and the new `dm_render`;
-  assert byte-identical preview strings across every locale and style.
-- **Store parity** (step 3+): drive assign/move/delete sequences (incl. the failure
-  injections) into both the old `cmd_slot` slot handling and the new `slot_store`; assert
-  identical `slots[]`, `pending_delete`, and generation outcomes.
-- **End-to-end parity** (step 7): run the full `native_sim` command corpus through both the
-  old behavior and the new shell; assert identical emitted keycode streams — the same thing
-  the snapshot suite checks, now old-vs-new rather than old-vs-recorded.
+- **Render parity** (step 1+) — **golden-string**, because the old buffer walk
+  (`dm_get_preview_string`) is a *pure deterministic function* of (slot, locale): no async,
+  no state, no timing. The old walk lives in Zephyr-coupled code and cannot link into the
+  pure host loop, so instead of running it live each iteration we capture its output **once**
+  per corpus case as a golden table, and the fast host test asserts `dm_render` matches the
+  golden. Faithfulness to the live old code is preserved by a one-shot `native_sim` **capture
+  test** that runs `dm_get_preview_string` over the *same shared corpus* and emits the golden
+  strings — so the golden is recorded *from the old code*, not hand-written, and re-captured
+  if the corpus changes. The corpus (`dm_event[]` cases) lives in a pure shared header so the
+  host test and the capture test consume identical inputs.
+- **Store parity** (step 3+) — **live `native_sim` diff**, because the old slot handling is
+  *not* a pure function: it involves `pending_delete`, generation stamping, async NVS
+  completion, and ordering. A static golden could not capture that, so this slice drives
+  assign/move/delete sequences (incl. failure injections) into both the old `cmd_slot` path
+  and the new `slot_store` live, asserting identical `slots[]` / `pending_delete` /
+  generation outcomes.
+- **End-to-end parity** (step 7) — **live `native_sim` diff**: run the full command corpus
+  through both the old behavior and the new shell; assert identical emitted keycode streams —
+  the same thing the snapshot suite checks, now old-vs-new rather than old-vs-recorded.
 
-The harness lives in `tests/` (host where the module is pure, `native_sim` for the
-end-to-end pass) and is what "at parity" means in the step list. It exists only during the
-rewrite; step 8 removes the old side, after which the snapshot suite alone is the net.
+**Golden vs. live is chosen per slice by whether the old code is pure.** Render is pure →
+golden (fast host loop, oracle captured once from the old code). Store and end-to-end carry
+state/async/timing → live diff. The harness lives in `tests/` (host for the render golden,
+`native_sim` for the capture test and the store/e2e live diffs) and is what "at parity" means
+in the step list. It exists only during the rewrite; step 8 removes the old side, after which
+the snapshot suite alone is the net.
 
 ---
 

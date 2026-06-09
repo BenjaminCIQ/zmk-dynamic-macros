@@ -14,7 +14,8 @@ CC      ?= cc
 REPO    := ../..
 CFLAGS  := -std=c11 -Wall -Wextra -Werror -g -O0 \
            -DZTEST_SHIM_HOST \
-           -I. -I$(REPO)/include
+           -I. -I$(REPO)/include \
+           -I$(REPO)/tests/parity -I$(REPO)/tests/parity/render
 
 # Every test_*.c is a unit-test translation unit. host_runner.c provides main()
 # and the registry storage. As pure-core modules are extracted (steps 1/3/4),
