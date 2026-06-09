@@ -91,6 +91,21 @@ static void notify(dm_machine *m, int event, int slot) {
     }
 }
 
+/* (Re)start / cancel the shell-owned assign/move/delete/preview timeout. The
+ * machine drives these wherever it enters or resolves a *_PENDING state, so the
+ * timer tracks the pending state regardless of which call path arrives. */
+static void arm_timeout(dm_machine *m) {
+    if (m->cb->arm_timeout) {
+        m->cb->arm_timeout(m->cb->ctx);
+    }
+}
+
+static void cancel_timeout(dm_machine *m) {
+    if (m->cb->cancel_timeout) {
+        m->cb->cancel_timeout(m->cb->ctx);
+    }
+}
+
 static bool slot_empty(dm_machine *m, int idx) {
     return m->cb->store_is_empty(m->cb->ctx, idx);
 }
@@ -137,14 +152,14 @@ static dm_result do_overflow(dm_machine *m) {
 
 static dm_result do_delete_mode(dm_machine *m) {
     m->state = DM_STATE_DELETE_PENDING;
-    m->timeout_pending = true;
+    arm_timeout(m);
     return DM_OK;
 }
 
 static dm_result do_move_mode(dm_machine *m) {
     m->move_source_slot = -1;
     m->state = DM_STATE_MOVE_PENDING;
-    m->timeout_pending = true;
+    arm_timeout(m);
     m->cb->speak_move_prompt(m->cb->ctx);
     return DM_OK;
 }
@@ -158,7 +173,7 @@ static dm_result do_status(dm_machine *m) {
 
 static dm_result do_preview(dm_machine *m) {
     m->state = DM_STATE_PREVIEW_PENDING;
-    m->timeout_pending = true;
+    arm_timeout(m);
     return DM_OK;
 }
 
@@ -195,18 +210,18 @@ static dm_result slot_recording(dm_machine *m, int idx) {
 /* SLOT in PENDING_ASSIGN = commit the draft into idx (RAM-only); persist is
  * deferred to typing_finished. */
 static dm_result slot_assign(dm_machine *m, int idx) {
-    m->timeout_pending = false;
+    cancel_timeout(m);
     if (!slot_empty(m, idx)) {
         /* preserved pending state: press another slot, or let the timeout fire */
         m->state = DM_STATE_PENDING_ASSIGN;
-        m->timeout_pending = true;
+        arm_timeout(m);
         m->cb->speak_slot_full(m->cb->ctx, idx);
         return DM_REJECTED_OCCUPIED;
     }
     dm_result rc = m->cb->store_draft_commit(m->cb->ctx, idx);
     if (rc != DM_OK) {
         m->state = DM_STATE_PENDING_ASSIGN;
-        m->timeout_pending = true;
+        arm_timeout(m);
         m->cb->speak_slot_full(m->cb->ctx, idx);
         return rc;
     }
@@ -220,7 +235,7 @@ static dm_result slot_assign(dm_machine *m, int idx) {
 
 /* SLOT in DELETE_PENDING = delete idx (or reject empty, dropping to IDLE). */
 static dm_result slot_delete(dm_machine *m, int idx) {
-    m->timeout_pending = false;
+    cancel_timeout(m);
     if (slot_empty(m, idx)) {
         m->state = DM_STATE_IDLE;
         notify(m, DM_EVT_ERROR_SLOT_EMPTY, idx);
@@ -251,13 +266,17 @@ static dm_result slot_delete(dm_machine *m, int idx) {
 static dm_result slot_move(dm_machine *m, int idx) {
     if (m->move_source_slot < 0) {
         if (slot_empty(m, idx)) {
+            /* stays MOVE_PENDING — re-arm so the prompt keeps its timeout */
+            arm_timeout(m);
             notify(m, DM_EVT_ERROR_SLOT_EMPTY, idx);
             m->cb->speak_slot_empty(m->cb->ctx, idx);
-            return DM_REJECTED_EMPTY; /* stays MOVE_PENDING */
+            return DM_REJECTED_EMPTY;
         }
         m->move_source_slot = idx;
+        /* source selected; the original MOVE prompt timeout keeps running (the
+         * old path does not re-arm here). */
         m->cb->speak_move_source_selected(m->cb->ctx, idx);
-        return DM_OK; /* stays MOVE_PENDING, source now selected */
+        return DM_OK;
     }
 
     int src = m->move_source_slot;
@@ -266,21 +285,22 @@ static dm_result slot_move(dm_machine *m, int idx) {
     if (src == dst) {
         /* same-slot move is a CANCEL, not a rejection — never reaches the store */
         m->move_source_slot = -1;
-        m->timeout_pending = false;
+        cancel_timeout(m);
         m->state = DM_STATE_IDLE;
         m->cb->speak_move_cancelled(m->cb->ctx);
         return DM_OK;
     }
 
     if (!slot_empty(m, dst)) {
+        arm_timeout(m); /* stays MOVE_PENDING */
         m->cb->speak_slot_full(m->cb->ctx, dst);
-        return DM_REJECTED_OCCUPIED; /* stays MOVE_PENDING */
+        return DM_REJECTED_OCCUPIED;
     }
 
     /* settle before the effect (transaction rule): the queue-full feedback paths
      * speak from IDLE and drive their own typing. */
     m->move_source_slot = -1;
-    m->timeout_pending = false;
+    cancel_timeout(m);
     m->state = DM_STATE_IDLE;
 
     dm_result rc = m->cb->store_move(m->cb->ctx, src, dst);
@@ -301,7 +321,7 @@ static dm_result slot_move(dm_machine *m, int idx) {
 
 /* SLOT in PREVIEW_PENDING = request the preview for idx. */
 static dm_result slot_preview(dm_machine *m, int idx) {
-    m->timeout_pending = false;
+    cancel_timeout(m);
     m->state = DM_STATE_IDLE;
     notify(m, DM_EVT_PREVIEW_READY, idx);
     m->cb->speak_preview(m->cb->ctx, idx);
@@ -370,11 +390,11 @@ void dm_machine_typing_finished(dm_machine *m) {
         m->post_save_slot = -1;
     }
     m->state = m->return_state;
-    /* a return into a *_PENDING state re-arms the assign timeout; the shell
-     * reads timeout_pending to (re)schedule assign_timeout_work. */
+    /* a return into a *_PENDING state re-arms the assign/move timeout (the old
+     * feedback_complete reschedules assign_timeout_work for exactly these). */
     if (m->state == DM_STATE_PENDING_ASSIGN || m->state == DM_STATE_DELETE_PENDING ||
         m->state == DM_STATE_MOVE_PENDING || m->state == DM_STATE_PREVIEW_PENDING) {
-        m->timeout_pending = true;
+        arm_timeout(m);
     }
 }
 
@@ -420,3 +440,22 @@ void dm_machine_erase_cancel(dm_machine *m) {
     m->state = m->erase_return_state;
     m->erase_active = false;
 }
+
+void dm_machine_timeout(dm_machine *m) {
+    /* Only a live pending state times out; a late timer after the state already
+     * resolved (slot pressed, cancelled) is a no-op. */
+    if (m->state != DM_STATE_PENDING_ASSIGN && m->state != DM_STATE_DELETE_PENDING &&
+        m->state != DM_STATE_MOVE_PENDING && m->state != DM_STATE_PREVIEW_PENDING) {
+        return;
+    }
+    m->move_source_slot = -1;
+    m->state = DM_STATE_IDLE;
+}
+
+void dm_machine_play_finished(dm_machine *m) {
+    if (m->state != DM_STATE_PLAYING) {
+        return; /* a stray report after a cancel — no-op */
+    }
+    m->state = DM_STATE_IDLE;
+}
+

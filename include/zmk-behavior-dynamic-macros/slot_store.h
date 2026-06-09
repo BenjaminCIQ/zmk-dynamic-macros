@@ -39,11 +39,19 @@ extern "C" {
 
 /*
  * A recorded macro: a fixed-capacity event array with a live count.
+ *
+ * Guarded so the new-stack Zephyr shells can include both this header and the
+ * legacy dm_internal.h (which defines the identical struct from Kconfig sizing)
+ * in one translation unit during the parallel-stack phase. The host/pure build
+ * sees only this definition. Layout is identical in both.
  */
+#ifndef DM_SLOT_DEFINED
+#define DM_SLOT_DEFINED
 struct dm_slot {
     uint32_t event_count;
     struct dm_event events[MAX_EVENTS];
 };
+#endif
 
 /* Slot class for slot_store_count. */
 typedef enum {

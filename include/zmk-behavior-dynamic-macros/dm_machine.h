@@ -115,6 +115,15 @@ typedef struct {
     /* notifications (raised before speak — fire at every feedback level) */
     void (*notify)(void *ctx, int event, int slot);
 
+    /* (re)start the assign/move/delete/preview timeout. The machine calls this
+     * whenever it enters or re-arms a *_PENDING state, including from the
+     * typing_finished / timeout up-calls — so the shell's timer tracks the
+     * pending state wherever the transition originates, without polling. */
+    void (*arm_timeout)(void *ctx);
+
+    /* cancel a running timeout (the pending state resolved). */
+    void (*cancel_timeout)(void *ctx);
+
     void *ctx;
 } dm_machine_callbacks;
 
@@ -165,6 +174,26 @@ void dm_machine_deliver_async(dm_machine *m, dm_result outcome, int slot);
 void dm_machine_erase_due(dm_machine *m);
 void dm_machine_erase_cancel(dm_machine *m);
 
+/*
+ * The assign/move/delete/preview timeout fired. The shell schedules the timer
+ * whenever timeout_pending is set and reports expiry here; the machine owns the
+ * resulting transition (clear the move source, drop to IDLE) so state stays
+ * machine-written. Ignored unless the machine is in a *_PENDING state — a timer
+ * that fires after the pending state already resolved is a no-op, mirroring the
+ * old handler's state guard.
+ */
+void dm_machine_timeout(dm_machine *m);
+
+/*
+ * The playback emitter drained the last event of the playing slot. The machine
+ * clears the playing-slot ownership intent and returns PLAYING -> IDLE — the
+ * only exit from PLAYING, mirroring the old emit handler's state=IDLE on
+ * playback completion. Ignored unless the machine is PLAYING (a stray report
+ * after a cancel is a no-op).
+ */
+void dm_machine_play_finished(dm_machine *m);
+
+
 /* ---- Private struct (defined in dm_machine.c; exposed for caller-owned
  *      storage so no heap allocation is needed) ---------------------------- */
 
@@ -174,7 +203,6 @@ struct dm_machine {
     dm_state          erase_return_state;  /* parked on erase_due */
     int               move_source_slot;    /* -1 = no source selected yet */
     int               post_save_slot;      /* slot to persist at typing_finished; -1 = none */
-    bool              timeout_pending;     /* reschedule flag for typing_finished */
     bool              erase_active;        /* true while in TYPING_ERASE */
     slot_store       *store;
     const dm_machine_callbacks *cb;

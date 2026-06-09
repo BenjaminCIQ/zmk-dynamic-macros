@@ -190,4 +190,17 @@ config ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS
       for external display widgets to subscribe to. Also enables query API for
       slot contents.
 
+config ZMK_BEHAVIOR_DYNAMIC_MACRO_NEW_STACK
+    bool "Build the deep-module rewrite stack instead of the legacy path"
+    default n
+    help
+      Test-only, during the architecture rewrite: builds the new deep-module
+      stack (dm_machine + slot_store + dm_render + dm_feedback_pump + dm_events +
+      dm_nvs + the v2 behavior shell) instead of the legacy single-path
+      behavior_dynamic_macro.c / dm_feedback.c / dm_storage.c. The native_sim
+      parity harness sets this so the same command corpus runs through the new
+      path and is diffed against the legacy snapshots. NOT for production builds;
+      removed at the step-8 cut-over when the legacy path is deleted and the new
+      stack becomes the only path.
+
 endif

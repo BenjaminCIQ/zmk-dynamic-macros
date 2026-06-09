@@ -564,6 +564,38 @@ ZTEST(dm_machine, erase_due_parks_once_across_batches) {
     zassert_equal(dm_machine_state(&fx.m), DM_STATE_IDLE, NULL);
 }
 
+/* ---- timeout drops a pending state to IDLE -------------------------------- */
+
+ZTEST(dm_machine, timeout_from_move_pending_idles_and_clears_source) {
+    setup();
+    goto_state(DM_STATE_MOVE_PENDING);
+    occupy(RAM0);
+    cmd(DM_CMD_SLOT, RAM0); /* select a move source */
+    zassert_equal(dm_machine_state(&fx.m), DM_STATE_MOVE_PENDING, NULL);
+    dm_machine_timeout(&fx.m);
+    zassert_equal(dm_machine_state(&fx.m), DM_STATE_IDLE, NULL);
+    /* source cleared: a later move starts fresh (no stale source carried over) */
+    goto_state(DM_STATE_MOVE_PENDING);
+    occupy(RAM0 + 1);
+    fx.log_n = 0;
+    cmd(DM_CMD_SLOT, RAM0 + 1);
+    zassert_true(log_has("move_src_sel"), NULL);
+}
+
+ZTEST(dm_machine, timeout_from_pending_assign_idles) {
+    setup();
+    goto_state(DM_STATE_PENDING_ASSIGN);
+    dm_machine_timeout(&fx.m);
+    zassert_equal(dm_machine_state(&fx.m), DM_STATE_IDLE, NULL);
+}
+
+ZTEST(dm_machine, timeout_outside_pending_is_noop) {
+    setup();
+    goto_state(DM_STATE_RECORDING);
+    dm_machine_timeout(&fx.m);
+    zassert_equal(dm_machine_state(&fx.m), DM_STATE_RECORDING, NULL);
+}
+
 /* ---- knob commands are IDLE-only ----------------------------------------- */
 
 ZTEST(dm_machine, style_toggle_idle_only) {

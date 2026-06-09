@@ -74,10 +74,15 @@ enum dm_state {
 
 #include <zmk-behavior-dynamic-macros/dm_event.h>
 
+/* Guarded so a new-stack translation unit may include both this header and
+ * slot_store.h (identical layout) during the parallel-stack rewrite phase. */
+#ifndef DM_SLOT_DEFINED
+#define DM_SLOT_DEFINED
 struct dm_slot {
     uint32_t event_count;
     struct dm_event events[MAX_EVENTS];
 };
+#endif
 
 #if DM_TYPING_ENABLED
 #define FB_RING_SIZE 64
