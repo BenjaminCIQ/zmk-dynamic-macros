@@ -73,10 +73,11 @@ static struct dm_event key(uint16_t keycode, uint8_t implicit, uint8_t explicit_
     };
 }
 
-/* Keycodes (HID): a=0x04, c=0x06; digit '3'=0x20; modifiers LCTL=0xE0 LSFT=0xE1. */
+/* Keycodes (HID): a=0x04, c=0x06; digit '3'=0x20; comma=0x36; modifiers LCTL=0xE0 LSFT=0xE1. */
 #define KC_A 0x04
 #define KC_C 0x06
 #define KC_3 0x20
+#define KC_COMMA 0x36
 #define KC_LCTL 0xE0
 #define KC_LSFT 0xE1
 
@@ -140,4 +141,32 @@ ZTEST(dm_render, de_plain_letters) {
     struct buf_sink s;
     render_into(&s, evs, 2, DM_LOCALE_DE);
     zassert_str_equal(s.buf, "a", "DE plain locale emits letters");
+}
+
+/* DE plain locale: digits still render literally (digits are not punctuation). */
+ZTEST(dm_render, de_plain_digit) {
+    struct dm_event evs[] = {
+        key(KC_3, 0, 0, 1), key(KC_3, 0, 0, 0),
+    };
+    struct buf_sink s;
+    render_into(&s, evs, 2, DM_LOCALE_DE);
+    zassert_str_equal(s.buf, "3", "DE plain locale emits digits literally");
+}
+
+/*
+ * DE plain locale: a punctuation key renders via the <TOKEN> path, not as a
+ * literal — plain previews are letters/digits/space only (§2.3, step-2 decision).
+ * A SHIFTED comma proves the token path was taken: on US it would be the literal
+ * '<', but on DE plain it goes through emit_token as "LSFT ," (plain separator =
+ * space, no <…> delimiters), which no literal path could produce. */
+ZTEST(dm_render, de_plain_shifted_punctuation_is_token) {
+    struct dm_event evs[] = {
+        key(KC_LSFT, 0, 0, 1),
+        key(KC_COMMA, 0, MOD_LSFT, 1),
+        key(KC_COMMA, 0, MOD_LSFT, 0),
+        key(KC_LSFT, 0, 0, 0),
+    };
+    struct buf_sink s;
+    render_into(&s, evs, 4, DM_LOCALE_DE);
+    zassert_str_equal(s.buf, "LSFT ,", "DE plain shifted comma -> token path, not literal '<'");
 }

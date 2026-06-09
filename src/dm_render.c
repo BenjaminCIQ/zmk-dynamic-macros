@@ -3,18 +3,25 @@
  *
  * SPDX-License-Identifier: MIT
  *
- * dm_render — pure preview renderer (redesign §2.3, rewrite step 1).
+ * dm_render — pure preview renderer (redesign §2.3, rewrite steps 1–2).
  *
  * One event-walk, emitting to an abstract char sink. PURE: no Zephyr, no I/O,
  * no global state. This is the single home for the replayable-vs-token decision
  * and all token formatting, so the live-typing preview and the
  * dm_get_preview_string query API cannot disagree.
  *
- * STEP 1 SCOPE: this ports the existing dm_feedback.c walk
- * (is_replayable_event / printable_char_for_keycode / render_action_token) into
- * one pure routine behind the sink. The locale mapping is still expressed as the
- * existing branch logic here; STEP 2 replaces it with static const data tables
- * (§2.3) under the safety net of these tests. Behavior must stay identical.
+ * STEP 1 ported the existing dm_feedback.c walk (is_replayable_event /
+ * printable_char_for_keycode / render_action_token) into one pure routine behind
+ * the sink, proven byte-identical to the live old walk (parity test).
+ *
+ * STEP 2 (this file) replaced the per-locale #if/switch ladders in
+ * printable_char_for_keycode with static const data tables (one dm_keymap per
+ * locale; see below). Behavior is identical for US/UK; for the plain locales
+ * (DE/FR) it is deliberately tightened to letters/digits/space only — the old
+ * code fell through to the US punctuation branch, but the encoder never emits
+ * punctuation on a plain locale, so this is unobservable through real recording
+ * and brings the renderer in line with §2.3's "plain previews are letters,
+ * digits, space". See tests de_plain_* for the pinned new behavior.
  */
 
 #include <string.h>
@@ -29,19 +36,90 @@
 #define DM_MOD_SHIFT_MASK     (0x02 | 0x20)
 #define DM_MOD_NON_SHIFT_MASK (~DM_MOD_SHIFT_MASK & 0xFF)
 
+/*
+ * Locale → character mapping as static const data (redesign §2.3, step 2),
+ * replacing the old printable_char_for_keycode() #if/switch ladders. Each row
+ * inverts one HID keycode to the {unshifted, shifted} characters it produces on
+ * a layout. A '\0' in either slot means "this key produces no printable ASCII
+ * glyph here (e.g. UK Shift+3 = GBP) — render a <TOKEN> instead", which is how
+ * the old code's `return false` is encoded in the table.
+ *
+ * Letters (0x04–0x1D) stay algorithmic — a dense arithmetic range (`'a'+offset`)
+ * with no per-locale variance, so a table would only obscure them. Everything
+ * that USED to branch on DM_LOCALE — the number row (shared digit rows + shifted
+ * symbols) and all punctuation — is data here.
+ *
+ * Tables are keyed by keycode via a small linear scan; the punctuation set is
+ * tiny (≤16 rows) so a scan beats a 256-entry sparse array on flash with no
+ * measurable cycle cost on the preview path.
+ */
+typedef struct {
+    uint8_t keycode;
+    char    normal;  /* '\0' => not printable (token) */
+    char    shifted; /* '\0' => not printable (token) */
+} dm_keymap_row;
+
+/* Number row (0x1E–0x27): unshifted digit + US-style shifted symbol. Shared by
+ * every locale's table — digits render on all layouts; only punctuation varies.
+ * (UK overrides two of these rows; see keymap_uk.) */
+#define DM_KEYMAP_DIGITS                                                                  \
+    {0x1E, '1', '!'}, {0x1F, '2', '@'}, {0x20, '3', '#'}, {0x21, '4', '$'},               \
+    {0x22, '5', '%'}, {0x23, '6', '^'}, {0x24, '7', '&'}, {0x25, '8', '*'},               \
+    {0x26, '9', '('}, {0x27, '0', ')'}
+
+/* US: digits + the full ASCII punctuation set. */
+static const dm_keymap_row keymap_us[] = {
+    DM_KEYMAP_DIGITS,
+    {0x2C, ' ', ' '}, {0x2D, '-', '_'}, {0x2E, '=', '+'}, {0x2F, '[', '{'},
+    {0x30, ']', '}'}, {0x31, '\\', '|'}, {0x33, ';', ':'}, {0x34, '\'', '"'},
+    {0x35, '`', '~'}, {0x36, ',', '<'}, {0x37, '.', '>'}, {0x38, '/', '?'},
+};
+
+/* UK diverges from US on the number row (Shift+2 = ", Shift+3 = GBP → token)
+ * and on the ISO-layout punctuation keys (0x32 #/~, 0x34 '/@, 0x35 `/¬, 0x64
+ * \/|). 0x31 is not emitted by the UK encoder, so it is absent → token. */
+static const dm_keymap_row keymap_uk[] = {
+    {0x1E, '1', '!'}, {0x1F, '2', '"'}, {0x20, '3', 0 /* GBP */}, {0x21, '4', '$'},
+    {0x22, '5', '%'}, {0x23, '6', '^'}, {0x24, '7', '&'}, {0x25, '8', '*'},
+    {0x26, '9', '('}, {0x27, '0', ')'},
+    {0x2C, ' ', ' '}, {0x2D, '-', '_'}, {0x2E, '=', '+'}, {0x2F, '[', '{'},
+    {0x30, ']', '}'}, {0x32, '#', '~'}, {0x33, ';', ':'}, {0x34, '\'', '@'},
+    {0x35, '`', 0 /* NOT sign */}, {0x36, ',', '<'}, {0x37, '.', '>'}, {0x38, '/', '?'},
+    {0x64, '\\', '|'},
+};
+
+/* Plain locales (DE/FR): digits + space only, no punctuation inversion. A
+ * recorded punctuation key therefore falls through to a <TOKEN> (§2.3 — plain
+ * previews are letters/digits/space). */
+static const dm_keymap_row keymap_plain[] = {
+    DM_KEYMAP_DIGITS,
+    {0x2C, ' ', ' '},
+};
+
+typedef struct {
+    const dm_keymap_row *rows;
+    uint8_t              len;
+    bool                 plain; /* style/spacing variant (token delimiters) */
+} dm_keymap;
+
+#define DM_KEYMAP_LEN(t) ((uint8_t)(sizeof(t) / sizeof((t)[0])))
+
+static const dm_keymap keymaps[] = {
+    [DM_LOCALE_US] = {keymap_us, DM_KEYMAP_LEN(keymap_us), false},
+    [DM_LOCALE_UK] = {keymap_uk, DM_KEYMAP_LEN(keymap_uk), false},
+    [DM_LOCALE_DE] = {keymap_plain, DM_KEYMAP_LEN(keymap_plain), true},
+    [DM_LOCALE_FR] = {keymap_plain, DM_KEYMAP_LEN(keymap_plain), true},
+};
+
 static bool locale_is_plain(dm_locale locale) {
-    return locale != DM_LOCALE_US && locale != DM_LOCALE_UK;
+    return keymaps[locale].plain;
 }
 
 /*
  * Map a HID keycode (+ shift) back to the printable character it produces on the
- * given locale. Inverse of the feedback encoder. Returns false when the key
+ * given locale, via the static const tables above. Returns false when the key
  * produces a non-ASCII glyph on that layout (e.g. UK Shift+3 = GBP) so the
  * caller renders a <TOKEN> instead of a wrong character.
- *
- * Ported from printable_char_for_keycode() in dm_feedback.c. Only US/UK (the
- * full-punctuation locales) are inverted; plain locales never reach here for
- * punctuation (see is_replayable in the walk).
  */
 static bool printable_char_for_keycode(dm_locale locale, uint32_t keycode, bool shifted,
                                        char *out) {
@@ -49,51 +127,18 @@ static bool printable_char_for_keycode(dm_locale locale, uint32_t keycode, bool 
         *out = (shifted ? 'A' : 'a') + (keycode - 0x04);
         return true;
     }
-    if (keycode >= 0x1E && keycode <= 0x27) {
-        static const char normal[] = "1234567890";
-        static const char shifted_chars[] = "!@#$%^&*()";
-        if (locale == DM_LOCALE_UK) {
-            if (shifted && keycode == 0x1F) { /* '2' -> " on UK */
-                *out = '"';
-                return true;
+    const dm_keymap *km = &keymaps[locale];
+    for (uint8_t i = 0; i < km->len; i++) {
+        if (km->rows[i].keycode == keycode) {
+            char c = shifted ? km->rows[i].shifted : km->rows[i].normal;
+            if (c == '\0') {
+                return false; /* non-ASCII glyph on this layout -> token */
             }
-            if (shifted && keycode == 0x20) { /* '3' -> GBP, non-ASCII -> token */
-                return false;
-            }
-        }
-        *out = shifted ? shifted_chars[keycode - 0x1E] : normal[keycode - 0x1E];
-        return true;
-    }
-    switch (keycode) {
-    case 0x2C: *out = ' '; return true;
-    case 0x2D: *out = shifted ? '_' : '-'; return true;
-    case 0x2E: *out = shifted ? '+' : '='; return true;
-    case 0x2F: *out = shifted ? '{' : '['; return true;
-    case 0x30: *out = shifted ? '}' : ']'; return true;
-    case 0x33: *out = shifted ? ':' : ';'; return true;
-    case 0x36: *out = shifted ? '<' : ','; return true;
-    case 0x37: *out = shifted ? '>' : '.'; return true;
-    case 0x38: *out = shifted ? '?' : '/'; return true;
-    default: break;
-    }
-    if (locale == DM_LOCALE_UK) {
-        switch (keycode) {
-        case 0x32: *out = shifted ? '~' : '#'; return true;
-        case 0x34: *out = shifted ? '@' : '\''; return true;
-        case 0x35:
-            if (shifted) { return false; } /* NOT sign -> token */
-            *out = '`';
+            *out = c;
             return true;
-        case 0x64: *out = shifted ? '|' : '\\'; return true;
-        default: return false;
         }
     }
-    switch (keycode) {
-    case 0x31: *out = shifted ? '|' : '\\'; return true;
-    case 0x34: *out = shifted ? '"' : '\''; return true;
-    case 0x35: *out = shifted ? '~' : '`'; return true;
-    default: return false;
-    }
+    return false;
 }
 
 static bool is_modifier_key(uint16_t usage_page, uint32_t keycode) {
