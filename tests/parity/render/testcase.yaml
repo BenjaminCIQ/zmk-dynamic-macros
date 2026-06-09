@@ -11,5 +11,5 @@ tests:
       - dynamic_macro
       - parity
     harness: test
-    extra_args:
-      - DTC_OVERLAY_FILE=app.overlay
+    # app.overlay in this dir is auto-applied by Twister (native_sim board);
+    # it instantiates the &dm node so the behavior + EVENTS query API compile in.

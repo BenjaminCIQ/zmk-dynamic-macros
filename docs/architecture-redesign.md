@@ -477,19 +477,23 @@ specs. This split is deliberate; see [ADR-0001](adr/0001-deep-module-architectur
 
 ### 4.1 Dual-mode harness (new — Step 0 of the build)
 
-The repo today has **only** native_sim snapshot tests (`tests/core/*` driven by
-`west test` via `urob/zmk-actions`); there is no host unit-test target. We add one,
-running the *same* assertions two ways:
+The repo today has **only** native_sim snapshot tests (`tests/core/*` etc.), discovered
+and run by ZMK's `run-test.sh` via `urob/zmk-actions` — that runner finds test cases
+**solely by `native_sim.keymap`** and diffs emitted keycode snapshots; it does **not** run
+Ztest/Twister. There is no host unit-test target. We add one, running the *same* assertions
+two ways:
 
-- **Ztest under `west test`** — `zassert_*` assertions in a `tests/unit/` Ztest suite,
-  so CI sees one unified harness alongside the snapshot tests.
-- **Standalone host compile** — the same Zephyr-free `.c` modules + test files
-  compiled directly (`cc` / a tiny CMake target), giving a **sub-second local
-  red-green loop**. A thin `ztest_shim.h` maps `zassert_equal` etc. to plain
+- **Ztest under Twister** — `zassert_*` assertions in a `tests/unit/` Ztest suite, run by a
+  **dedicated `west twister` CI job** (`.github/workflows/unit-tests.yml`), separate from the
+  keymap-snapshot job. (The snapshot runner cannot discover these — hence its own workflow.)
+- **Standalone host compile** — the same Zephyr-free `.c` modules + test files compiled
+  directly (`cc`/`cl` via `tests/unit/Makefile` or `run-host.ps1`), giving a **sub-second
+  local red-green loop**. A thin `ztest_shim.h` maps `zassert_equal` etc. to plain
   `assert()` when compiled off-Zephyr.
 
 The standalone compile is also a *decoupling proof*: if a pure module fails to compile
-without Zephyr, the decoupling has regressed — the harness catches it.
+without Zephyr, the decoupling has regressed — the harness catches it. The two rails are
+deliberate: the host loop is the fast local proof, the Twister job is the durable CI proof.
 
 ### 4.2 First failing tests (written before their modules exist)
 
@@ -514,8 +518,8 @@ recording (already in place).
 ## 5. Sequencing — keep the build green at every step
 
 > **Progress** (updated as steps land):
-> - [x] **Step 0** — dual-mode harness. Green both rails: host (`tests/unit/run-host.ps1`, local) + Ztest under `west test` (CI).
-> - [~] **Step 1** — `dm_render` pure module built test-first, host tests green (7/7). **Remaining:** render parity harness (§5.2) vs. the old walks.
+> - [x] **Step 0** — dual-mode harness. Host rail green (`tests/unit/run-host.ps1`, local MSVC). **CI Ztest rail:** the existing `urob/zmk-actions` job discovers tests *only* by `native_sim.keymap` (ZMK `run-test.sh`) and never ran the Ztest suites — a dedicated **Twister workflow** (`.github/workflows/unit-tests.yml`) is being added to run `tests/unit` + `tests/parity` for real.
+> - [~] **Step 1** — `dm_render` pure module built test-first, host tests green (7/7). Render parity harness (§5.2) built; **remaining:** golden captured from the old walk via the Twister job, then the host parity test asserts against it.
 > - [ ] Steps 2–7 — parallel stack (locale tables, `slot_store`, `dm_machine`, new `dm_feedback`, `dm_events`, new shell).
 > - [ ] **Step 8** — single cut-over. [ ] **Step 9** — footprint pass.
 

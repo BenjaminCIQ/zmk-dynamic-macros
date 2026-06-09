@@ -1,0 +1,66 @@
+name: Unit tests (Twister)
+
+# Runs the pure-core Ztest suites (tests/unit, tests/parity) under `west twister`
+# on native_sim. The repo's other CI job (test-main.yml -> urob/zmk-actions ->
+# ZMK run-test.sh) discovers tests ONLY by native_sim.keymap and diffs keycode
+# snapshots; it cannot run these Ztest suites. This is their dedicated rail
+# (redesign §4.1).
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "include/**"
+      - "src/**"
+      - "tests/unit/**"
+      - "tests/parity/**"
+      - ".github/workflows/unit-tests.yml"
+  pull_request:
+    paths:
+      - "include/**"
+      - "src/**"
+      - "tests/unit/**"
+      - "tests/parity/**"
+      - ".github/workflows/unit-tests.yml"
+
+jobs:
+  twister:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # Reuse the same SDK + ZMK/Zephyr module setup as the snapshot job, so
+      # Zephyr is on ZEPHYR_BASE and this repo is available as a Zephyr module.
+      - name: Set up West and Zephyr SDK
+        uses: urob/zmk-actions/setup-sdk@v12.0.0
+        with:
+          toolchain: gnuarmemb
+
+      - name: Pull in ZMK and Zephyr modules
+        id: setup-zmk
+        uses: urob/zmk-actions/setup-zmk@v12.0.0
+        with:
+          config: tests
+          always-update-west: true
+
+      - name: Run Twister over the unit + parity suites
+        working-directory: ${{ steps.setup-zmk.outputs.workspace }}
+        run: |
+          # This repo is the extra Zephyr module providing src/ + include/.
+          west twister \
+            --platform native_sim \
+            --inline-logs \
+            --no-clean \
+            -x=EXTRA_ZEPHYR_MODULES="${GITHUB_WORKSPACE}" \
+            -T "${GITHUB_WORKSPACE}/tests/unit" \
+            -T "${GITHUB_WORKSPACE}/tests/parity"
+
+      - name: Archive Twister logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: twister-logs
+          path: ${{ steps.setup-zmk.outputs.workspace }}/twister-out/**
+          if-no-files-found: ignore
