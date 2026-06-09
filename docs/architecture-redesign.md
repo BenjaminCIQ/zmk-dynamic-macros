@@ -104,14 +104,26 @@ const dm_slot  *slot_store_get(const slot_store *s, int idx);   /* NULL if empty
 int             slot_store_count(const slot_store *s, slot_class cls); /* NVS|RAM|ALL */
 
 /* Mutations — each handles its own persistence for NVS slots */
-dm_result slot_store_assign(slot_store *s, int idx, const dm_slot *macro);
 dm_result slot_store_move(slot_store *s, int src, int dst);  /* ordering hidden */
 dm_result slot_store_delete(slot_store *s, int idx);
+
+/* Draft buffer (the recording buffer) — a dm_slot-shaped staging area, owned here
+ * because every operation on it is slot-to-slot byte work (see §2.7 / Risk 3). The
+ * machine asks for counts and commits; it never touches the bytes. */
+void     slot_store_draft_reset(slot_store *s);                       /* REC start */
+bool     slot_store_draft_append(slot_store *s, const dm_event *e);   /* listener; false = full */
+uint32_t slot_store_draft_count(const slot_store *s);                 /* guard input */
+dm_result slot_store_draft_chain(slot_store *s, int src);             /* chain slot src into draft */
+dm_result slot_store_draft_commit(slot_store *s, int dst);            /* assign: draft → slot dst */
 
 /* Playback ownership — lets delete-completion avoid zeroing a playing slot */
 void slot_store_mark_playing(slot_store *s, int idx);
 void slot_store_clear_playing(slot_store *s);
 ```
+
+(`slot_store_draft_commit` replaces the old `slot_store_assign` — assign is always
+"commit the draft into a slot", so a separate `assign(macro)` taking an external `dm_slot`
+was a phantom second path. The only producer of an assignable macro is the draft buffer.)
 
 **Internal invariants (ported fixes):**
 - `move`: write+persist dst first; only on success zero+delete src. On dst enqueue
@@ -121,6 +133,9 @@ void slot_store_clear_playing(slot_store *s);
   RAM copy for the next op to overwrite. *(ports `fe3689e`)*
 - every async op is stamped with the slot's generation; a completion whose generation
   is stale is ignored.
+- `draft_append` returns `false` when the draft is at `MAX_EVENTS` (the recording-overflow
+  guard input); `draft_chain` rejects a chain that is empty or would not fit, as a
+  `dm_result`. The draft is plain RAM — no persistence — until `draft_commit`.
 
 ### 2.2 `dm_machine` — the only state writer
 
@@ -129,6 +144,11 @@ typedef struct dm_machine dm_machine;
 
 dm_result dm_machine_command(dm_machine *m, dm_command cmd, int param);
 dm_state  dm_machine_state(const dm_machine *m);
+
+/* Up-calls — commands, not state writes. Feedback and the storage backend
+ * report completion here; the machine owns the resulting transition. See §2.7. */
+void dm_machine_typing_finished(dm_machine *m);                 /* feedback emitter, on ring drain */
+void dm_machine_deliver_async(dm_machine *m, dm_result outcome, int slot); /* nvs deferred completion */
 ```
 
 `dm_machine_command` is **two-phase**:
@@ -150,8 +170,19 @@ illegal-with-feedback: every feedback-bearing rejection is a data-dependent guar
 outcome. Keeping the table two-valued keeps it honestly minimal — it answers exactly
 "does this command do anything in this state?".
 
-**Ported invariant:** REC from PENDING_ASSIGN with a non-empty recording buffer
-discards the unassigned take and logs/surfaces the discard. *(ports `539260c`)*
+**Ported invariants:**
+- REC from PENDING_ASSIGN with a non-empty draft buffer discards the unassigned take
+  and logs/surfaces the discard. The machine detects this by asking
+  `slot_store_draft_count() > 0`, never by reading buffer bytes. *(ports `539260c`)*
+- **Rejection preserves the pending state — it does not silently drop to IDLE.** A guard
+  rejection carries a *return-state*, and it is data-dependent: an occupied/empty target
+  during a move returns to `MOVE_PENDING`; an occupied target during assign returns to
+  `PENDING_ASSIGN`. The machine writes that return-state and reschedules
+  `assign_timeout_work`; the timeout is the *only* escape. This is the "slot full → press
+  another slot to assign there" affordance — the same behavior the `nvs_load`
+  investigation proved was intentional (an occupied-slot assign keeps PENDING_ASSIGN by
+  design). The lone exception is occupied-in-DELETE, which the guard sends to IDLE. Full
+  rule in §2.7.
 
 ### 2.3 `dm_render` — pure, host-testable
 
@@ -174,9 +205,31 @@ Two adapters:
 - **buffer sink** — used by `dm_get_preview_string`; `space_for` checks buffer length,
   `emit_*` append to a `char*`.
 
+**The sink is a runtime vtable, not a compile-time-selected call — and this is forced,
+not a default.** Under the common config (`EVENTS` + typing) *both* adapters are
+compiled and both run: `dm_get_preview_string` (buffer) and the live pump (ring) are
+live in the same build, so there is no single build-time winner to `#if` on. The ring
+sink is moreover *resumable* — today's `render_slot_contents_stream` returns "ring full,
+re-enter me after drain" and is driven one `fb_event` per `TAP_DELAY` by the emit
+handler; `space_for` is exactly that backpressure point. A compile-time direct call
+can express neither the coexistence nor the pause/resume without re-coupling the caller
+to the renderer's internals. **The indirection is free on cycles** (≈3 indirect calls
+per char against a 30 ms `TAP_DELAY` budget per char) and its flash cost is recovered by
+deleting the duplicated second walk.
+
 Locale → character mapping is a `static const` table per locale (replacing the
 `#if DM_LOCALE` ladders). The replayable-vs-token decision (`is_replayable_event`)
 lives here, used by both sinks — so they cannot disagree. *(ports `49c4f1a`, `86993af`)*
+
+**Locale is compile-time; style and level are not — do not conflate them.** `DM_LOCALE`
+is a Kconfig constant (one keyboard layout per firmware), so the locale table is
+genuinely link-time-fixed and may be selected at link time. **Style (`FULL`/`ARROW`) and
+feedback level are runtime-mutable** (`DM_STYLE_TOGGLE`/`DM_FEEDBACK_INC`/`_DEC` write
+`current_feedback_style`/`current_feedback_level`, read live on the emit path). The
+renderer therefore takes locale *as link-time data* but must never bake in style or
+level. Level is checked *upstream* of `dm_render_slot` (the builder early-returns before
+rendering), so it does not touch the sink; style affects which message-table strings are
+appended and is settled in `dm_feedback` (see §2.5), not frozen into the render table.
 
 ### 2.4 `dm_nvs` — storage backend (single-instance)
 
@@ -208,14 +261,24 @@ void dm_feedback_speak(dm_feedback *f, const dm_feedback_spec *spec);
 The five-step ritual (gate → reset → append → start) lives once. The OFF path becomes
 a single early-return inside `speak`, not a second 23-function stub block.
 
+**Invariant — the spec must not freeze the runtime style.** `current_feedback_style`
+(`FULL`/`ARROW`) is mutable at runtime via `DM_STYLE_TOGGLE`, so the message-part
+selection inside `speak` must read it live; a `dm_feedback_spec` that bakes in style at
+build time (or caches a style-specific part list) silently breaks the toggle. The level
+gate (`feedback_enabled_for`) is the other runtime knob and is already the early-return
+at the top of `speak`. Locale, by contrast, is link-time-fixed and belongs to the render
+table (§2.3) — only style and level vary per keypress.
+
 **Ported invariant:** deferred completions (`deleted`, `delete_failed`,
 `save_failed`) only speak when the machine is IDLE; otherwise they drop rather than
 hijack an active op.
 
-`feedback_complete` (today's tangle) becomes a small dispatcher: "typing finished →
-ask the status cursor if there's a next slot; else return the machine to its
-return-state and fire the post-save persist + erase hooks." Each hook is a named
-function, individually testable.
+`feedback_complete` (today's tangle) **splits along the module boundary** (§2.7): the
+*rendering-continuation* half — "is there a next status slot to type?" — stays in
+`dm_feedback` and resolves before the machine hears anything. The *state-return* half —
+apply return-state, reschedule pending-timeout, fire post-save persist + erase — moves
+**into `dm_machine`** behind `dm_machine_typing_finished()`, because it writes `state`
+and only the machine may. Each resulting hook is a named, individually-testable function.
 
 The feedback **emitter** (ring → keystrokes, with streaming preview refill) is one of
 two emitters driven by the shared `tap_cadence` primitive; the other is the **playback
@@ -231,6 +294,97 @@ state**. Widgets query by slot index, not by device, so the projection resolves 
 one instance internally — the single-instance assumption lives *here*, in one place,
 beside the accessor and its `BUILD_ASSERT(<=1)`
 ([ADR-0002](adr/0002-single-instance-internals.md)). Compiled only under `EVENTS`.
+
+### 2.7 Interaction contracts — orchestration, completion, draft ownership
+
+The §1 diagram says "arrows point down; no module calls up." Today's code violates this
+in three places that look like separate problems but share one spine: **the command
+handler is the orchestrator and freely interleaves four concerns** (state write, slot
+byte-work, persistence, feedback), and **feedback reaches up to write `state`.** These
+three contracts make the arrows actually point down. They are specified here because each
+is a place where a clean-looking rewrite most easily ships a *quiet behavior change* —
+the contract is the regression guard.
+
+#### 2.7.1 Orchestration: the machine runs the transition as a transaction
+
+`dm_machine_command` *is* the orchestrator that `cmd_slot` is today — but the three
+concerns sit behind interfaces and obey a fixed order:
+
+1. **Legality** (table) → `IGNORED` returns `DM_OK`, no effect.
+2. **Guard** → asks `slot_store` (`is_empty`, `count`, `draft_count`); never reads
+   `slots[]`. A failed guard returns a rejection (§2.7.2) and applies its return-state.
+3. **`state =` is written exactly once, *before* any effect that can emit feedback.**
+   This generalizes today's load-bearing "move to IDLE up front" trick (`cmd_slot`
+   MOVE_PENDING, with its 9-line comment) into a law: the queue-full/failure feedback
+   paths only speak from a settled state and start their own typing, so the machine must
+   not still be mid-transition when an effect calls back.
+4. **Effect** → `slot_store_move/delete/draft_commit`. The dual-write ordering and
+   rollback live *inside* `slot_store_move` and surface only as a `dm_result`
+   (`DM_OK | DM_QUEUE_FULL | DM_SAVE_FAILED`). The machine knows "moved / failed-to-
+   persist", never "dst-before-src".
+
+> **Rejected alternative — "machine returns an effect list, caller executes":** reads
+> clean but re-exposes the dst→src ordering to the caller (the exact leak ADR-0001
+> removes) and cannot express "roll dst back on the failure of step N". The
+> transaction-inside-the-machine keeps ordering hidden where §2.1 owns it.
+
+#### 2.7.2 Rejection carries a return-state (data-dependent, not uniform)
+
+A guard rejection is `(dm_result, return_state)`. The return-state is **computed from the
+current state**, mirroring today's helpers exactly:
+
+| Reject cause | While moving | Otherwise |
+| --- | --- | --- |
+| target occupied (`DM_REJECTED_OCCUPIED`) | → `MOVE_PENDING` | → `PENDING_ASSIGN` *(ports `feedback_slot_full`)* |
+| source/target empty (`DM_REJECTED_EMPTY`) | → `MOVE_PENDING` | → `IDLE` *(ports `feedback_slot_empty`)* |
+| occupied target in DELETE mode | — | → `IDLE` (the one drop-to-idle) |
+
+The machine writes the return-state and, if it is a `*_PENDING` state, reschedules
+`assign_timeout_work`. **The timeout is the only escape from a preserved pending state.**
+This is the "press another slot" affordance the `nvs_load` investigation proved
+intentional — it must survive verbatim (also listed as a §2.2 ported invariant).
+
+#### 2.7.3 Completion: feedback reports up, the machine transitions
+
+Feedback **never writes `state`.** Two sanctioned up-calls (commands, not writes) replace
+the three illegal up-arrows in today's `feedback_complete` / deferred handlers:
+
+- **`dm_machine_typing_finished(m)`** — the feedback emitter calls this when the ring
+  drains. The machine applies the `return_state` it parked when it *started* the feedback
+  transition (the return-state lives in the machine now, not in `feedback_return_state`),
+  reschedules any pending-timeout, fires the post-save persist, and kicks auto-erase. The
+  status-cursor "another slot to type?" loop is resolved *inside* `dm_feedback` first and
+  does **not** reach the machine until typing is truly done.
+- **`dm_machine_deliver_async(m, outcome, slot)`** — the `dm_nvs` deferred handler
+  (running on the system queue after `k_work_submit`) calls this for `DELETED /
+  SAVE_FAILED / DELETE_FAILED`. The **IDLE-suppression rule lives here, in the machine**:
+  it drops the outcome unless the machine is IDLE, else drives the feedback. This removes
+  the last `state = IDLE` writes from `dm_feedback` and homes the "deferred only when
+  IDLE" invariant in one place (resolving the §2.5-vs-machine ownership question in favor
+  of the machine).
+
+#### 2.7.4 Draft ownership: the recording buffer belongs to `slot_store`
+
+The recording buffer is a `dm_slot`-shaped staging area; every operation on it is
+slot-to-slot byte work (assign = copy draft→slot; chain = copy slot→draft tail), which is
+`slot_store`'s domain — not the machine's (it would force the machine to do `memcpy`) and
+not a new "recorder" module (a noun with no second consumer or adapted seam; §7's rule).
+It lives behind the draft surface in §2.1. The **listener** (behavior shell) is the one
+external writer, via `slot_store_draft_append` — a clean append, not a struct-poke. The
+**machine** only asks `slot_store_draft_count` (for the REC-discard and chain-room guards)
+and calls `draft_commit` on assign.
+
+#### Implementation order (these interlock)
+
+1. **2.7.4 with step 3** (`slot_store`) — the machine's guards in step 4 need
+   `draft_count` to exist.
+2. **2.7.1 + 2.7.2 with step 4** (`dm_machine`) — the orchestration contract *is* step 4;
+   the rejection table is a ported invariant written test-first.
+3. **2.7.3 with step 5** — `typing_finished`/`deliver_async` cannot exist before the
+   machine does. **Hazard:** this inverts the call graph the snapshot suite exercises
+   (feedback→machine, not feedback→state-write), and step 5 is characterization-tested,
+   not TDD — so capture a fresh snapshot baseline *immediately before* step 5 and treat
+   any diff as a regression to explain, not to re-bless.
 
 ---
 
@@ -321,12 +475,19 @@ are **test-first**: the red Ztest/host test lands before the module it specifies
    render tests from step 1 are the safety net. *Footprint checkpoint: measure flash.*
 3. **`slot_store`, test-first.** Write the red dual-write/rollback tests against a fake
    `dm_nvs` sink → extract `slot_store` with the invariant internal → `cmd_slot` and the
-   nvs completion path call its interface instead of poking `slots[]`.
+   nvs completion path call its interface instead of poking `slots[]`. **Includes the
+   draft buffer** (§2.7.4): the recording buffer moves here behind `draft_*`.
 4. **`dm_machine`, test-first.** Write the red legality-matrix + guard tests → install
    the two-valued `static const` matrix + guard logic → route all 49 `state =` writes
-   through `dm_machine_command`.
-5. **Collapse `dm_feedback`** to the `speak` builder; untangle `feedback_complete` into
-   named hooks. Guarded by snapshots (characterization, not TDD).
+   through `dm_machine_command`. **Installs the orchestration + rejection contracts**
+   (§2.7.1–2.7.2); the rejection return-state table is asserted test-first.
+5. **Collapse `dm_feedback`** to the `speak` builder; untangle `feedback_complete` along
+   the §2.7.3 boundary — *rendering-continuation* stays, *state-return* moves to
+   `dm_machine_typing_finished()`; route deferred completions through
+   `dm_machine_deliver_async()`. Guarded by snapshots (characterization, not TDD).
+   **Capture a fresh snapshot baseline immediately before this step** — it inverts the
+   feedback→state call graph, so any snapshot diff is a regression to explain, not
+   re-bless (§2.7.3 hazard).
 6. **Carve out `dm_events`** as the projection; assert single-instance in one place.
 7. **Thin `behavior_dynamic_macro`** to wiring + dispatch.
 8. **Footprint pass:** measure flash/RAM vs. the v0.3.1 baseline; claw back only where
@@ -343,9 +504,12 @@ approach (and the TDD loop) before committing to 3–7.
 Genuinely deferred — implementation-level, cheap to change, decided against real code
 at the relevant build step. They do not move module boundaries.
 
-- **Sink vtable cost:** the `dm_sink` indirection adds an indirect call per emitted
-  char. Accepted for clean wins (clean-wins-on-ties, ADR-0001); *confirm the real cost
-  at the step-2 footprint checkpoint* and claw back only if it demonstrably hurts.
+- **Sink vtable cost — cycles settled, flash to confirm:** the runtime vtable is *not*
+  optional (§2.3: two sinks coexist; the ring sink is resumable), so its shape is no
+  longer open. Its cycle cost is negligible by construction (≈3 indirect calls per char
+  vs. a 30 ms `TAP_DELAY` per char). The only thing left to *measure* — not decide — is
+  net flash at the step-2 checkpoint; expected neutral-to-negative once the duplicated
+  second walk is deleted.
 - **`dm_feedback_spec` shape:** the exact field layout of the message spec (array of
   parts vs. a small builder DSL) — settle when collapsing the 23 clones in step 5.
 - **`ztest_shim.h` surface:** which `zassert_*` macros the host shim needs to map —
@@ -366,3 +530,9 @@ Recorded here so they are not re-litigated; the load-bearing ones became ADRs.
 | Emit pump | `tap_cadence` primitive + two separate emitters (playback, feedback); not a unified `dm_pump`. | §2.5, CONTEXT |
 | Module granularity | Seven modules with real interfaces get own files; `tap_cadence` and `playback` are co-located primitives — split where there's a seam, not a noun. | §1 |
 | Handle granularity | Resolved by ADR-0002: the ZMK `dev` pointer is the handle; no separate `dm_context` aggregate. | ADR-0002 |
+| Sink dispatch | Runtime vtable, not compile-time-selected: both sinks coexist in one build and the ring sink is resumable. Cycle cost negligible vs. `TAP_DELAY`. | §2.3, §6 |
+| Locale vs. style/level | Locale is link-time-fixed (render table); style and level are runtime-mutable and read live — never baked into the render table or the `dm_feedback_spec`. | §2.3, §2.5 |
+| Orchestration | The machine runs each command as a transaction (legality → guard → single `state=` before effects → effect); `slot_store`/`dm_feedback` are called *down* into. Not a returned effect-list. | §2.7.1 |
+| Rejection return-state | Rejection carries a data-dependent return-state (occupied/empty × moving-or-not); preserves the pending state, timeout is the only escape. Not a uniform drop-to-IDLE. | §2.7.2, §2.2 |
+| Completion up-calls | Feedback never writes `state`; it reports up via `dm_machine_typing_finished()` / `dm_machine_deliver_async()`. The deferred IDLE-suppression rule lives in the machine. | §2.7.3 |
+| Draft buffer owner | The recording buffer belongs to `slot_store` (slot-to-slot byte work), behind a `draft_*` surface — not `dm_machine`, not a new recorder module. | §2.7.4 |
