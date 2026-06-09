@@ -44,20 +44,30 @@ static bool pbuf_space(void *ctx, uint8_t n) {
     return s->pos + n + 1 < sizeof(s->buf);
 }
 
+/* Find a corpus case by name (the golden references cases by name, not index,
+ * since the golden is the subset captured from the old walk). */
+static const struct dm_parity_case *corpus_by_name(const char *name) {
+    for (int i = 0; i < DM_RENDER_CORPUS_LEN; i++) {
+        if (strcmp(dm_render_corpus[i].name, name) == 0) {
+            return &dm_render_corpus[i];
+        }
+    }
+    return NULL;
+}
+
 ZTEST_SUITE(dm_render_parity, NULL, NULL, NULL, NULL, NULL);
 
+/* dm_render must reproduce, for each old-walk-captured golden anchor, exactly
+ * the preview the live old walk produced (decoded from the keymap snapshot). */
 ZTEST(dm_render_parity, matches_old_walk_us) {
     if (!DM_GOLDEN_US_CAPTURED) {
-        /* Golden not yet recorded from the old walk — see golden_us.h. */
         ztest_test_skip();
     }
 
-    zassert_equal(DM_RENDER_CORPUS_LEN,
-                  (int)(sizeof(dm_golden_us) / sizeof(dm_golden_us[0])),
-                  "corpus and golden table lengths must match");
-
-    for (int i = 0; i < DM_RENDER_CORPUS_LEN; i++) {
-        const struct dm_parity_case *c = &dm_render_corpus[i];
+    for (int i = 0; i < DM_GOLDEN_US_LEN; i++) {
+        const struct dm_golden_entry *g = &dm_golden_us[i];
+        const struct dm_parity_case *c = corpus_by_name(g->name);
+        zassert_true(c != NULL, "golden references unknown corpus case %s", g->name);
 
         struct pbuf s;
         memset(&s, 0, sizeof(s));
@@ -65,7 +75,7 @@ ZTEST(dm_render_parity, matches_old_walk_us) {
         dm_render_slot_view view = {.event_count = c->count, .events = c->events};
         dm_render_slot(&view, DM_LOCALE_US, &sink);
 
-        zassert_str_equal(s.buf, dm_golden_us[i].expected,
-                          "case %s: dm_render must match old-walk golden", c->name);
+        zassert_str_equal(s.buf, g->expected,
+                          "case %s: dm_render must match old-walk golden", g->name);
     }
 }

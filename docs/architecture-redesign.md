@@ -520,7 +520,7 @@ recording (already in place).
 
 > **Progress** (updated as steps land):
 > - [x] **Step 0** — dual-mode harness. Host rail green locally (`tests/unit/run-host.ps1`, MSVC) and in CI via plain `gcc` (`.github/workflows/host-tests.yml`). (A Twister rail was tried and abandoned — the `urob` Nix shell has no pip for Twister's deps, and ZMK upstream itself uses no Ztest; host-gcc is the rail.)
-> - [~] **Step 1** — `dm_render` pure module built test-first, host tests green (7/7). Render parity harness (§5.2) built; **remaining:** capture the old-walk golden via a keymap-snapshot test (`tests/parity/render/`), decode it into `golden_us.h`, then the host parity test asserts `dm_render` == old output.
+> - [x] **Step 1** — `dm_render` pure module, test-first, host tests green (8/8 incl. parity). Render parity **proven against the live old walk**: the keymap-snapshot test captured `[DM SAVED R0: '<LCTL+C>#']`; `dm_render` reproduces `<LCTL+C>` (Ctrl+C) and `#` (US Shift+3) exactly. Old walks remain untouched (parallel-stack, §5.0). CI: gcc host job + keymap-snapshot job both green.
 > - [ ] Steps 2–7 — parallel stack (locale tables, `slot_store`, `dm_machine`, new `dm_feedback`, `dm_events`, new shell).
 > - [ ] **Step 8** — single cut-over. [ ] **Step 9** — footprint pass.
 

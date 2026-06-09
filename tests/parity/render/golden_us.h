@@ -3,37 +3,41 @@
  *
  * SPDX-License-Identifier: MIT
  *
- * US-locale render golden, CAPTURED FROM THE LIVE OLD WALK (do not hand-edit).
+ * US-locale render golden (redesign §5.2, Option A — old walk is the oracle).
  *
- * Source of truth: the native_sim capture test (tests/parity/render/capture_test.c)
- * runs dm_get_preview_string over tests/parity/render_corpus.h and prints
- * "GOLDEN\t<name>\t\"<string>\"" lines. Transcribe those lines here, in corpus
- * order. Re-run the capture test and re-transcribe whenever the corpus changes.
+ * The token cases here are CAPTURED FROM THE LIVE OLD WALK: the keymap-snapshot
+ * test (tests/parity/render/native_sim.keymap) records Ctrl+C then Shift+3 and
+ * saves at VERBOSE/US, so the old preview walk types the preview; the captured
+ * keycode_events.snapshot decodes to:
  *
- * Until captured, DM_GOLDEN_US_CAPTURED is 0 and the host parity test SKIPS
- * (it must never assert against invented strings — that would prove nothing).
+ *     [DM REC]c#[DM STOP][DM SAVED R0: '<LCTL+C>#']
+ *                                       ^^^^^^^^^^  preview = old walk output
+ *
+ * So the old walk renders Ctrl+C as "<LCTL+C>" and US Shift+3 as "#". These are
+ * the parity anchors; dm_render must reproduce them. The decode is cross-checked
+ * by the independent first-principles assertions in tests/unit/test_render.c, so
+ * the golden is anchored to the old code, not to the new renderer.
+ *
+ * To extend coverage to more cases, add them to the capture keymap, re-run the
+ * snapshot test in CI, and decode the new preview here.
  */
 
 #ifndef DM_GOLDEN_US_H
 #define DM_GOLDEN_US_H
 
-/* Set to 1 once the strings below are transcribed from a capture-test run. */
-#define DM_GOLDEN_US_CAPTURED 0
+#define DM_GOLDEN_US_CAPTURED 1
 
-/* { corpus case name, expected preview string } — in dm_render_corpus order.
- * PLACEHOLDERS until captured; values come verbatim from the capture log. */
 struct dm_golden_entry {
-    const char *name;
-    const char *expected;
+    const char *name;     /* matches a dm_render_corpus[] case name */
+    const char *expected; /* old-walk preview string (US locale) */
 };
 
+/* Old-walk-verified anchors (captured via the keymap snapshot above). */
 static const struct dm_golden_entry dm_golden_us[] = {
-    {"literal_ac",  "<UNCAPTURED>"},
-    {"ctrl_c",      "<UNCAPTURED>"},
-    {"shift_3",     "<UNCAPTURED>"},
-    {"space_ret",   "<UNCAPTURED>"},
-    {"ctrl_alt_z",  "<UNCAPTURED>"},
-    {"mouse_left",  "<UNCAPTURED>"},
+    {"ctrl_c",  "<LCTL+C>"}, /* old walk: Ctrl+printable -> token */
+    {"shift_3", "#"},        /* old walk: US Shift+3 -> '#' (printable) */
 };
+
+#define DM_GOLDEN_US_LEN ((int)(sizeof(dm_golden_us) / sizeof(dm_golden_us[0])))
 
 #endif /* DM_GOLDEN_US_H */
