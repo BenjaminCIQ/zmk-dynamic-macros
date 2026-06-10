@@ -41,7 +41,11 @@ struct fake {
     int last_moved_src, last_moved_dst;
     int last_notify_event, last_notify_slot;
 
-    /* when true, speak thunks do NOT auto-drive typing_finished — simulates the
+    /* recorded knob commands (apply_knob) */
+    dm_command last_knob_cmd;
+    int        knob_calls;
+
+    /* when true, speak does NOT auto-drive typing_finished — simulates the
      * live-typing case where the drain is a separate later event. Default false
      * (the OFF/instant path: speak finishes synchronously). */
     bool suppress_auto_finish;
@@ -105,44 +109,76 @@ static void cb_mark_playing(void *c, int i) { (void)c; (void)i; log_tag("mark_pl
 static void cb_clear_playing(void *c) { (void)c; log_tag("clear_playing"); }
 
 /*
- * speak thunks.
+ * speak — one thunk for every message. It maps spec->kind back to the short tag
+ * the assertions use, and records the slot args a few tests check (saved slot,
+ * moved src/dst). One spec call per transition replaces the old 24 speak_X
+ * pointers — the test surface tracks the collapse.
  *
- * Each cue routes through TYPING_FEEDBACK (the machine parks the destination as
- * the return-state); the real OFF/below-level path drains synchronously by
- * calling dm_machine_typing_finished, so the fake does the same here — after a
- * command the machine settles to its destination, exactly as the firmware's
- * OFF build does. (The async deferred-completion speaks are NOT typing
- * transitions and must not auto-finish.)
+ * Auto-finish mirrors the real OFF/below-level path: a synchronous transition
+ * speak happens while the machine is in TYPING_FEEDBACK (it parked a
+ * return-state), and the firmware's OFF build drains it by calling
+ * typing_finished. The async deferred-completion speaks happen from IDLE (the
+ * deliver_async suppression guard already passed) and are NOT typing
+ * transitions, so they must not auto-finish — keying off the state reproduces
+ * exactly that split without a per-kind flag.
  */
-static void fake_finish(void) {
+static const char *kind_tag(const dm_feedback_spec *s, bool async) {
+    switch (s->kind) {
+    case DM_FB_REC:          return "rec";
+    case DM_FB_STOP:         return "stop";
+    case DM_FB_NO_REC:       return "no_recording";
+    case DM_FB_SAVED:        return "saved";
+    case DM_FB_SLOT_FULL:    return "slot_full";
+    case DM_FB_SLOT_EMPTY:   return "slot_empty";
+    case DM_FB_OVERFLOW:     return "overflow";
+    case DM_FB_MOVE_PROMPT:  return "move_prompt";
+    case DM_FB_MOVE_SRC:     return "move_src_sel";
+    case DM_FB_MOVED:        return "moved";
+    case DM_FB_MOVE_CANCEL:  return "move_cancelled";
+    case DM_FB_CHAIN_INSERT: return "chain_insert";
+    case DM_FB_CHAIN_EMPTY:  return "chain_empty";
+    case DM_FB_CHAIN_NO_ROOM:return "chain_no_room";
+    case DM_FB_DELETED:      return async ? "async_deleted" : "deleted";
+    case DM_FB_DELETE_FAILED:return "async_delete_failed";
+    case DM_FB_SAVE_FAILED:  return "async_save_failed";
+    case DM_FB_SAVE_QFULL:   return "save_qfull";
+    case DM_FB_DELETE_QFULL: return "delete_qfull";
+    case DM_FB_KNOB:         return "knob";
+    case DM_FB_STATUS_HEADER:return "status";
+    case DM_FB_STATUS_SLOT:  return "status_slot";
+    default:                 return "?";
+    }
+}
+
+static void fake_speak(void *c, const dm_feedback_spec *spec) {
+    (void)c;
+    /* async deferred completions speak from IDLE; sync transitions from TYPING_FEEDBACK */
+    bool async = dm_machine_state(&g->m) != DM_STATE_TYPING_FEEDBACK;
+    log_tag(kind_tag(spec, async));
+    if (spec->kind == DM_FB_SAVED) {
+        g->last_saved_slot = spec->slot;
+    }
+    if (spec->kind == DM_FB_MOVED) {
+        g->last_moved_src = spec->slot;
+        g->last_moved_dst = spec->slot2;
+    }
+    if (!async && !g->suppress_auto_finish) {
+        dm_machine_typing_finished(&g->m);
+    }
+}
+
+/* apply_knob — record the command; the real pump would change/persist/confirm
+ * and report typing_finished, so settle the parked TYPING_FEEDBACK -> IDLE. */
+static void fake_apply_knob(void *c, dm_command cmd) {
+    (void)c;
+    g->last_knob_cmd = cmd;
+    g->knob_calls++;
+    log_tag("knob");
     if (!g->suppress_auto_finish) {
         dm_machine_typing_finished(&g->m);
     }
 }
 
-static void cb_rec(void *c) { (void)c; log_tag("rec"); fake_finish(); }
-static void cb_stop(void *c) { (void)c; log_tag("stop"); fake_finish(); }
-static void cb_no_recording(void *c) { (void)c; log_tag("no_recording"); fake_finish(); }
-static void cb_saved(void *c, int s) { (void)c; g->last_saved_slot = s; log_tag("saved"); fake_finish(); }
-static void cb_deleted(void *c, int s) { (void)c; (void)s; log_tag("deleted"); fake_finish(); }
-static void cb_slot_empty(void *c, int s) { (void)c; (void)s; log_tag("slot_empty"); fake_finish(); }
-static void cb_slot_full(void *c, int s) { (void)c; (void)s; log_tag("slot_full"); fake_finish(); }
-static void cb_chain_insert(void *c, int s) { (void)c; (void)s; log_tag("chain_insert"); fake_finish(); }
-static void cb_chain_empty(void *c, int s) { (void)c; (void)s; log_tag("chain_empty"); fake_finish(); }
-static void cb_chain_no_room(void *c, int s) { (void)c; (void)s; log_tag("chain_no_room"); fake_finish(); }
-static void cb_overflow(void *c) { (void)c; log_tag("overflow"); fake_finish(); }
-static void cb_move_prompt(void *c) { (void)c; log_tag("move_prompt"); fake_finish(); }
-static void cb_move_src_sel(void *c, int s) { (void)c; (void)s; log_tag("move_src_sel"); fake_finish(); }
-static void cb_move_cancelled(void *c) { (void)c; log_tag("move_cancelled"); fake_finish(); }
-static void cb_moved(void *c, int s, int d) { (void)c; (void)s; (void)d; log_tag("moved"); fake_finish(); }
-static void cb_save_qfull(void *c, int s) { (void)c; (void)s; log_tag("save_qfull"); fake_finish(); }
-static void cb_delete_qfull(void *c, int s) { (void)c; (void)s; log_tag("delete_qfull"); fake_finish(); }
-static void cb_status(void *c) { (void)c; log_tag("status"); fake_finish(); }
-static void cb_preview(void *c, int s) { (void)c; (void)s; log_tag("preview"); fake_finish(); }
-static void cb_async_deleted(void *c, int s) { (void)c; (void)s; log_tag("async_deleted"); }
-static void cb_async_save_failed(void *c, int s) { (void)c; (void)s; log_tag("async_save_failed"); }
-static void cb_async_delete_failed(void *c, int s) { (void)c; (void)s; log_tag("async_delete_failed"); }
-static void cb_erase(void *c) { (void)c; log_tag("erase"); }
 static void cb_notify(void *c, int e, int s) {
     (void)c;
     g->last_notify_event = e;
@@ -161,29 +197,8 @@ static const dm_machine_callbacks fake_cb = {
     .store_draft_reset = cb_draft_reset,
     .store_mark_playing = cb_mark_playing,
     .store_clear_playing = cb_clear_playing,
-    .speak_rec = cb_rec,
-    .speak_stop = cb_stop,
-    .speak_no_recording = cb_no_recording,
-    .speak_saved = cb_saved,
-    .speak_deleted = cb_deleted,
-    .speak_slot_empty = cb_slot_empty,
-    .speak_slot_full = cb_slot_full,
-    .speak_chain_insert = cb_chain_insert,
-    .speak_chain_empty = cb_chain_empty,
-    .speak_chain_no_room = cb_chain_no_room,
-    .speak_overflow = cb_overflow,
-    .speak_move_prompt = cb_move_prompt,
-    .speak_move_source_selected = cb_move_src_sel,
-    .speak_move_cancelled = cb_move_cancelled,
-    .speak_moved = cb_moved,
-    .speak_save_queue_full = cb_save_qfull,
-    .speak_delete_queue_full = cb_delete_qfull,
-    .speak_status = cb_status,
-    .speak_preview = cb_preview,
-    .speak_async_deleted = cb_async_deleted,
-    .speak_async_save_failed = cb_async_save_failed,
-    .speak_async_delete_failed = cb_async_delete_failed,
-    .speak_erase = cb_erase,
+    .speak = fake_speak,
+    .apply_knob = fake_apply_knob,
     .notify = cb_notify,
 };
 
@@ -585,12 +600,16 @@ ZTEST(dm_machine, deliver_async_save_failed_speaks_when_idle) {
 
 /* ---- auto-erase up-calls -------------------------------------------------- */
 
-ZTEST(dm_machine, erase_due_parks_state_and_types) {
+ZTEST(dm_machine, erase_due_parks_state) {
     setup();
-    /* park from IDLE */
+    /* park from IDLE. erase_due only writes TYPING_ERASE; the erase emission is
+     * armed by the pump's scheduler itself (it pushes backspaces right after
+     * calling erase_due), so the machine does NOT speak here — there is no
+     * phantom speak_erase. */
     dm_machine_erase_due(&fx.m);
     zassert_equal(dm_machine_state(&fx.m), DM_STATE_TYPING_ERASE, NULL);
-    zassert_true(log_has("erase"), NULL);
+    zassert_false(log_has("knob"), NULL);
+    zassert_false(log_has("erase"), NULL);
 }
 
 ZTEST(dm_machine, erase_cancel_restores_parked_state) {
@@ -657,4 +676,30 @@ ZTEST(dm_machine, status_idle_only) {
     dm_result rc = cmd(DM_CMD_STATE, 0);
     zassert_equal(rc, DM_OK, NULL);
     zassert_true(log_has("status"), NULL);
+}
+
+/* ---- knob commands drive apply_knob INSIDE the transition ----------------- */
+
+ZTEST(dm_machine, knob_from_idle_applies_inside_transition) {
+    setup();
+    fx.log_n = 0;
+    /* ALLOWED in IDLE -> the machine parks IDLE and calls apply_knob with the
+     * command (the effect/persist/confirm are feedback's, driven from here, not
+     * re-run by the shell). */
+    dm_result rc = cmd(DM_CMD_STYLE_TOGGLE, 0);
+    zassert_equal(rc, DM_OK, NULL);
+    zassert_equal(fx.knob_calls, 1, NULL);
+    zassert_equal(fx.last_knob_cmd, DM_CMD_STYLE_TOGGLE, NULL);
+    zassert_true(log_has("knob"), NULL);
+    zassert_equal(dm_machine_state(&fx.m), DM_STATE_IDLE, NULL);
+}
+
+ZTEST(dm_machine, knob_ignored_outside_idle_does_not_apply) {
+    setup();
+    goto_state(DM_STATE_RECORDING);
+    fx.log_n = 0;
+    dm_result rc = cmd(DM_CMD_FEEDBACK_INC, 0);
+    zassert_equal(rc, DM_OK, NULL); /* IGNORED */
+    zassert_equal(fx.knob_calls, 0, NULL); /* apply_knob never reached */
+    zassert_equal(dm_machine_state(&fx.m), DM_STATE_RECORDING, NULL);
 }

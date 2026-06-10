@@ -23,6 +23,7 @@
 #include <stdint.h>
 
 #include <zmk-behavior-dynamic-macros/dm_result.h>
+#include <zmk-behavior-dynamic-macros/dm_spec.h>
 #include <zmk-behavior-dynamic-macros/slot_store.h>
 
 #ifdef __cplusplus
@@ -71,7 +72,7 @@ typedef enum {
  *
  * Return values:
  *   - slot_* : dm_result (DM_OK or a rejection / queue-full code)
- *   - speak_* : void (fire-and-forget; the machine has already written state)
+ *   - speak / apply_knob : void (fire-and-forget; state is already written)
  *   - notify  : void
  */
 typedef struct {
@@ -87,30 +88,26 @@ typedef struct {
     void      (*store_mark_playing)(void *ctx, int idx);
     void      (*store_clear_playing)(void *ctx);
 
-    /* feedback — called after state is written */
-    void (*speak_rec)(void *ctx);
-    void (*speak_stop)(void *ctx);
-    void (*speak_no_recording)(void *ctx);
-    void (*speak_saved)(void *ctx, int slot);
-    void (*speak_deleted)(void *ctx, int slot);
-    void (*speak_slot_empty)(void *ctx, int slot);
-    void (*speak_slot_full)(void *ctx, int slot);
-    void (*speak_chain_insert)(void *ctx, int slot);
-    void (*speak_chain_empty)(void *ctx, int slot);
-    void (*speak_chain_no_room)(void *ctx, int slot);
-    void (*speak_overflow)(void *ctx);
-    void (*speak_move_prompt)(void *ctx);
-    void (*speak_move_source_selected)(void *ctx, int slot);
-    void (*speak_move_cancelled)(void *ctx);
-    void (*speak_moved)(void *ctx, int src, int dst);
-    void (*speak_save_queue_full)(void *ctx, int slot);
-    void (*speak_delete_queue_full)(void *ctx, int slot);
-    void (*speak_status)(void *ctx);
-    void (*speak_preview)(void *ctx, int slot);
-    void (*speak_async_deleted)(void *ctx, int slot);
-    void (*speak_async_save_failed)(void *ctx, int slot);
-    void (*speak_async_delete_failed)(void *ctx, int slot);
-    void (*speak_erase)(void *ctx);
+    /*
+     * Type one feedback message. The machine builds the spec from the parts it
+     * already holds (kind + slot + slot2) and calls this once per transition,
+     * AFTER it has written state and parked the return-state. One slot replaces
+     * the old 24 speak_* — the message enum is collapsed at the seam, not
+     * re-expanded into a pointer per kind. Fire-and-forget: completion comes back
+     * via dm_machine_typing_finished. Transitions that type nothing (preview)
+     * skip this and call typing_finished directly; the machine, not a phantom
+     * speak, owns the no-type case.
+     */
+    void (*speak)(void *ctx, const dm_feedback_spec *spec);
+
+    /*
+     * Apply a knob command's effect (level +/-, style toggle, erase toggle),
+     * persist it, and speak its confirmation — all feedback-internal. Called by
+     * the machine INSIDE the knob transition, after the single state write, so
+     * the ALLOWED/IGNORED verdict never leaks to the caller for the shell to
+     * reconstruct. The confirmation reports typing_finished like any speak.
+     */
+    void (*apply_knob)(void *ctx, dm_command cmd);
 
     /* notifications (raised before speak — fire at every feedback level) */
     void (*notify)(void *ctx, int event, int slot);

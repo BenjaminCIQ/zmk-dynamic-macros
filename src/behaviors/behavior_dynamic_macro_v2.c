@@ -410,110 +410,41 @@ static void cb_notify(void *ctx, int event, int slot) {
 }
 #endif
 
+/* speak: one adapter funnels every message spec the machine builds into the
+ * pump. The machine has already written state + parked the return-state, so this
+ * is pure presentation. ctx is the dm_inst *. */
 #if DM_TYPING_ENABLED
-/* speak_* adapters: build a dm_feedback_spec and funnel into the pump. The
- * machine has already written state + parked the return-state, so these are pure
- * presentation. ctx is the dm_inst *; the pump is &inst->feedback. */
-#define FB(inst_ctx) (&((struct dm_inst *)(inst_ctx))->feedback)
+static void cb_speak(void *c, const dm_feedback_spec *spec) {
+    struct dm_inst *inst = c;
+    dm_feedback_speak(&inst->feedback, spec);
+}
 
-static void sp_rec(void *c) {
-    dm_feedback_spec s = {.kind = DM_FB_REC, .slot = -1, .slot2 = -1};
-    dm_feedback_speak(FB(c), &s);
-}
-static void sp_stop(void *c) {
-    dm_feedback_spec s = {.kind = DM_FB_STOP, .slot = -1, .slot2 = -1};
-    dm_feedback_speak(FB(c), &s);
-}
-static void sp_no_rec(void *c) {
-    dm_feedback_spec s = {.kind = DM_FB_NO_REC, .slot = -1, .slot2 = -1};
-    dm_feedback_speak(FB(c), &s);
-}
-static void sp_saved(void *c, int slot) {
-    dm_feedback_spec s = {.kind = DM_FB_SAVED, .slot = slot, .slot2 = -1, .show_preview = true};
-    dm_feedback_speak(FB(c), &s);
-}
-static void sp_deleted(void *c, int slot) {
-    dm_feedback_spec s = {.kind = DM_FB_DELETED, .slot = slot, .slot2 = -1};
-    dm_feedback_speak(FB(c), &s);
-}
-static void sp_slot_empty(void *c, int slot) {
-    dm_feedback_spec s = {.kind = DM_FB_SLOT_EMPTY, .slot = slot, .slot2 = -1};
-    dm_feedback_speak(FB(c), &s);
-}
-static void sp_slot_full(void *c, int slot) {
-    dm_feedback_spec s = {.kind = DM_FB_SLOT_FULL, .slot = slot, .slot2 = -1};
-    dm_feedback_speak(FB(c), &s);
-}
-static void sp_chain_insert(void *c, int slot) {
-    dm_feedback_spec s = {.kind = DM_FB_CHAIN_INSERT, .slot = slot, .slot2 = -1, .show_preview = true};
-    dm_feedback_speak(FB(c), &s);
-}
-static void sp_chain_empty(void *c, int slot) {
-    dm_feedback_spec s = {.kind = DM_FB_CHAIN_EMPTY, .slot = slot, .slot2 = -1};
-    dm_feedback_speak(FB(c), &s);
-}
-static void sp_chain_no_room(void *c, int slot) {
-    dm_feedback_spec s = {.kind = DM_FB_CHAIN_NO_ROOM, .slot = slot, .slot2 = -1};
-    dm_feedback_speak(FB(c), &s);
-}
-static void sp_overflow(void *c) {
-    dm_feedback_spec s = {.kind = DM_FB_OVERFLOW, .slot = -1, .slot2 = -1};
-    dm_feedback_speak(FB(c), &s);
-}
-static void sp_move_prompt(void *c) {
-    dm_feedback_spec s = {.kind = DM_FB_MOVE_PROMPT, .slot = -1, .slot2 = -1};
-    dm_feedback_speak(FB(c), &s);
-}
-static void sp_move_src(void *c, int slot) {
-    dm_feedback_spec s = {.kind = DM_FB_MOVE_SRC, .slot = slot, .slot2 = -1};
-    dm_feedback_speak(FB(c), &s);
-}
-static void sp_move_cancel(void *c) {
-    dm_feedback_spec s = {.kind = DM_FB_MOVE_CANCEL, .slot = -1, .slot2 = -1};
-    dm_feedback_speak(FB(c), &s);
-}
-static void sp_moved(void *c, int src, int dst) {
-    dm_feedback_spec s = {.kind = DM_FB_MOVED, .slot = src, .slot2 = dst};
-    dm_feedback_speak(FB(c), &s);
-}
-static void sp_save_qfull(void *c, int slot) {
-    dm_feedback_spec s = {.kind = DM_FB_SAVE_QFULL, .slot = slot, .slot2 = -1};
-    dm_feedback_speak(FB(c), &s);
-}
-static void sp_delete_qfull(void *c, int slot) {
-    dm_feedback_spec s = {.kind = DM_FB_DELETE_QFULL, .slot = slot, .slot2 = -1};
-    dm_feedback_speak(FB(c), &s);
-}
-static void sp_status(void *c) {
-    dm_feedback_spec s = {.kind = DM_FB_STATUS_HEADER, .slot = -1, .slot2 = -1};
-    dm_feedback_speak(FB(c), &s);
-}
-static void sp_preview(void *c, int slot) {
-    /* PREVIEW types nothing (it is a query-API readout); the machine raised the
-     * widget notification already, so finish instantly. */
-    (void)slot;
-    dm_machine_typing_finished(&((struct dm_inst *)c)->machine);
-}
-static void sp_async_deleted(void *c, int slot) {
-    dm_feedback_spec s = {.kind = DM_FB_DELETED, .slot = slot, .slot2 = -1};
-    dm_feedback_speak(FB(c), &s);
-}
-static void sp_async_save_failed(void *c, int slot) {
-    dm_feedback_spec s = {.kind = DM_FB_SAVE_FAILED, .slot = slot, .slot2 = -1};
-    dm_feedback_speak(FB(c), &s);
-}
-static void sp_async_delete_failed(void *c, int slot) {
-    dm_feedback_spec s = {.kind = DM_FB_DELETE_FAILED, .slot = slot, .slot2 = -1};
-    dm_feedback_speak(FB(c), &s);
-}
-static void sp_erase(void *c) {
-    /* erase emission is armed by the erase scheduler before erase_due returns. */
-    (void)c;
+/* apply_knob: the machine drives the knob effect through here, inside the knob
+ * transition. Maps the command to the pump's knob entry; each ends by reporting
+ * typing_finished. The level/style/erase change + persist + confirmation all
+ * live in the pump (the runtime-knob owner). */
+static void cb_apply_knob(void *c, dm_command cmd) {
+    struct dm_inst *inst = c;
+    switch (cmd) {
+    case DM_CMD_FEEDBACK_INC:  dm_feedback_knob_level(&inst->feedback, 1);  break;
+    case DM_CMD_FEEDBACK_DEC:  dm_feedback_knob_level(&inst->feedback, -1); break;
+    case DM_CMD_STYLE_TOGGLE:  dm_feedback_knob_style_toggle(&inst->feedback); break;
+    case DM_CMD_ERASE_TOGGLE:  dm_feedback_knob_erase_toggle(&inst->feedback); break;
+    default: break;
+    }
 }
 #else /* !DM_TYPING_ENABLED — feedback compiled out: every speak finishes now */
-static void sp_finish(void *c) { dm_machine_typing_finished(&((struct dm_inst *)c)->machine); }
-static void sp_finish_slot(void *c, int s) { (void)s; sp_finish(c); }
-static void sp_finish_2(void *c, int a, int b) { (void)a; (void)b; sp_finish(c); }
+static void cb_speak(void *c, const dm_feedback_spec *spec) {
+    (void)spec;
+    dm_machine_typing_finished(&((struct dm_inst *)c)->machine);
+}
+static void cb_apply_knob(void *c, dm_command cmd) {
+    /* no typing pump to change/persist/confirm: the knob transition still has to
+     * settle, so report typing_finished. (Knob commands are IDLE-only and the
+     * level gate types nothing here anyway.) */
+    (void)cmd;
+    dm_machine_typing_finished(&((struct dm_inst *)c)->machine);
+}
 #endif /* DM_TYPING_ENABLED */
 
 static void wire_callbacks(struct dm_inst *inst) {
@@ -534,56 +465,8 @@ static void wire_callbacks(struct dm_inst *inst) {
     cb->notify = cb_notify;
     cb->arm_timeout = cb_arm_timeout;
     cb->cancel_timeout = cb_cancel_timeout;
-
-#if DM_TYPING_ENABLED
-    cb->speak_rec = sp_rec;
-    cb->speak_stop = sp_stop;
-    cb->speak_no_recording = sp_no_rec;
-    cb->speak_saved = sp_saved;
-    cb->speak_deleted = sp_deleted;
-    cb->speak_slot_empty = sp_slot_empty;
-    cb->speak_slot_full = sp_slot_full;
-    cb->speak_chain_insert = sp_chain_insert;
-    cb->speak_chain_empty = sp_chain_empty;
-    cb->speak_chain_no_room = sp_chain_no_room;
-    cb->speak_overflow = sp_overflow;
-    cb->speak_move_prompt = sp_move_prompt;
-    cb->speak_move_source_selected = sp_move_src;
-    cb->speak_move_cancelled = sp_move_cancel;
-    cb->speak_moved = sp_moved;
-    cb->speak_save_queue_full = sp_save_qfull;
-    cb->speak_delete_queue_full = sp_delete_qfull;
-    cb->speak_status = sp_status;
-    cb->speak_preview = sp_preview;
-    cb->speak_async_deleted = sp_async_deleted;
-    cb->speak_async_save_failed = sp_async_save_failed;
-    cb->speak_async_delete_failed = sp_async_delete_failed;
-    cb->speak_erase = sp_erase;
-#else
-    cb->speak_rec = sp_finish;
-    cb->speak_stop = sp_finish;
-    cb->speak_no_recording = sp_finish;
-    cb->speak_saved = sp_finish_slot;
-    cb->speak_deleted = sp_finish_slot;
-    cb->speak_slot_empty = sp_finish_slot;
-    cb->speak_slot_full = sp_finish_slot;
-    cb->speak_chain_insert = sp_finish_slot;
-    cb->speak_chain_empty = sp_finish_slot;
-    cb->speak_chain_no_room = sp_finish_slot;
-    cb->speak_overflow = sp_finish;
-    cb->speak_move_prompt = sp_finish;
-    cb->speak_move_source_selected = sp_finish_slot;
-    cb->speak_move_cancelled = sp_finish;
-    cb->speak_moved = sp_finish_2;
-    cb->speak_save_queue_full = sp_finish_slot;
-    cb->speak_delete_queue_full = sp_finish_slot;
-    cb->speak_status = sp_finish;
-    cb->speak_preview = sp_finish_slot;
-    cb->speak_async_deleted = sp_finish_slot;
-    cb->speak_async_save_failed = sp_finish_slot;
-    cb->speak_async_delete_failed = sp_finish_slot;
-    cb->speak_erase = sp_finish;
-#endif
+    cb->speak = cb_speak;
+    cb->apply_knob = cb_apply_knob;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -641,36 +524,23 @@ static int on_keymap_binding_pressed(struct zmk_behavior_binding *binding,
 #endif
 #if DM_TYPING_ENABLED
     /*
-     * Knob commands: the machine gates them IDLE-only and parks
-     * TYPING_FEEDBACK -> IDLE, but the change + persist + confirmation are
-     * feedback-internal, so the shell applies them. We run the knob effect only if
-     * the machine actually accepted the command — i.e. it is now in
-     * TYPING_FEEDBACK; an IGNORED command leaves the prior state untouched and we
-     * do nothing.
+     * Knob commands dispatch uniformly: the machine gates them IDLE-only, and on
+     * ALLOWED drives the change + persist + confirmation through apply_knob INSIDE
+     * the transition. The shell no longer re-runs the command or peeks state to
+     * reconstruct whether it was accepted — the legality verdict stays the
+     * machine's.
      */
     case DM_FEEDBACK_INC:
-        dm_machine_command(&inst->machine, DM_CMD_FEEDBACK_INC, 0);
-        if (dm_machine_state(&inst->machine) == DM_STATE_TYPING_FEEDBACK) {
-            dm_feedback_knob_level(&inst->feedback, 1);
-        }
+        dispatch(inst, DM_CMD_FEEDBACK_INC, 0);
         return ZMK_BEHAVIOR_OPAQUE;
     case DM_FEEDBACK_DEC:
-        dm_machine_command(&inst->machine, DM_CMD_FEEDBACK_DEC, 0);
-        if (dm_machine_state(&inst->machine) == DM_STATE_TYPING_FEEDBACK) {
-            dm_feedback_knob_level(&inst->feedback, -1);
-        }
+        dispatch(inst, DM_CMD_FEEDBACK_DEC, 0);
         return ZMK_BEHAVIOR_OPAQUE;
     case DM_STYLE_TOGGLE:
-        dm_machine_command(&inst->machine, DM_CMD_STYLE_TOGGLE, 0);
-        if (dm_machine_state(&inst->machine) == DM_STATE_TYPING_FEEDBACK) {
-            dm_feedback_knob_style_toggle(&inst->feedback);
-        }
+        dispatch(inst, DM_CMD_STYLE_TOGGLE, 0);
         return ZMK_BEHAVIOR_OPAQUE;
     case DM_ERASE_TOGGLE:
-        dm_machine_command(&inst->machine, DM_CMD_ERASE_TOGGLE, 0);
-        if (dm_machine_state(&inst->machine) == DM_STATE_TYPING_FEEDBACK) {
-            dm_feedback_knob_erase_toggle(&inst->feedback);
-        }
+        dispatch(inst, DM_CMD_ERASE_TOGGLE, 0);
         return ZMK_BEHAVIOR_OPAQUE;
 #endif
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_TEST_RELOAD)

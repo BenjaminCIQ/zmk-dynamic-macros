@@ -29,6 +29,7 @@
 
 #include <zmk-behavior-dynamic-macros/dm_event.h>
 #include <zmk-behavior-dynamic-macros/dm_render.h>
+#include <zmk-behavior-dynamic-macros/dm_spec.h> /* dm_fb_kind, dm_feedback_spec */
 
 #ifdef __cplusplus
 extern "C" {
@@ -52,46 +53,9 @@ typedef struct {
     void *ctx;
 } dm_fb_sink;
 
-/* ---- the message spec — replaces the 23 near-clone feedback_* functions ---- */
-
-/*
- * Which message to build. The builder maps this + the live style/locale to the
- * concrete string parts and slot formatting. `slot` is the slot index a message
- * names (or -1); `slot2` is the move destination (or -1). `show_preview` streams
- * the slot's contents through dm_render after the scaffolding.
- */
-typedef enum {
-    DM_FB_REC = 0,
-    DM_FB_STOP,
-    DM_FB_NO_REC,
-    DM_FB_SAVED,         /* slot; show_preview at VERBOSE */
-    DM_FB_SLOT_FULL,     /* slot */
-    DM_FB_SLOT_EMPTY,    /* slot */
-    DM_FB_OVERFLOW,
-    DM_FB_MOVE_PROMPT,
-    DM_FB_MOVE_SRC,      /* slot */
-    DM_FB_MOVED,         /* slot (src), slot2 (dst) */
-    DM_FB_MOVE_CANCEL,
-    DM_FB_CHAIN_INSERT,  /* slot; preview only */
-    DM_FB_CHAIN_EMPTY,   /* slot */
-    DM_FB_CHAIN_NO_ROOM, /* slot */
-    DM_FB_DELETED,       /* slot */
-    DM_FB_DELETE_FAILED, /* slot */
-    DM_FB_SAVE_FAILED,   /* slot */
-    DM_FB_SAVE_QFULL,    /* slot */
-    DM_FB_DELETE_QFULL,  /* slot */
-    DM_FB_KNOB,          /* knob_text */
-    DM_FB_STATUS_HEADER, /* status header line */
-    DM_FB_STATUS_SLOT,   /* slot; one status slot line, optional preview */
-} dm_fb_kind;
-
-typedef struct {
-    dm_fb_kind  kind;
-    int         slot;
-    int         slot2;
-    bool        show_preview;
-    const char *knob_text; /* for DM_FB_KNOB: "VERBOSE", "ARROW", "ERASE ON", ... */
-} dm_feedback_spec;
+/* The message spec (dm_fb_kind, dm_feedback_spec) lives in dm_spec.h — the pure
+ * value the machine builds and this builder consumes, shared without either
+ * depending on the other's module. */
 
 /* ---- slot facts the builder needs (passed in; the builder reads no slots) -- */
 
