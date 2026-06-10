@@ -27,12 +27,20 @@ out="$here"
 
 cfg="CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_NEW_STACK=y"
 
+# Cases excluded from the parity tree. The NVS-roundtrip tests persist macros to
+# the shared flash partition under the same settings key as their legacy twins;
+# running both copies in one runner invocation cross-contaminates that flash (the
+# §4.3 shared-flash.bin hazard), breaking the legacy cases. The new stack's NVS
+# save/reload is exercised by the legacy nvs cases at the step-8 cut-over instead.
+EXCLUDE="core/nvs_roundtrip core/multi_slot_nvs"
+
 generated=0
 for suite in core feedback events; do
   for case_dir in "$repo/tests/$suite"/*/; do
     case="$(basename "$case_dir")"
     [ -f "$case_dir/native_sim.keymap" ] || continue
     [ -f "$case_dir/keycode_events.snapshot" ] || continue
+    case " $EXCLUDE " in *" $suite/$case "*) continue ;; esac
 
     dst="$out/${suite}__${case}"
     mkdir -p "$dst"
