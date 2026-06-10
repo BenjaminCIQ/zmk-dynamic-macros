@@ -124,31 +124,36 @@ static dm_result do_rec(dm_machine *m) {
      * take in favor of a fresh recording. */
     (void)m->cb->store_draft_count(m->cb->ctx); /* observe; discard is the reset below */
     m->cb->store_draft_reset(m->cb->ctx);
-    /* The cue types while suppressed and returns to RECORDING; parking the
-     * destination as the return-state (not writing it directly) is what lets the
-     * OFF-path typing_finished restore RECORDING instead of clobbering to IDLE. */
-    enter_typing(m, DM_STATE_RECORDING);
+    /* notify BEFORE the state write so the event's coarse state reflects the
+     * pre-transition state, matching the old code which raises at the top of each
+     * feedback_* before start_feedback changes state. The cue then types while
+     * suppressed and returns to RECORDING; parking the destination as the
+     * return-state (not writing it directly) is what lets the OFF-path
+     * typing_finished restore RECORDING instead of clobbering to IDLE. */
     notify(m, DM_EVT_RECORDING_STARTED, -1);
+    enter_typing(m, DM_STATE_RECORDING);
     m->cb->speak_rec(m->cb->ctx);
     return DM_OK;
 }
 
 static dm_result do_stop(dm_machine *m) {
     if (m->cb->store_draft_count(m->cb->ctx) == 0) {
-        enter_typing(m, DM_STATE_IDLE);
         notify(m, DM_EVT_ERROR_NO_RECORDING, -1);
+        enter_typing(m, DM_STATE_IDLE);
         m->cb->speak_no_recording(m->cb->ctx);
         return DM_OK;
     }
-    enter_typing(m, DM_STATE_PENDING_ASSIGN);
+    /* raise STOPPED while still RECORDING (coarse state = RECORDING), as the old
+     * feedback_stop does, before parking PENDING_ASSIGN. */
     notify(m, DM_EVT_RECORDING_STOPPED, -1);
+    enter_typing(m, DM_STATE_PENDING_ASSIGN);
     m->cb->speak_stop(m->cb->ctx);
     return DM_OK;
 }
 
 static dm_result do_overflow(dm_machine *m) {
-    enter_typing(m, DM_STATE_PENDING_ASSIGN);
     notify(m, DM_EVT_ERROR_OVERFLOW, -1);
+    enter_typing(m, DM_STATE_PENDING_ASSIGN);
     m->cb->speak_overflow(m->cb->ctx);
     return DM_OK;
 }
@@ -199,8 +204,9 @@ static dm_result do_knob(dm_machine *m, dm_command cmd) {
 /* SLOT in RECORDING = chain source into the draft. */
 static dm_result slot_recording(dm_machine *m, int idx) {
     if (slot_empty(m, idx)) {
-        enter_typing(m, DM_STATE_RECORDING);
+        /* raise while still RECORDING (coarse=RECORDING), as old feedback_chain_empty */
         notify(m, DM_EVT_ERROR_SLOT_EMPTY, idx);
+        enter_typing(m, DM_STATE_RECORDING);
         m->cb->speak_chain_empty(m->cb->ctx, idx);
         return DM_REJECTED_EMPTY; /* returns to RECORDING */
     }
