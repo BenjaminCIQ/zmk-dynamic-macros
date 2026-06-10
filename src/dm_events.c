@@ -19,7 +19,7 @@
 #include <zephyr/device.h>
 #include <zephyr/logging/log.h>
 
-#include <zmk-behavior-dynamic-macros/dm_internal.h>
+#include <zmk-behavior-dynamic-macros/dm_kconfig.h>
 #include <zmk-behavior-dynamic-macros/dm_query.h>
 #include <zmk-behavior-dynamic-macros/dm_shell.h>
 #include <zmk-behavior-dynamic-macros/events/dynamic_macro_state_changed.h>

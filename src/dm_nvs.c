@@ -18,7 +18,7 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/settings/settings.h>
 
-#include <zmk-behavior-dynamic-macros/dm_internal.h>
+#include <zmk-behavior-dynamic-macros/dm_kconfig.h>
 #include <zmk-behavior-dynamic-macros/dm_machine.h>
 #include <zmk-behavior-dynamic-macros/dm_nvs.h>
 #include <zmk-behavior-dynamic-macros/slot_store.h>

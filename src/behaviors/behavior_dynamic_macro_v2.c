@@ -33,7 +33,7 @@
 #include <dt-bindings/zmk/hid_usage_pages.h>
 #include <dt-bindings/zmk/dynamic_macros.h>
 
-#include <zmk-behavior-dynamic-macros/dm_internal.h>
+#include <zmk-behavior-dynamic-macros/dm_kconfig.h>
 #include <zmk-behavior-dynamic-macros/dm_machine.h>
 #include <zmk-behavior-dynamic-macros/dm_render.h>
 #include <zmk-behavior-dynamic-macros/dm_shell.h>

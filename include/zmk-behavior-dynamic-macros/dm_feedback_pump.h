@@ -31,10 +31,9 @@
 
 #include <zephyr/kernel.h>
 
-/* dm_internal.h FIRST: it supplies the Kconfig-derived slot sizing (MAX_EVENTS,
- * NVS_SLOTS, ...) so struct dm_slot has the SAME layout in this Zephyr TU as in
- * the shell — dm_config.h's host defaults must not win here. */
-#include <zmk-behavior-dynamic-macros/dm_internal.h>
+/* dm_kconfig.h supplies the Kconfig-derived slot sizing + feedback/locale knobs
+ * WITHOUT the legacy enums/macros that collide with dm_machine.h / dm_render.h. */
+#include <zmk-behavior-dynamic-macros/dm_kconfig.h>
 #include <zmk-behavior-dynamic-macros/dm_feedback_build.h>
 #include <zmk-behavior-dynamic-macros/dm_machine.h>
 #include <zmk-behavior-dynamic-macros/dm_render.h>

@@ -23,7 +23,7 @@
 #include <zephyr/device.h>
 #include <zephyr/kernel.h>
 
-#include <zmk-behavior-dynamic-macros/dm_internal.h> /* DM_TYPING_ENABLED, MAX_SLOTS, slot_is_nvs */
+#include <zmk-behavior-dynamic-macros/dm_kconfig.h> /* DM_TYPING_ENABLED, MAX_SLOTS, slot_is_nvs */
 #include <zmk-behavior-dynamic-macros/dm_machine.h>
 #include <zmk-behavior-dynamic-macros/slot_store.h>
 #if DM_TYPING_ENABLED
