@@ -79,11 +79,14 @@ static enum zmk_dynamic_macro_state coarse_state(struct dm_inst *inst) {
 
 void dm_events_raise(struct dm_inst *inst, int machine_event, int slot) {
     enum zmk_dynamic_macro_event_type ev = map_event(machine_event);
+    enum zmk_dynamic_macro_state st = coarse_state(inst);
 
-    LOG_DBG("dm_event: type=%d slot=%d", (int)ev, slot);
+    /* log shape must match the legacy dm_raise_state_changed verbatim: the parity
+     * snapshot strips "dm_event: " and captures "type=N slot=N state=N". */
+    LOG_DBG("dm_event: type=%d slot=%d state=%d", (int)ev, slot, (int)st);
 
     raise_zmk_dynamic_macro_state_changed((struct zmk_dynamic_macro_state_changed){
-        .state = coarse_state(inst),
+        .state = st,
         .event = ev,
         .slot = slot,
         .slot_is_nvs = slot >= 0 ? slot_is_nvs(slot) : false,

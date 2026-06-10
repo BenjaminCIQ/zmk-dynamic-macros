@@ -40,6 +40,11 @@ struct fake {
     int last_saved_slot;
     int last_moved_src, last_moved_dst;
     int last_notify_event, last_notify_slot;
+
+    /* when true, speak thunks do NOT auto-drive typing_finished — simulates the
+     * live-typing case where the drain is a separate later event. Default false
+     * (the OFF/instant path: speak finishes synchronously). */
+    bool suppress_auto_finish;
 };
 
 static struct fake *g; /* current fake for the callback thunks */
@@ -65,6 +70,17 @@ static bool log_has(const char *tag) {
     return false;
 }
 
+/* index of the first log entry matching tag, or LOG_CAP if absent (so a missing
+ * tag sorts after any present one in an ordering assertion). */
+static int log_index(const char *tag) {
+    for (int i = 0; i < g->log_n; i++) {
+        if (strcmp(g->log[i], tag) == 0) {
+            return i;
+        }
+    }
+    return LOG_CAP;
+}
+
 /* store thunks */
 static dm_result cb_move(void *c, int s, int d) {
     (void)c;
@@ -88,26 +104,41 @@ static void cb_draft_reset(void *c) { (void)c; log_tag("draft_reset"); }
 static void cb_mark_playing(void *c, int i) { (void)c; (void)i; log_tag("mark_playing"); }
 static void cb_clear_playing(void *c) { (void)c; log_tag("clear_playing"); }
 
-/* speak thunks */
-static void cb_rec(void *c) { (void)c; log_tag("rec"); }
-static void cb_stop(void *c) { (void)c; log_tag("stop"); }
-static void cb_no_recording(void *c) { (void)c; log_tag("no_recording"); }
-static void cb_saved(void *c, int s) { (void)c; g->last_saved_slot = s; log_tag("saved"); }
-static void cb_deleted(void *c, int s) { (void)c; (void)s; log_tag("deleted"); }
-static void cb_slot_empty(void *c, int s) { (void)c; (void)s; log_tag("slot_empty"); }
-static void cb_slot_full(void *c, int s) { (void)c; (void)s; log_tag("slot_full"); }
-static void cb_chain_insert(void *c, int s) { (void)c; (void)s; log_tag("chain_insert"); }
-static void cb_chain_empty(void *c, int s) { (void)c; (void)s; log_tag("chain_empty"); }
-static void cb_chain_no_room(void *c, int s) { (void)c; (void)s; log_tag("chain_no_room"); }
-static void cb_overflow(void *c) { (void)c; log_tag("overflow"); }
-static void cb_move_prompt(void *c) { (void)c; log_tag("move_prompt"); }
-static void cb_move_src_sel(void *c, int s) { (void)c; (void)s; log_tag("move_src_sel"); }
-static void cb_move_cancelled(void *c) { (void)c; log_tag("move_cancelled"); }
-static void cb_moved(void *c, int s, int d) { (void)c; (void)s; (void)d; log_tag("moved"); }
-static void cb_save_qfull(void *c, int s) { (void)c; (void)s; log_tag("save_qfull"); }
-static void cb_delete_qfull(void *c, int s) { (void)c; (void)s; log_tag("delete_qfull"); }
-static void cb_status(void *c) { (void)c; log_tag("status"); }
-static void cb_preview(void *c, int s) { (void)c; (void)s; log_tag("preview"); }
+/*
+ * speak thunks.
+ *
+ * Each cue routes through TYPING_FEEDBACK (the machine parks the destination as
+ * the return-state); the real OFF/below-level path drains synchronously by
+ * calling dm_machine_typing_finished, so the fake does the same here — after a
+ * command the machine settles to its destination, exactly as the firmware's
+ * OFF build does. (The async deferred-completion speaks are NOT typing
+ * transitions and must not auto-finish.)
+ */
+static void fake_finish(void) {
+    if (!g->suppress_auto_finish) {
+        dm_machine_typing_finished(&g->m);
+    }
+}
+
+static void cb_rec(void *c) { (void)c; log_tag("rec"); fake_finish(); }
+static void cb_stop(void *c) { (void)c; log_tag("stop"); fake_finish(); }
+static void cb_no_recording(void *c) { (void)c; log_tag("no_recording"); fake_finish(); }
+static void cb_saved(void *c, int s) { (void)c; g->last_saved_slot = s; log_tag("saved"); fake_finish(); }
+static void cb_deleted(void *c, int s) { (void)c; (void)s; log_tag("deleted"); fake_finish(); }
+static void cb_slot_empty(void *c, int s) { (void)c; (void)s; log_tag("slot_empty"); fake_finish(); }
+static void cb_slot_full(void *c, int s) { (void)c; (void)s; log_tag("slot_full"); fake_finish(); }
+static void cb_chain_insert(void *c, int s) { (void)c; (void)s; log_tag("chain_insert"); fake_finish(); }
+static void cb_chain_empty(void *c, int s) { (void)c; (void)s; log_tag("chain_empty"); fake_finish(); }
+static void cb_chain_no_room(void *c, int s) { (void)c; (void)s; log_tag("chain_no_room"); fake_finish(); }
+static void cb_overflow(void *c) { (void)c; log_tag("overflow"); fake_finish(); }
+static void cb_move_prompt(void *c) { (void)c; log_tag("move_prompt"); fake_finish(); }
+static void cb_move_src_sel(void *c, int s) { (void)c; (void)s; log_tag("move_src_sel"); fake_finish(); }
+static void cb_move_cancelled(void *c) { (void)c; log_tag("move_cancelled"); fake_finish(); }
+static void cb_moved(void *c, int s, int d) { (void)c; (void)s; (void)d; log_tag("moved"); fake_finish(); }
+static void cb_save_qfull(void *c, int s) { (void)c; (void)s; log_tag("save_qfull"); fake_finish(); }
+static void cb_delete_qfull(void *c, int s) { (void)c; (void)s; log_tag("delete_qfull"); fake_finish(); }
+static void cb_status(void *c) { (void)c; log_tag("status"); fake_finish(); }
+static void cb_preview(void *c, int s) { (void)c; (void)s; log_tag("preview"); fake_finish(); }
 static void cb_async_deleted(void *c, int s) { (void)c; (void)s; log_tag("async_deleted"); }
 static void cb_async_save_failed(void *c, int s) { (void)c; (void)s; log_tag("async_save_failed"); }
 static void cb_async_delete_failed(void *c, int s) { (void)c; (void)s; log_tag("async_delete_failed"); }
@@ -273,28 +304,41 @@ ZTEST(dm_machine, stp_empty_draft_back_to_idle) {
 
 /* ---- guards: assign --------------------------------------------------------*/
 
-ZTEST(dm_machine, assign_to_empty_commits_and_defers_persist) {
+ZTEST(dm_machine, assign_to_empty_commits_then_persists_on_finish) {
     setup();
     goto_state(DM_STATE_PENDING_ASSIGN);
     fx.log_n = 0;
-    /* slot RAM0 is empty -> commit succeeds */
+    /* slot RAM0 is empty -> commit succeeds; the SAVED cue routes through
+     * TYPING_FEEDBACK and persist fires from typing_finished, which the fake
+     * speak drives synchronously (the OFF-path). The ORDER is the invariant:
+     * commit (RAM-only) before persist (the deferred enqueue). */
     dm_result rc = cmd(DM_CMD_SLOT, RAM0);
     zassert_equal(rc, DM_OK, NULL);
     zassert_true(log_has("commit"), NULL);
     zassert_true(log_has("saved"), NULL);
-    /* persist is DEFERRED to typing_finished, not fired during the command */
-    zassert_false(log_has("persist"), NULL);
+    zassert_true(log_has("persist"), NULL);
+    zassert_true(log_index("commit") < log_index("persist"), NULL);
+    zassert_equal(fx.last_persist_slot, RAM0, NULL);
+    zassert_equal(dm_machine_state(&fx.m), DM_STATE_IDLE, NULL);
 }
 
-ZTEST(dm_machine, assign_persist_fires_on_typing_finished) {
+ZTEST(dm_machine, assign_persist_is_deferred_until_finish) {
     setup();
     goto_state(DM_STATE_PENDING_ASSIGN);
-    cmd(DM_CMD_SLOT, RAM0);
     fx.log_n = 0;
+    /* With a speak that does NOT auto-finish (the live-typing case), the commit
+     * happens but persist must wait for typing_finished. */
+    fx.suppress_auto_finish = true;
+    dm_result rc = cmd(DM_CMD_SLOT, RAM0);
+    zassert_equal(rc, DM_OK, NULL);
+    zassert_true(log_has("commit"), NULL);
+    zassert_false(log_has("persist"), NULL); /* deferred */
+    zassert_equal(dm_machine_state(&fx.m), DM_STATE_TYPING_FEEDBACK, NULL);
     dm_machine_typing_finished(&fx.m);
     zassert_true(log_has("persist"), NULL);
     zassert_equal(fx.last_persist_slot, RAM0, NULL);
     zassert_equal(dm_machine_state(&fx.m), DM_STATE_IDLE, NULL);
+    fx.suppress_auto_finish = false;
 }
 
 ZTEST(dm_machine, assign_to_occupied_rejects_and_keeps_pending) {
