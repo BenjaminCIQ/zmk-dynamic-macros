@@ -16,7 +16,7 @@
 #include <string.h>
 
 #include <zmk-behavior-dynamic-macros/slot_store.h>
-#include "slot_store_priv.h"
+#include <zmk-behavior-dynamic-macros/slot_store_priv.h>
 
 static bool slot_is_nvs(int idx) {
     return idx >= 0 && idx < NVS_SLOTS;

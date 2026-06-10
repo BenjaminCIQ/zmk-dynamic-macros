@@ -17,7 +17,7 @@
 
 #include <zmk-behavior-dynamic-macros/dm_machine.h>
 #include <zmk-behavior-dynamic-macros/slot_store.h>
-#include "../../src/slot_store_priv.h"
+#include <zmk-behavior-dynamic-macros/slot_store_priv.h>
 
 /* ---- fake callbacks ------------------------------------------------------- */
 

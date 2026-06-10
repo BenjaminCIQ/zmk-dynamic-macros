@@ -26,8 +26,20 @@
 #include <zmk-behavior-dynamic-macros/dm_kconfig.h> /* DM_TYPING_ENABLED, MAX_SLOTS, slot_is_nvs */
 #include <zmk-behavior-dynamic-macros/dm_machine.h>
 #include <zmk-behavior-dynamic-macros/slot_store.h>
+/* full slot_store layout: struct dm_inst embeds it by value (caller-owned storage) */
+#include <zmk-behavior-dynamic-macros/slot_store_priv.h>
 #if DM_TYPING_ENABLED
 #include <zmk-behavior-dynamic-macros/dm_feedback_pump.h>
+#endif
+
+/* Per-instance config (the settings key prefix). Guarded against the identical
+ * legacy definition in dm_internal.h, which is never in the same TU as the new
+ * shell but the guard keeps it safe if some transitive include changes. */
+#ifndef DM_BEHAVIOR_CONFIG_DEFINED
+#define DM_BEHAVIOR_CONFIG_DEFINED
+struct behavior_dynamic_macro_config {
+    const char *settings_name;
+};
 #endif
 
 struct dm_inst {

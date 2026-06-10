@@ -23,6 +23,13 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 #define TAP_DELAY CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_TAP_DELAY
 
+/* The erase-delay Kconfig only exists when auto-erase is enabled. The erase
+ * scheduler is still compiled (erase_enabled gates it at runtime, defaulting off),
+ * so give the unused constant a harmless value when the Kconfig is absent. */
+#ifndef CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_FEEDBACK_ERASE_DELAY
+#define CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_FEEDBACK_ERASE_DELAY 1500
+#endif
+
 /* HID backspace, and the modifier bit the build core emits for shifted ASCII. */
 #define HID_BACKSPACE 0x2A
 #define HID_RETURN    0x28

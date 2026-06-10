@@ -95,9 +95,12 @@ struct fb_event {
 };
 #endif
 
+#ifndef DM_BEHAVIOR_CONFIG_DEFINED
+#define DM_BEHAVIOR_CONFIG_DEFINED
 struct behavior_dynamic_macro_config {
     const char *settings_name;
 };
+#endif
 
 struct behavior_dynamic_macro_data {
     const struct device *dev;

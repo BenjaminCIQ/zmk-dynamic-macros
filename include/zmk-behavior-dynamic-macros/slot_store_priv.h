@@ -5,12 +5,14 @@
  *
  * slot_store private layout.
  *
- * Separated from the public slot_store.h so the struct is opaque to ordinary
- * callers (the machine sees only the slot_store* handle), while slot_store.c and
- * the WHITE-BOX store tests can both see the fields. The store tests are
- * deliberately white-box: they assert slots[] / pending_delete / slot_generation
- * outcomes directly, which is the whole point of pinning the dual-write
- * ordering. No other module includes this header.
+ * Separated from the public slot_store.h so the struct is opaque to the modules
+ * that only hold a slot_store* handle (the machine). Two callers need the full
+ * layout: slot_store.c itself, the WHITE-BOX store tests (which assert slots[] /
+ * pending_delete / slot_generation directly to pin the dual-write ordering), and
+ * the behavior shell, which embeds a slot_store by value in dev->data so no heap
+ * allocation is needed — the same caller-owned-storage pattern dm_machine.h and
+ * dm_feedback_pump_priv.h already expose. Ordinary modules still include only the
+ * public slot_store.h.
  *
  * PURE: no Zephyr. pending_delete/playing are plain words here (single-threaded
  * host + the cooperative firmware behavior thread); the cross-thread atomicity
