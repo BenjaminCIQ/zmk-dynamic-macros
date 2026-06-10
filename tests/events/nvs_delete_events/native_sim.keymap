@@ -1,0 +1,64 @@
+#include <dt-bindings/zmk/keys.h>
+#include <behaviors.dtsi>
+#include <dt-bindings/zmk/kscan_mock.h>
+#include <behaviors/dynamic_macro.dtsi>
+#include <dt-bindings/zmk/dynamic_macros.h>
+
+/*
+ * NVS-delete notification parity (covers the corpus blind spot where every NVS
+ * snapshot case ran FEEDBACK_OFF *without* EVENTS, so the NVS×notification path
+ * was untested). Records one event into an NVS slot, assigns it, then deletes
+ * it, watching the dm_event notification stream.
+ *
+ * The invariant under test: a persisted (NVS) delete raises DELETED (type=3)
+ * EXACTLY ONCE, deferred to the async storage completion — not once
+ * optimistically at the command and again on completion. The pre-fix new stack
+ * raised it twice; the old path raises it once. Flash is process-private
+ * (--flash_in_ram, defaulted by the module Kconfig under TEST_RELOAD), so no
+ * shared-residue clear is needed.
+ *
+ * Key layout (3 rows x 2 cols):
+ *   (0,0)=REC        (0,1)=STP
+ *   (1,0)=NVS slot 0 (1,1)=DEL
+ *   (2,0)=A          (2,1)=none
+ */
+
+&kscan {
+    rows = <3>;
+    columns = <2>;
+    exit-after;
+    events = <
+        /* REC */
+        ZMK_MOCK_PRESS(0,0,10)
+        ZMK_MOCK_RELEASE(0,0,10)
+        /* A (recorded) */
+        ZMK_MOCK_PRESS(2,0,10)
+        ZMK_MOCK_RELEASE(2,0,10)
+        /* STP */
+        ZMK_MOCK_PRESS(0,1,10)
+        ZMK_MOCK_RELEASE(0,1,10)
+        /* NVS slot 0 (assign) */
+        ZMK_MOCK_PRESS(1,0,500)
+        ZMK_MOCK_RELEASE(1,0,10)
+        /* DEL (enter delete mode) */
+        ZMK_MOCK_PRESS(1,1,10)
+        ZMK_MOCK_RELEASE(1,1,10)
+        /* NVS slot 0 (delete) — the async erase needs time to settle, so the
+         * deferred DELETED lands within this 1000ms window */
+        ZMK_MOCK_PRESS(1,0,1000)
+        ZMK_MOCK_RELEASE(1,0,10)
+    >;
+};
+
+/ {
+    keymap {
+        compatible = "zmk,keymap";
+        default_layer {
+            bindings = <
+                &dm DM_REC 0      &dm DM_STP 0
+                &dm DM_SLOT_NVS 0 &dm DM_DEL 0
+                &kp A             &none
+            >;
+        };
+    };
+};
