@@ -20,6 +20,7 @@
 #include <zephyr/logging/log.h>
 
 #include <zmk-behavior-dynamic-macros/dm_kconfig.h>
+#include <zmk-behavior-dynamic-macros/dm_notify.h>
 #include <zmk-behavior-dynamic-macros/dm_query.h>
 #include <zmk-behavior-dynamic-macros/dm_shell.h>
 #include <zmk-behavior-dynamic-macros/events/dynamic_macro_state_changed.h>
@@ -28,28 +29,12 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
 
-/* Machine notify codes — mirror the DM_EVT_* in dm_machine.c. The machine speaks
- * these (an int) so it stays Zephyr-free; this is the one place they are turned
- * into the widget event enum. Kept as an explicit map because the two orderings
- * deliberately diverge past PREVIEW_READY. */
-enum {
-    DM_EVT_RECORDING_STARTED = 0,
-    DM_EVT_RECORDING_STOPPED,
-    DM_EVT_SAVED,
-    DM_EVT_DELETED,
-    DM_EVT_MOVED,
-    DM_EVT_PLAY_STARTED,
-    DM_EVT_PLAY_FINISHED,
-    DM_EVT_PREVIEW_READY,
-    DM_EVT_ERROR_NO_RECORDING,
-    DM_EVT_ERROR_SLOT_EMPTY,
-    DM_EVT_ERROR_OVERFLOW,
-    DM_EVT_ERROR_SAVE_FAILED,
-    DM_EVT_ERROR_DELETE_FAILED,
-    DM_EVT_ERROR_QUEUE_FULL,
-};
-
-static enum zmk_dynamic_macro_event_type map_event(int machine_event) {
+/* The machine raises a dm_notify_code (from dm_notify.h, the one owner); this is
+ * the single place it is turned into the public widget event enum. The map is
+ * explicit because the two orderings deliberately diverge past PREVIEW_READY — it
+ * is real translation, not a duplicate of the code list. No `default`, so a new
+ * dm_notify_code that misses a case is flagged by -Wswitch. */
+static enum zmk_dynamic_macro_event_type map_event(dm_notify_code machine_event) {
     switch (machine_event) {
     case DM_EVT_RECORDING_STARTED:  return ZMK_DYNAMIC_MACRO_RECORDING_STARTED;
     case DM_EVT_RECORDING_STOPPED:  return ZMK_DYNAMIC_MACRO_RECORDING_STOPPED;
@@ -65,8 +50,9 @@ static enum zmk_dynamic_macro_event_type map_event(int machine_event) {
     case DM_EVT_ERROR_SAVE_FAILED:  return ZMK_DYNAMIC_MACRO_ERROR_SAVE_FAILED;
     case DM_EVT_ERROR_DELETE_FAILED:return ZMK_DYNAMIC_MACRO_ERROR_DELETE_FAILED;
     case DM_EVT_ERROR_QUEUE_FULL:   return ZMK_DYNAMIC_MACRO_ERROR_QUEUE_FULL;
-    default:                        return ZMK_DYNAMIC_MACRO_ERROR_NO_RECORDING;
+    case DM_EVT__COUNT:             break; /* not a real code */
     }
+    return ZMK_DYNAMIC_MACRO_ERROR_NO_RECORDING;
 }
 
 static enum zmk_dynamic_macro_state coarse_state(struct dm_inst *inst) {

@@ -31,6 +31,7 @@
 
 #include <zmk-behavior-dynamic-macros/dm_kconfig.h>
 #include <zmk-behavior-dynamic-macros/dm_machine.h>
+#include <zmk-behavior-dynamic-macros/dm_notify.h>
 #include <zmk-behavior-dynamic-macros/dm_render.h>
 #include <zmk-behavior-dynamic-macros/dm_shell.h>
 #include <zmk-behavior-dynamic-macros/slot_store.h>
@@ -261,12 +262,6 @@ static void dm_save_knobs(void *ctx, uint8_t level, uint8_t style, bool erase) {
 }
 #endif
 
-#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
-/* PLAY_FINISHED is the one notification the machine does not raise (it has no
- * playback-completion transition of its own); the playback emitter raises it
- * directly. Mirrors the DM_EVT_* ordering in dm_machine.c. */
-#define DM_EVT_PLAY_FINISHED 6
-#endif
 
 /* -------------------------------------------------------------------------- */
 /*  Playback emitter (co-located primitive: replay a slot's dm_events)        */
@@ -277,8 +272,10 @@ static void playback_finish(struct dm_inst *inst) {
     inst->playback_slot = -1;
     slot_store_clear_playing(&inst->store);
     k_timer_stop(&inst->playback_timer);
-    /* Settle the machine to IDLE FIRST, then raise PLAY_FINISHED — the event's
-     * coarse state field is derived from the machine, so the widget sees IDLE. */
+    /* PLAY_FINISHED is the one notification the machine does not raise (it has no
+     * playback-completion transition of its own); the playback emitter raises it.
+     * Settle the machine to IDLE FIRST, then raise — the event's coarse state
+     * field is derived from the machine, so the widget sees IDLE. */
     dm_machine_play_finished(&inst->machine);
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
     dm_events_raise(inst, DM_EVT_PLAY_FINISHED, slot);

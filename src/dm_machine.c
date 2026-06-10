@@ -18,25 +18,12 @@
 #include <string.h>
 
 #include <zmk-behavior-dynamic-macros/dm_machine.h>
+#include <zmk-behavior-dynamic-macros/dm_notify.h>
 #include <zmk-behavior-dynamic-macros/slot_store.h>
 
-/* Notification event codes — mirror zmk_dynamic_macro_state_changed's enum so the
- * shell can forward them to dm_events without the machine pulling in Zephyr. The
- * machine raises them before calling speak, so they fire at every feedback level. */
-#define DM_EVT_RECORDING_STARTED 0
-#define DM_EVT_RECORDING_STOPPED 1
-#define DM_EVT_SAVED             2
-#define DM_EVT_DELETED           3
-#define DM_EVT_MOVED             4
-#define DM_EVT_PLAY_STARTED      5
-#define DM_EVT_PLAY_FINISHED     6
-#define DM_EVT_PREVIEW_READY     7
-#define DM_EVT_ERROR_NO_RECORDING 8
-#define DM_EVT_ERROR_SLOT_EMPTY   9
-#define DM_EVT_ERROR_OVERFLOW     10
-#define DM_EVT_ERROR_SAVE_FAILED  11
-#define DM_EVT_ERROR_DELETE_FAILED 12
-#define DM_EVT_ERROR_QUEUE_FULL   13
+/* Notification codes (dm_notify_code) come from dm_notify.h, the one owner. The
+ * machine raises them via the notify callback before calling speak, so they fire
+ * at every feedback level; dm_events maps them to the public widget enum. */
 
 /* ---- legality matrix ------------------------------------------------------ */
 
