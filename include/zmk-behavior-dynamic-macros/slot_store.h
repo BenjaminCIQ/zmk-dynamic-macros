@@ -40,10 +40,8 @@ extern "C" {
 /*
  * A recorded macro: a fixed-capacity event array with a live count.
  *
- * Guarded so the new-stack Zephyr shells can include both this header and the
- * legacy dm_internal.h (which defines the identical struct from Kconfig sizing)
- * in one translation unit during the parallel-stack phase. The host/pure build
- * sees only this definition. Layout is identical in both.
+ * The definition guard keeps it idempotent if a translation unit reaches the
+ * struct through more than one include path.
  */
 #ifndef DM_SLOT_DEFINED
 #define DM_SLOT_DEFINED

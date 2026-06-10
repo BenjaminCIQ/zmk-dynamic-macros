@@ -3,13 +3,14 @@
  *
  * SPDX-License-Identifier: MIT
  *
- * Shared render parity corpus (redesign §5.2).
+ * Shared render parity corpus.
  *
- * A fixed set of dm_event sequences fed identically into:
- *   - the OLD walk (dm_get_preview_string) by the native_sim capture test, to
- *     RECORD the golden strings from the live old code; and
- *   - the NEW dm_render (buffer sink) by the host parity test, to ASSERT it
- *     matches the recorded golden.
+ * A fixed set of dm_event sequences fed identically into two renderers that must
+ * agree:
+ *   - dm_get_preview_string, by the native_sim capture test, to record the golden
+ *     preview strings; and
+ *   - dm_render (buffer sink), by the host parity test, to assert it reproduces
+ *     the recorded golden.
  *
  * PURE: only stdint + dm_event. No Zephyr — so both the host loop and the
  * native_sim test consume identical inputs. Add cases here as render edge

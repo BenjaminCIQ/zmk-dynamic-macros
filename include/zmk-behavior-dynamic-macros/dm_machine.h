@@ -179,16 +179,14 @@ void dm_machine_erase_cancel(dm_machine *m);
  * whenever timeout_pending is set and reports expiry here; the machine owns the
  * resulting transition (clear the move source, drop to IDLE) so state stays
  * machine-written. Ignored unless the machine is in a *_PENDING state — a timer
- * that fires after the pending state already resolved is a no-op, mirroring the
- * old handler's state guard.
+ * that fires after the pending state already resolved is a no-op.
  */
 void dm_machine_timeout(dm_machine *m);
 
 /*
  * The playback emitter drained the last event of the playing slot. The machine
  * clears the playing-slot ownership intent and returns PLAYING -> IDLE — the
- * only exit from PLAYING, mirroring the old emit handler's state=IDLE on
- * playback completion. Ignored unless the machine is PLAYING (a stray report
+ * only exit from PLAYING. Ignored unless the machine is PLAYING (a stray report
  * after a cancel is a no-op).
  */
 void dm_machine_play_finished(dm_machine *m);

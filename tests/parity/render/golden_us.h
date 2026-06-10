@@ -3,23 +3,23 @@
  *
  * SPDX-License-Identifier: MIT
  *
- * US-locale render golden (redesign §5.2, Option A — old walk is the oracle).
+ * US-locale render golden.
  *
- * The token cases here are CAPTURED FROM THE LIVE OLD WALK: the keymap-snapshot
- * test (tests/parity/render/native_sim.keymap) records Ctrl+C then Shift+3 and
- * saves at VERBOSE/US, so the old preview walk types the preview; the captured
- * keycode_events.snapshot decodes to:
+ * The token cases here are captured from dm_get_preview_string: the
+ * keymap-snapshot test (tests/parity/render/native_sim.keymap) records Ctrl+C
+ * then Shift+3 and saves at VERBOSE/US, so the preview walk types the preview;
+ * the captured keycode_events.snapshot decodes to:
  *
  *     [DM REC]c#[DM STOP][DM SAVED R0: '<LCTL+C>#']
- *                                       ^^^^^^^^^^  preview = old walk output
+ *                                       ^^^^^^^^^^  the captured preview
  *
- * So the old walk renders Ctrl+C as "<LCTL+C>" and US Shift+3 as "#". These are
- * the parity anchors; dm_render must reproduce them. The decode is cross-checked
- * by the independent first-principles assertions in tests/unit/test_render.c, so
- * the golden is anchored to the old code, not to the new renderer.
+ * So Ctrl+C renders as "<LCTL+C>" and US Shift+3 as "#". These are the parity
+ * anchors; dm_render must reproduce them. The decode is cross-checked by the
+ * independent first-principles assertions in tests/unit/test_render.c, so the
+ * golden stands on the captured snapshot, not on the renderer under test.
  *
- * To extend coverage to more cases, add them to the capture keymap, re-run the
- * snapshot test in CI, and decode the new preview here.
+ * To extend coverage, add cases to the capture keymap, re-run the snapshot test
+ * in CI, and decode the resulting preview here.
  */
 
 #ifndef DM_GOLDEN_US_H

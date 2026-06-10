@@ -3,19 +3,14 @@
  *
  * SPDX-License-Identifier: MIT
  *
- * behavior_dynamic_macro (new shell) — the thin wiring/dispatch layer.
+ * behavior_dynamic_macro — the thin wiring/dispatch layer.
  *
- * Owns nothing but wiring: it composes the deep modules (dm_machine, slot_store,
+ * Owns nothing but wiring: it composes the modules (dm_machine, slot_store,
  * dm_feedback, dm_nvs, dm_events) into one dev->data, parses a binding into a
  * dm_command, runs the keymap-validation BUILD_ASSERTs and metadata, owns the
  * listener + its recording-suppression flag, and drives the co-located playback
  * emitter. State is written ONLY by dm_machine; persistence ordering lives ONLY
  * in slot_store; message formatting lives ONLY in dm_feedback/dm_render.
- *
- * Built only for the new stack (DM_NEW_STACK): until the step-8 cut-over the old
- * behavior_dynamic_macro.c is the live path and defines the same symbols; the
- * guard keeps the two out of one image. The native_sim parity harness defines
- * DM_NEW_STACK to reach this shell.
  */
 
 #define DT_DRV_COMPAT zmk_behavior_dynamic_macro
@@ -53,7 +48,7 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #define TAP_DELAY CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_TAP_DELAY
 
 /* -------------------------------------------------------------------------- */
-/*  Build-time validation (carried over verbatim — definition-of-done)        */
+/*  Build-time validation                                                     */
 /* -------------------------------------------------------------------------- */
 
 BUILD_ASSERT(MAX_EVENTS > 0, "Dynamic macros require at least 1 event per slot");
@@ -122,7 +117,7 @@ BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) <= 1,
 ZMK_KEYMAP_LAYERS_FOREACH(DM_VALIDATE_KEYMAP_LAYER)
 
 /* -------------------------------------------------------------------------- */
-/*  Behavior parameter metadata (carried over verbatim)                       */
+/*  Behavior parameter metadata                                               */
 /* -------------------------------------------------------------------------- */
 
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_METADATA)
@@ -283,8 +278,7 @@ static void playback_finish(struct dm_inst *inst) {
     slot_store_clear_playing(&inst->store);
     k_timer_stop(&inst->playback_timer);
     /* Settle the machine to IDLE FIRST, then raise PLAY_FINISHED — the event's
-     * coarse state field is derived from the machine, and the old emit handler
-     * raised it after writing state=IDLE, so the widget sees IDLE. */
+     * coarse state field is derived from the machine, so the widget sees IDLE. */
     dm_machine_play_finished(&inst->machine);
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
     dm_events_raise(inst, DM_EVT_PLAY_FINISHED, slot);
@@ -647,11 +641,12 @@ static int on_keymap_binding_pressed(struct zmk_behavior_binding *binding,
 #endif
 #if DM_TYPING_ENABLED
     /*
-     * Knob commands: the machine gates them IDLE-only (legality) and parks
-     * TYPING_FEEDBACK -> IDLE via do_knob, but the change + persist + confirmation
-     * are feedback-internal (the deferred seam). We run the knob effect only if the
-     * machine actually accepted the command — i.e. it is now in TYPING_FEEDBACK; an
-     * IGNORED command leaves the prior state untouched and we do nothing.
+     * Knob commands: the machine gates them IDLE-only and parks
+     * TYPING_FEEDBACK -> IDLE, but the change + persist + confirmation are
+     * feedback-internal, so the shell applies them. We run the knob effect only if
+     * the machine actually accepted the command — i.e. it is now in
+     * TYPING_FEEDBACK; an IGNORED command leaves the prior state untouched and we
+     * do nothing.
      */
     case DM_FEEDBACK_INC:
         dm_machine_command(&inst->machine, DM_CMD_FEEDBACK_INC, 0);
@@ -822,7 +817,7 @@ static int behavior_dynamic_macro_init(const struct device *dev) {
     }
 #endif
 
-    LOG_DBG("Dynamic macro behavior (v2) initialized (%d slots, %d max events)", MAX_SLOTS,
+    LOG_DBG("Dynamic macro behavior initialized (%d slots, %d max events)", MAX_SLOTS,
             MAX_EVENTS);
     return 0;
 }

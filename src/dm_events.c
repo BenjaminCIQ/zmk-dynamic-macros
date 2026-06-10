@@ -81,8 +81,8 @@ void dm_events_raise(struct dm_inst *inst, int machine_event, int slot) {
     enum zmk_dynamic_macro_event_type ev = map_event(machine_event);
     enum zmk_dynamic_macro_state st = coarse_state(inst);
 
-    /* log shape must match the legacy dm_raise_state_changed verbatim: the parity
-     * snapshot strips "dm_event: " and captures "type=N slot=N state=N". */
+    /* Fixed log shape: tooling strips "dm_event: " and captures
+     * "type=N slot=N state=N". */
     LOG_DBG("dm_event: type=%d slot=%d state=%d", (int)ev, slot, (int)st);
 
     raise_zmk_dynamic_macro_state_changed((struct zmk_dynamic_macro_state_changed){
@@ -94,11 +94,6 @@ void dm_events_raise(struct dm_inst *inst, int machine_event, int slot) {
 }
 
 /* ---- the dm_get_* widget query API ---------------------------------------- */
-/*
- * Built only for the new stack (the parity harness / post-cutover firmware).
- * The old behavior_dynamic_macro.c still defines these symbols on the live path;
- * DM_NEW_STACK selects the new projection so the two never collide in one image.
- */
 #if defined(DM_NEW_STACK)
 
 static dm_render_slot_view view_for(slot_store *store, int slot_idx) {

@@ -3,18 +3,16 @@
  *
  * SPDX-License-Identifier: MIT
  *
- * dm_shell — the per-instance aggregate that the new behavior driver composes,
- * plus the single-instance resolution the query/notification shell shares.
+ * dm_shell — the per-instance aggregate that the behavior driver composes, plus
+ * the single-instance resolution the query/notification shell shares.
  *
- * This is the new stack's equivalent of the old behavior_dynamic_macro_data
- * God-struct, but it composes deep modules rather than owning their fields: each
- * sub-module (dm_machine, slot_store, dm_feedback) keeps its own private struct
- * and is embedded here only so dev->data is one allocation. The shell owns just
- * the wiring the modules cannot: the listener suppression flag, the assign/move
+ * Composes the modules rather than owning their fields: each sub-module
+ * (dm_machine, slot_store, dm_feedback) keeps its own private struct and is
+ * embedded here only so dev->data is one allocation. The shell owns just the
+ * wiring the modules cannot: the listener suppression flag, the assign/move
  * timeout work, and the playback emitter state.
  *
- * Zephyr-coupled: this is part of the new shell, not the pure core. It is built
- * only in the firmware/parity builds, never the host unit loop.
+ * Zephyr-coupled: built only in the firmware build, never the host unit loop.
  */
 
 #ifndef DM_SHELL_H
@@ -32,9 +30,8 @@
 #include <zmk-behavior-dynamic-macros/dm_feedback_pump.h>
 #endif
 
-/* Per-instance config (the settings key prefix). Guarded against the identical
- * legacy definition in dm_internal.h, which is never in the same TU as the new
- * shell but the guard keeps it safe if some transitive include changes. */
+/* Per-instance config (the settings key prefix). The definition guard keeps it
+ * idempotent if a translation unit reaches it through more than one include. */
 #ifndef DM_BEHAVIOR_CONFIG_DEFINED
 #define DM_BEHAVIOR_CONFIG_DEFINED
 struct behavior_dynamic_macro_config {
@@ -45,7 +42,7 @@ struct behavior_dynamic_macro_config {
 struct dm_inst {
     const struct device *dev;
 
-    /* the composed deep modules (each owns its own data) */
+    /* the composed modules (each owns its own data) */
     dm_machine  machine;
     slot_store  store;
 #if DM_TYPING_ENABLED

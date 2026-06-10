@@ -125,11 +125,10 @@ static dm_result do_rec(dm_machine *m) {
     (void)m->cb->store_draft_count(m->cb->ctx); /* observe; discard is the reset below */
     m->cb->store_draft_reset(m->cb->ctx);
     /* notify BEFORE the state write so the event's coarse state reflects the
-     * pre-transition state, matching the old code which raises at the top of each
-     * feedback_* before start_feedback changes state. The cue then types while
-     * suppressed and returns to RECORDING; parking the destination as the
-     * return-state (not writing it directly) is what lets the OFF-path
-     * typing_finished restore RECORDING instead of clobbering to IDLE. */
+     * pre-transition state. The cue then types while suppressed and returns to
+     * RECORDING; parking the destination as the return-state (not writing it
+     * directly) is what lets the OFF-path typing_finished restore RECORDING
+     * instead of clobbering to IDLE. */
     notify(m, DM_EVT_RECORDING_STARTED, -1);
     enter_typing(m, DM_STATE_RECORDING);
     m->cb->speak_rec(m->cb->ctx);
@@ -288,9 +287,9 @@ static dm_result slot_move(dm_machine *m, int idx) {
             return DM_REJECTED_EMPTY;
         }
         m->move_source_slot = idx;
-        /* source selected; the cue returns to MOVE_PENDING. (The original MOVE
-         * prompt timeout keeps running — typing_finished re-arms it on return,
-         * matching the old path which left the existing timeout in place.) */
+        /* source selected; the cue returns to MOVE_PENDING. (The MOVE prompt
+         * timeout keeps running — typing_finished re-arms it on return, leaving
+         * the existing timeout in place.) */
         enter_typing(m, DM_STATE_MOVE_PENDING);
         m->cb->speak_move_source_selected(m->cb->ctx, idx);
         return DM_OK;

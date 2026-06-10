@@ -74,8 +74,8 @@ enum dm_state {
 
 #include <zmk-behavior-dynamic-macros/dm_event.h>
 
-/* Guarded so a new-stack translation unit may include both this header and
- * slot_store.h (identical layout) during the parallel-stack rewrite phase. */
+/* The definition guard keeps it idempotent if a translation unit reaches the
+ * struct through more than one include path. */
 #ifndef DM_SLOT_DEFINED
 #define DM_SLOT_DEFINED
 struct dm_slot {

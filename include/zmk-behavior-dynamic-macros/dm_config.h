@@ -11,11 +11,11 @@
  * of truth, by build:
  *
  *   - Firmware (Zephyr): the Kconfig values. Zephyr force-includes autoconf.h
- *     globally, so the CONFIG_* macros are visible here without including
- *     dm_internal.h — which keeps the pure .c files (slot_store.c, dm_machine.c,
- *     …) Kconfig-correct in the firmware build WITHOUT coupling them to Zephyr.
+ *     globally, so the CONFIG_* macros are visible here — the pure .c files
+ *     (slot_store.c, dm_machine.c, …) stay Kconfig-correct in the firmware build
+ *     WITHOUT being coupled to Zephyr.
  *   - Host unit build: there is no Kconfig, so the test-representative defaults
- *     below apply. They mirror the Kconfig defaults so host tests exercise the
+ *     below apply. They match the Kconfig defaults so host tests exercise the
  *     same array shapes the firmware uses.
  *
  * PURE: no Zephyr include. Do not add one. (CONFIG_* come from autoconf.h, which
@@ -27,11 +27,10 @@
 
 #ifdef __ZEPHYR__
 /*
- * Firmware build: take the Kconfig values, mirroring dm_internal.h exactly (NVS
- * slots collapse to 0 when PERSIST is off — a disabled bool Kconfig is undefined,
- * not 0). When the shell TU also includes dm_internal.h, it defines these first
- * and the #ifndef guards below make this a no-op; a pure-core TU compiled into
- * the firmware without dm_internal.h gets the identical values here.
+ * Firmware build: take the Kconfig values (NVS slots collapse to 0 when PERSIST
+ * is off — a disabled bool Kconfig is undefined, not 0). The #ifndef guards make
+ * each define idempotent, so a translation unit that has already set one of these
+ * keeps its value and the rest are filled in here.
  */
 #ifndef MAX_EVENTS
 #define MAX_EVENTS CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_MAX_EVENTS

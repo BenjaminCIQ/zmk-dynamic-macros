@@ -191,17 +191,13 @@ config ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS
       slot contents.
 
 config ZMK_BEHAVIOR_DYNAMIC_MACRO_NEW_STACK
-    bool "Build the deep-module rewrite stack instead of the legacy path"
+    bool "Build the modular dynamic-macro stack"
     default n
     help
-      Test-only, during the architecture rewrite: builds the new deep-module
-      stack (dm_machine + slot_store + dm_render + dm_feedback_pump + dm_events +
-      dm_nvs + the v2 behavior shell) instead of the legacy single-path
-      behavior_dynamic_macro.c / dm_feedback.c / dm_storage.c. The native_sim
-      parity harness sets this so the same command corpus runs through the new
-      path and is diffed against the legacy snapshots. NOT for production builds;
-      removed at the step-8 cut-over when the legacy path is deleted and the new
-      stack becomes the only path.
+      Builds the modular stack (dm_machine + slot_store + dm_render +
+      dm_feedback_pump + dm_events + dm_nvs + the behavior shell). The native_sim
+      test harness sets this to run the command corpus through it and diff the
+      output against the recorded snapshots. Test-only; not for production builds.
 
 endif
 

@@ -31,8 +31,8 @@
 
 #include <zephyr/kernel.h>
 
-/* dm_kconfig.h supplies the Kconfig-derived slot sizing + feedback/locale knobs
- * WITHOUT the legacy enums/macros that collide with dm_machine.h / dm_render.h. */
+/* dm_kconfig.h supplies the Kconfig-derived slot sizing + feedback/locale knobs;
+ * the state enum is dm_machine.h's and the locale enum is dm_render.h's. */
 #include <zmk-behavior-dynamic-macros/dm_kconfig.h>
 #include <zmk-behavior-dynamic-macros/dm_feedback_build.h>
 #include <zmk-behavior-dynamic-macros/dm_machine.h>
@@ -132,8 +132,7 @@ void dm_feedback_knob_erase_toggle(dm_feedback *f);
 /*
  * The one place the ARROW-requires-full-punctuation-locale rule lives: a
  * restored ARROW style on a plain locale is silently kept as FULL, by
- * construction. Each setter is a no-op if the value is out of range, matching
- * the old dm_settings_set validation.
+ * construction. Each setter is a no-op if the value is out of range.
  */
 void dm_feedback_restore_level(dm_feedback *f, uint8_t level);
 void dm_feedback_restore_style(dm_feedback *f, uint8_t style);

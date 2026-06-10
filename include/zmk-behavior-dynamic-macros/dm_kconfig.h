@@ -3,19 +3,12 @@
  *
  * SPDX-License-Identifier: MIT
  *
- * dm_kconfig — the new stack's Kconfig-derived constants.
+ * dm_kconfig — the Kconfig-derived compile-time constants the Zephyr shells need.
  *
- * The new deep-module shells need the firmware's compile-time knobs (locale,
- * feedback defaults, status detail, slot geometry, slot_is_nvs) but must NOT pull
- * in the legacy dm_internal.h, because that header *also* defines names the new
- * module headers own — `enum dm_state` (vs dm_machine.h) and the `DM_LOCALE_*`
- * value macros (vs dm_render.h's `dm_locale` enum) — which collide when both are
- * in one translation unit during the parallel-stack phase. This header carries
- * only the scalar Kconfig values and the one tiny inline, so it composes cleanly
- * with dm_machine.h / dm_render.h.
- *
- * At the step-8 cut-over (legacy path deleted) this can fold back into a single
- * config header.
+ * The shells need the firmware's compile-time knobs (locale, feedback defaults,
+ * status detail, slot geometry, slot_is_nvs). This header carries only the scalar
+ * Kconfig values and the one small inline; the state enum lives in dm_machine.h
+ * and the locale enum in dm_render.h, so it composes cleanly with both.
  */
 
 #ifndef DM_KCONFIG_H

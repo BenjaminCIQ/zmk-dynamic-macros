@@ -38,9 +38,9 @@ struct dm_feedback;
 
 /*
  * Wire the single instance's modules into the file-scoped backend, and start the
- * storage work queue. settings_name keys the per-slot settings entries (matches
- * the old config->settings_name). machine/feedback may be NULL in a build without
- * them; store must be non-NULL. Boot restore (slot_store_load /
+ * storage work queue. settings_name keys the per-slot settings entries.
+ * machine/feedback may be NULL in a build without them; store must be non-NULL.
+ * Boot restore (slot_store_load /
  * dm_feedback_restore_*) and export read-back reach these through the saved refs.
  */
 void dm_nvs_init(slot_store *store, struct dm_machine *machine, struct dm_feedback *feedback,
@@ -54,9 +54,8 @@ void dm_nvs_init(slot_store *store, struct dm_machine *machine, struct dm_feedba
  */
 const dm_nvs_sink *dm_nvs_sink_get(void);
 
-/* Persist the runtime knobs (level/style/erase). Queue-full is logged, not spoken
- * (matches the old DM_STORAGE_OP_SAVE_FEEDBACK). The dm_feedback save_knobs hook
- * is wired to this. */
+/* Persist the runtime knobs (level/style/erase). Queue-full is logged, not
+ * spoken. The dm_feedback save_knobs hook is wired to this. */
 void dm_nvs_save_knobs(uint8_t level, uint8_t style, bool erase);
 
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_TEST_RELOAD)

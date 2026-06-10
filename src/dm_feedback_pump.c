@@ -35,8 +35,8 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #define HID_RETURN    0x28
 
 /* ---- ring -------------------------------------------------------------------
- * Power-of-two ring with masked head/tail (matches the old FB_RING_SIZE ring).
- * One usable slot is reserved so head==tail means empty unambiguously.
+ * Power-of-two ring with masked head/tail. One usable slot is reserved so
+ * head==tail means empty unambiguously.
  */
 
 static inline uint8_t ring_count(const dm_feedback *f) {
@@ -82,8 +82,7 @@ static dm_fb_sink pump_sink(dm_feedback *f) {
 /* ---- per-spec presentation facts -------------------------------------------- */
 
 /* The runtime level a spec must reach to type anything. Status uses the separate
- * compile-time status_detail gate, handled in speak(). Mirrors the per-function
- * feedback_enabled_for(...) gates of the old dm_feedback.c exactly. */
+ * compile-time status_detail gate, handled in speak(). */
 static int spec_min_level(dm_fb_kind kind) {
     switch (kind) {
     case DM_FB_SLOT_EMPTY:
@@ -359,8 +358,7 @@ static bool locale_is_plain(dm_locale locale) {
 
 void dm_feedback_knob_style_toggle(dm_feedback *f) {
     uint8_t new_style = (f->style == DM_FB_STYLE_ARROW) ? DM_FB_STYLE_FULL : DM_FB_STYLE_ARROW;
-    /* ARROW requires a full-punctuation locale; the toggle is a no-op otherwise
-     * (the IDLE-only legality + this guard reproduce the old cmd_style_toggle). */
+    /* ARROW requires a full-punctuation locale; the toggle is a no-op otherwise. */
     if (new_style == DM_FB_STYLE_ARROW && locale_is_plain(f->locale)) {
         dm_machine_typing_finished(f->machine);
         return;
