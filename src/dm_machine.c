@@ -48,7 +48,7 @@ static const verdict legality[9][DM_CMD__COUNT] = {
     [DM_STATE_PENDING_ASSIGN]={ 1,   0,   0,   0,   1,   0,   0,   0,   0,   0,   0,   0,   0 },
     [DM_STATE_DELETE_PENDING]={ 0,   0,   0,   0,   1,   0,   0,   0,   0,   0,   0,   0,   0 },
     [DM_STATE_MOVE_PENDING] = {  0,   0,   0,   0,   1,   0,   0,   0,   0,   0,   0,   0,   0 },
-    [DM_STATE_PREVIEW_PENDING]={0,   0,   0,   0,   1,   0,   0,   0,   0,   0,   0,   0,   0 },
+    [DM_STATE_PREVIEW_PENDING]={1,   0,   0,   0,   1,   0,   0,   0,   0,   0,   0,   0,   0 },
     [DM_STATE_PLAYING]     = {  0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0 },
     [DM_STATE_TYPING_FEEDBACK]={0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0 },
     [DM_STATE_TYPING_ERASE] = {  0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0 },
@@ -116,6 +116,11 @@ static void enter_typing(dm_machine *m, dm_state return_to) {
 /* ---- per-state transition logic ------------------------------------------- */
 
 static dm_result do_rec(dm_machine *m) {
+    /* REC restarts recording from IDLE, RECORDING (re-record), PENDING_ASSIGN
+     * (a finished-but-unassigned take is discarded), and PREVIEW_PENDING. Cancel
+     * any pending-state timeout so a stale timer cannot fire mid-recording — the
+     * old cmd_record cancels assign_timeout_work unconditionally. */
+    cancel_timeout(m);
     /* REC from PENDING_ASSIGN with a non-empty draft discards the unassigned
      * take in favor of a fresh recording. */
     (void)m->cb->store_draft_count(m->cb->ctx); /* observe; discard is the reset below */
@@ -259,12 +264,18 @@ static dm_result slot_delete(dm_machine *m, int idx) {
         speak(m, DM_FB_DELETE_QFULL, idx, -1, false);
         return rc;
     }
-    /* NVS delete: the DELETED notification + speech are deferred to
-     * deliver_async on completion. A RAM delete completes synchronously, so
-     * speak the confirmation now. The store distinguishes them; the machine
-     * relies on store_delete returning DM_OK for both and the async path
-     * (deliver_async) for the NVS DELETED. For RAM the shell's store adapter
-     * has already zeroed the slot, so notify+speak here. */
+    if (rc == DM_DELETE_DEFERRED) {
+        /* NVS delete enqueued: the DELETED notification + speech wait for
+         * deliver_async on completion (which runs after this typing finishes and
+         * the machine is IDLE). The transition still typed nothing, so
+         * typing_finished must run to settle the parked IDLE return-state; speak
+         * does that on the OFF-path, but there is no speak here, so report it
+         * directly — the machine, not a phantom speak, owns the no-type case. */
+        dm_machine_typing_finished(m);
+        return rc;
+    }
+    /* RAM delete: completed synchronously (the store zeroed the slot), so speak
+     * the confirmation now. */
     notify(m, DM_EVT_DELETED, idx);
     speak(m, DM_FB_DELETED, idx, -1, false);
     return DM_OK;
@@ -399,11 +410,13 @@ dm_result dm_machine_command(dm_machine *m, dm_command cmd, int param) {
 /* ---- up-calls ------------------------------------------------------------- */
 
 void dm_machine_typing_finished(dm_machine *m) {
-    /* fire the deferred post-save persist before settling */
-    if (m->post_save_slot >= 0) {
-        m->cb->store_persist(m->cb->ctx, m->post_save_slot);
-        m->post_save_slot = -1;
-    }
+    /* fire the deferred post-save persist, then settle (matching the old
+     * feedback_complete order: state restored, timeout rescheduled, dm_save_slot
+     * last). Capture the slot before clearing so a queue-full outcome can name it
+     * AFTER the state has settled. */
+    int persist_slot = m->post_save_slot;
+    m->post_save_slot = -1;
+
     m->state = m->return_state;
     /* a return into a *_PENDING state re-arms the assign/move timeout (the old
      * feedback_complete reschedules assign_timeout_work for exactly these). */
@@ -411,30 +424,43 @@ void dm_machine_typing_finished(dm_machine *m) {
         m->state == DM_STATE_MOVE_PENDING || m->state == DM_STATE_PREVIEW_PENDING) {
         arm_timeout(m);
     }
+
+    if (persist_slot >= 0) {
+        dm_result rc = m->cb->store_persist(m->cb->ctx, persist_slot);
+        if (rc == DM_SAVE_QUEUE_FULL) {
+            /* the deferred assign-persist enqueue was refused: the macro will not
+             * survive a reboot. Speak it from the settled state (a fresh feedback
+             * typing, exactly as the old dm_feedback_save_queue_full did inside
+             * feedback_complete), parking the current state as the return-state. */
+            notify(m, DM_EVT_ERROR_QUEUE_FULL, persist_slot);
+            enter_typing(m, m->state);
+            speak(m, DM_FB_SAVE_QFULL, persist_slot, -1, false);
+        }
+    }
 }
 
 void dm_machine_deliver_async(dm_machine *m, dm_result outcome, int slot) {
     /* IDLE-suppression: a deferred completion only speaks when nothing else is
-     * active; otherwise it is dropped rather than hijacking the live op. */
+     * active; otherwise it is dropped rather than hijacking the live op. A
+     * DM_DELETE_STALE completion (the op was superseded) is dropped here too. */
     if (m->state != DM_STATE_IDLE) {
         return;
     }
+    int notify_evt;
+    dm_fb_kind kind;
     switch (outcome) {
-    case DM_OK:
-        notify(m, DM_EVT_DELETED, slot);
-        speak(m, DM_FB_DELETED, slot, -1, false);
-        break;
-    case DM_SAVE_FAILED:
-        notify(m, DM_EVT_ERROR_SAVE_FAILED, slot);
-        speak(m, DM_FB_SAVE_FAILED, slot, -1, false);
-        break;
-    case DM_DELETE_FAILED:
-        notify(m, DM_EVT_ERROR_DELETE_FAILED, slot);
-        speak(m, DM_FB_DELETE_FAILED, slot, -1, false);
-        break;
-    default:
-        break;
+    case DM_OK:            notify_evt = DM_EVT_DELETED;            kind = DM_FB_DELETED;       break;
+    case DM_SAVE_FAILED:   notify_evt = DM_EVT_ERROR_SAVE_FAILED;  kind = DM_FB_SAVE_FAILED;   break;
+    case DM_DELETE_FAILED: notify_evt = DM_EVT_ERROR_DELETE_FAILED; kind = DM_FB_DELETE_FAILED; break;
+    default:               return; /* DM_DELETE_STALE and anything else: drop */
     }
+    /* Park the IDLE return-state and enter TYPING_FEEDBACK before speaking, so the
+     * machine reads as busy while the deferred message types and settles back to
+     * IDLE on typing_finished — exactly as a synchronous transition does (the old
+     * deferred dm_feedback_deleted typed through TYPING_FEEDBACK the same way). */
+    notify(m, notify_evt, slot);
+    enter_typing(m, DM_STATE_IDLE);
+    speak(m, kind, slot, -1, false);
 }
 
 void dm_machine_erase_due(dm_machine *m) {
@@ -451,12 +477,24 @@ void dm_machine_erase_due(dm_machine *m) {
      * no-typing build (no scheduler), so it is gone. */
 }
 
-void dm_machine_erase_cancel(dm_machine *m) {
+/* Both the clean-drain (erase_finished) and the abort (erase_cancel) paths
+ * restore the state parked at erase_due and clear erase_active. Without this on
+ * the clean-drain path, erase_active would stay set and a later keycode would
+ * fire a phantom erase_cancel that resurrects the long-settled parked state. */
+static void erase_restore(dm_machine *m) {
     if (!m->erase_active) {
         return;
     }
     m->state = m->erase_return_state;
     m->erase_active = false;
+}
+
+void dm_machine_erase_finished(dm_machine *m) {
+    erase_restore(m);
+}
+
+void dm_machine_erase_cancel(dm_machine *m) {
+    erase_restore(m);
 }
 
 void dm_machine_timeout(dm_machine *m) {

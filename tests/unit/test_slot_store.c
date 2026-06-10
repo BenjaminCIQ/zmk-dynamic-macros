@@ -183,7 +183,7 @@ ZTEST(slot_store, delete_while_playing_skips_zero) {
     seed_slot(s, NVS_A, 5);
 
     dm_result r = slot_store_delete(s, NVS_A);
-    zassert_equal(r, DM_OK, "delete enqueues for an NVS slot");
+    zassert_equal(r, DM_DELETE_DEFERRED, "an NVS delete enqueues and defers to completion");
     zassert_true(s->pending_delete[NVS_A], "slot marked pending_delete");
 
     slot_store_mark_playing(s, NVS_A);
@@ -219,7 +219,7 @@ ZTEST(slot_store, stale_completion_ignored) {
     seed_slot(s, NVS_A, 2);
 
     dm_result c = slot_store_complete_delete(s, NVS_A, stale, true);
-    zassert_equal(c, DM_OK, "stale completion is a no-op, reports OK");
+    zassert_equal(c, DM_DELETE_STALE, "stale completion is a no-op, reports DM_DELETE_STALE");
     zassert_equal(s->slots[NVS_A].event_count, 2, "reassigned slot NOT clobbered by stale delete");
 }
 

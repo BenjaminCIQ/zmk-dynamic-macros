@@ -104,10 +104,12 @@ int                   slot_store_count(const slot_store *s, slot_class cls);
  * same-slot move into a CANCEL, not a rejection. */
 dm_result slot_store_move(slot_store *s, int src, int dst);
 
-/* Delete idx. NVS slots are marked pending and enqueued; the RAM zero happens on
+/* Delete idx. A RAM slot is zeroed immediately and returns DM_OK (the caller
+ * speaks DELETED now). An NVS slot is marked pending and enqueued, returning
+ * DM_DELETE_DEFERRED — the RAM zero and the spoken/raised DELETED wait for the
  * async completion (slot_store_complete_delete), honoring the playing-slot rule.
- * RAM slots are zeroed immediately. DM_REJECTED_EMPTY if already empty;
- * DM_DELETE_QUEUE_FULL rolls the pending bit back. */
+ * DM_REJECTED_EMPTY if already empty; DM_DELETE_QUEUE_FULL rolls the pending bit
+ * back. */
 dm_result slot_store_delete(slot_store *s, int idx);
 
 /* Enqueue the persist of slot idx (NVS slots; a RAM slot is a successful no-op).
@@ -149,9 +151,10 @@ void slot_store_clear_playing(slot_store *s);
 /*
  * Async delete completion (called by the nvs sink driver once settings_delete
  * returns). `ok` is the storage verdict. On success the RAM slot is zeroed
- * UNLESS it is the playing slot or the generation is stale (the
- * op was superseded). Returns the outcome to surface (DM_OK / DM_DELETE_FAILED),
- * already filtered for staleness so the caller need not re-check.
+ * UNLESS it is the playing slot. Returns the outcome to surface: DM_OK (deleted,
+ * speak DELETED), DM_DELETE_FAILED (storage failed), or DM_DELETE_STALE (the op
+ * was superseded — not pending or a stale generation — so the caller stays
+ * silent). Already filtered so the caller need not re-check.
  */
 dm_result slot_store_complete_delete(slot_store *s, int idx, uint32_t generation, bool ok);
 

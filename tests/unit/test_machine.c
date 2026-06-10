@@ -16,6 +16,7 @@
 #include <string.h>
 
 #include <zmk-behavior-dynamic-macros/dm_machine.h>
+#include <zmk-behavior-dynamic-macros/dm_notify.h>
 #include <zmk-behavior-dynamic-macros/slot_store.h>
 #include <zmk-behavior-dynamic-macros/slot_store_priv.h>
 
@@ -49,6 +50,13 @@ struct fake {
      * live-typing case where the drain is a separate later event. Default false
      * (the OFF/instant path: speak finishes synchronously). */
     bool suppress_auto_finish;
+
+    /* set by deliver_async() (the test wrapper) for the duration of the call, so
+     * fake_speak can tag the deferred-completion messages distinctly and NOT
+     * auto-finish them — they are not synchronous transition speaks. Both sync
+     * and async paths now enter TYPING_FEEDBACK before speaking, so the calling
+     * context (not the state) is the honest signal. */
+    bool in_deliver_async;
 };
 
 static struct fake *g; /* current fake for the callback thunks */
@@ -152,8 +160,10 @@ static const char *kind_tag(const dm_feedback_spec *s, bool async) {
 
 static void fake_speak(void *c, const dm_feedback_spec *spec) {
     (void)c;
-    /* async deferred completions speak from IDLE; sync transitions from TYPING_FEEDBACK */
-    bool async = dm_machine_state(&g->m) != DM_STATE_TYPING_FEEDBACK;
+    /* deferred-completion speaks come from deliver_async; everything else is a
+     * synchronous transition speak. The real pump drives typing_finished later
+     * for both, but a sync transition's OFF-path finishes synchronously. */
+    bool async = g->in_deliver_async;
     log_tag(kind_tag(spec, async));
     if (spec->kind == DM_FB_SAVED) {
         g->last_saved_slot = spec->slot;
@@ -229,6 +239,14 @@ static dm_result cmd(dm_command c, int p) {
     return dm_machine_command(&fx.m, c, p);
 }
 
+/* Drive a deferred completion, flagging the context so fake_speak tags it async
+ * and does not auto-finish (the real pump drives typing_finished later). */
+static void deliver_async(dm_result outcome, int slot) {
+    fx.in_deliver_async = true;
+    dm_machine_deliver_async(&fx.m, outcome, slot);
+    fx.in_deliver_async = false;
+}
+
 /* ---- legality matrix: every (state, command) cell -------------------------
  * The matrix is two-valued: a command in a state is either ALLOWED (does
  * something) or IGNORED (DM_OK, no side effect). We drive the machine into
@@ -287,6 +305,19 @@ ZTEST(dm_machine, rec_during_playing_is_ignored) {
     zassert_equal(rc, DM_OK, NULL);
     zassert_equal(dm_machine_state(&fx.m), DM_STATE_PLAYING, NULL);
     zassert_false(log_has("draft_reset"), NULL); /* no side effect */
+}
+
+ZTEST(dm_machine, rec_from_preview_pending_starts_recording) {
+    setup();
+    goto_state(DM_STATE_PREVIEW_PENDING);
+    fx.log_n = 0;
+    /* parity with the old cmd_record: PREVIEW_PENDING is NOT in its blocklist, so
+     * REC there cancels the preview timeout and starts a fresh recording. */
+    dm_result rc = cmd(DM_CMD_REC, 0);
+    zassert_equal(rc, DM_OK, NULL);
+    zassert_true(log_has("draft_reset"), NULL);
+    zassert_true(log_has("rec"), NULL);
+    zassert_equal(dm_machine_state(&fx.m), DM_STATE_RECORDING, NULL);
 }
 
 ZTEST(dm_machine, stp_from_idle_is_ignored) {
@@ -354,6 +385,25 @@ ZTEST(dm_machine, assign_persist_is_deferred_until_finish) {
     zassert_equal(fx.last_persist_slot, RAM0, NULL);
     zassert_equal(dm_machine_state(&fx.m), DM_STATE_IDLE, NULL);
     fx.suppress_auto_finish = false;
+}
+
+ZTEST(dm_machine, assign_persist_queue_full_surfaces) {
+    setup();
+    goto_state(DM_STATE_PENDING_ASSIGN);
+    fx.log_n = 0;
+    /* the deferred assign-persist enqueue is refused: the machine must NOT drop it
+     * silently — it speaks SAVE QUEUE FULL and raises ERROR_QUEUE_FULL, naming the
+     * slot, from the settled state (as the old feedback_complete -> dm_save_slot ->
+     * dm_feedback_save_queue_full did). */
+    fx.persist_rc = DM_SAVE_QUEUE_FULL;
+    dm_result rc = cmd(DM_CMD_SLOT, RAM0);
+    zassert_equal(rc, DM_OK, NULL); /* the assign itself committed */
+    zassert_true(log_has("persist"), NULL);
+    zassert_true(log_has("save_qfull"), NULL);
+    /* the ERROR_QUEUE_FULL notification fired for the slot */
+    zassert_equal(fx.last_notify_event, DM_EVT_ERROR_QUEUE_FULL, NULL);
+    zassert_equal(fx.last_notify_slot, RAM0, NULL);
+    zassert_equal(dm_machine_state(&fx.m), DM_STATE_IDLE, NULL);
 }
 
 ZTEST(dm_machine, assign_to_occupied_rejects_and_keeps_pending) {
@@ -462,7 +512,31 @@ ZTEST(dm_machine, delete_occupied_slot_deletes_and_idles) {
     dm_result rc = cmd(DM_CMD_SLOT, RAM0);
     zassert_equal(rc, DM_OK, NULL);
     zassert_true(log_has("delete"), NULL);
+    /* a synchronous (RAM) delete speaks DELETED now */
+    zassert_true(log_has("deleted"), NULL);
     zassert_equal(dm_machine_state(&fx.m), DM_STATE_IDLE, NULL);
+}
+
+ZTEST(dm_machine, delete_nvs_defers_speech_to_completion) {
+    setup();
+    goto_state(DM_STATE_DELETE_PENDING);
+    occupy(RAM0);
+    fx.log_n = 0;
+    /* the NVS store enqueues and returns DM_DELETE_DEFERRED: the transition must
+     * NOT notify or speak DELETED — that waits for deliver_async — but it must
+     * still settle to IDLE so deliver_async's IDLE-suppression passes. */
+    fx.delete_rc = DM_DELETE_DEFERRED;
+    dm_result rc = cmd(DM_CMD_SLOT, RAM0);
+    zassert_equal(rc, DM_DELETE_DEFERRED, NULL);
+    zassert_true(log_has("delete"), NULL);
+    zassert_false(log_has("deleted"), NULL);
+    zassert_false(log_has("notify"), NULL);
+    zassert_equal(dm_machine_state(&fx.m), DM_STATE_IDLE, NULL);
+
+    /* the completion then speaks DELETED exactly once */
+    fx.log_n = 0;
+    deliver_async(DM_OK, RAM0);
+    zassert_true(log_has("async_deleted"), NULL);
 }
 
 /* ---- recording: chain ----------------------------------------------------- */
@@ -578,7 +652,7 @@ ZTEST(dm_machine, notify_precedes_speak_on_saved) {
 ZTEST(dm_machine, deliver_async_deleted_speaks_when_idle) {
     setup();
     fx.log_n = 0;
-    dm_machine_deliver_async(&fx.m, DM_OK, RAM0);
+    deliver_async(DM_OK, RAM0);
     zassert_true(log_has("async_deleted"), NULL);
 }
 
@@ -586,7 +660,7 @@ ZTEST(dm_machine, deliver_async_suppressed_when_busy) {
     setup();
     goto_state(DM_STATE_RECORDING);
     fx.log_n = 0;
-    dm_machine_deliver_async(&fx.m, DM_DELETE_FAILED, RAM0);
+    deliver_async(DM_DELETE_FAILED, RAM0);
     /* dropped: not IDLE, must not hijack the active op */
     zassert_false(log_has("async_delete_failed"), NULL);
 }
@@ -594,8 +668,18 @@ ZTEST(dm_machine, deliver_async_suppressed_when_busy) {
 ZTEST(dm_machine, deliver_async_save_failed_speaks_when_idle) {
     setup();
     fx.log_n = 0;
-    dm_machine_deliver_async(&fx.m, DM_SAVE_FAILED, RAM0);
+    deliver_async(DM_SAVE_FAILED, RAM0);
     zassert_true(log_has("async_save_failed"), NULL);
+}
+
+ZTEST(dm_machine, deliver_async_stale_is_dropped) {
+    setup();
+    fx.log_n = 0;
+    /* a superseded delete-completion (DM_DELETE_STALE) must speak nothing — it is
+     * not a real deletion, just an op the slot already moved past. */
+    deliver_async(DM_DELETE_STALE, RAM0);
+    zassert_false(log_has("async_deleted"), NULL);
+    zassert_false(log_has("notify"), NULL);
 }
 
 /* ---- auto-erase up-calls -------------------------------------------------- */
@@ -625,6 +709,31 @@ ZTEST(dm_machine, erase_due_parks_once_across_batches) {
     dm_machine_erase_due(&fx.m); /* second batch keeps the original parked state */
     dm_machine_erase_cancel(&fx.m);
     zassert_equal(dm_machine_state(&fx.m), DM_STATE_IDLE, NULL);
+}
+
+ZTEST(dm_machine, erase_finished_restores_parked_state) {
+    setup();
+    dm_machine_erase_due(&fx.m); /* parks IDLE, -> TYPING_ERASE */
+    dm_machine_erase_finished(&fx.m); /* clean drain restores the parked state */
+    zassert_equal(dm_machine_state(&fx.m), DM_STATE_IDLE, NULL);
+}
+
+ZTEST(dm_machine, erase_cancel_after_finish_is_noop) {
+    setup();
+    /* the regression: after a clean erase drain (erase_finished) the erase-active
+     * flag must be clear, so a later keycode's erase_cancel does NOT resurrect the
+     * already-restored parked state. Drive PLAYING in as a state that erase_cancel
+     * would visibly clobber back to the (stale) parked IDLE if the flag leaked. */
+    occupy(RAM0);
+    cmd(DM_CMD_SLOT, RAM0); /* IDLE -> PLAYING */
+    /* an erase that began before play and drained cleanly */
+    dm_machine_erase_due(&fx.m);
+    dm_machine_erase_finished(&fx.m);
+    /* now PLAYING; a phantom erase_cancel must be a no-op (flag cleared) */
+    dm_state before = dm_machine_state(&fx.m);
+    dm_machine_erase_cancel(&fx.m);
+    zassert_equal(dm_machine_state(&fx.m), before,
+                  "erase_cancel after a clean finish must not change state");
 }
 
 /* ---- timeout drops a pending state to IDLE -------------------------------- */

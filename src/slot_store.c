@@ -156,7 +156,10 @@ dm_result slot_store_delete(slot_store *s, int idx) {
             s->pending_delete[idx] = false;
             return rc;
         }
-        return DM_OK; /* RAM zero happens on slot_store_complete_delete */
+        /* enqueued: the RAM zero, the DELETED notification, and the spoken
+         * confirmation all wait for slot_store_complete_delete. The deferral is
+         * explicit in the return so the machine stays silent here. */
+        return DM_DELETE_DEFERRED;
     }
 
     /* RAM slot: zero immediately. */
@@ -166,11 +169,13 @@ dm_result slot_store_delete(slot_store *s, int idx) {
 
 dm_result slot_store_complete_delete(slot_store *s, int idx, uint32_t generation, bool ok) {
     if (!idx_valid(idx)) {
-        return DM_OK;
+        return DM_DELETE_STALE;
     }
-    /* Ignore a completion the slot has moved past (reassigned/redeleted). */
+    /* Ignore a completion the slot has moved past (reassigned/redeleted). The
+     * STALE outcome is distinct from DM_OK so the machine does not speak a
+     * spurious DELETED for an op the slot already moved past. */
     if (!s->pending_delete[idx] || s->slot_generation[idx] != generation) {
-        return DM_OK;
+        return DM_DELETE_STALE;
     }
 
     if (!ok) {

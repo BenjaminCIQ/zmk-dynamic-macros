@@ -164,11 +164,15 @@ void dm_machine_deliver_async(dm_machine *m, dm_result outcome, int slot);
 
 /*
  * Auto-erase up-calls. erase_due is called by the erase scheduler's delayable
- * work. erase_cancel is called by any binding press or keycode through the
- * listener. The erase state lifecycle (parked state, batch continuation,
- * status exclusion) stays feedback-internal.
+ * work. erase_finished is called when the backspace emission drains normally;
+ * erase_cancel is called by any binding press or keycode through the listener to
+ * abort mid-sequence. Both restore the state parked at erase_due and clear the
+ * erase-active flag — the difference is only that cancel aborts a sequence still
+ * emitting, while erase_finished follows a clean drain. The erase state lifecycle
+ * (parked state, batch continuation, status exclusion) stays feedback-internal.
  */
 void dm_machine_erase_due(dm_machine *m);
+void dm_machine_erase_finished(dm_machine *m);
 void dm_machine_erase_cancel(dm_machine *m);
 
 /*

@@ -185,11 +185,24 @@ static bool status_advance(dm_feedback *f) {
     return true;
 }
 
-/* The ring drained and no more preview/suffix is owed for the current line. If
- * this is a status sequence with more slots, continue it inside the pump (the
- * machine hears nothing until the whole sequence is typed); otherwise schedule
- * auto-erase and report typing_finished up to the machine. */
+/* The ring drained and no more preview/suffix is owed for the current line. */
 static void on_typing_drained(dm_feedback *f) {
+    /* An erase batch finishing is its own completion path: it must restore the
+     * state parked at erase_due (NOT the last speak's return-state) and clear the
+     * erase-active flags so a later keycode does not fire a phantom cancel. A
+     * remaining batch (count exceeded one ring) is rescheduled here, staying in
+     * the erase sequence; only the final batch finishes it. */
+    if (f->erase_in_progress) {
+        if (f->erase_pending && f->erase_char_count > 0) {
+            k_work_reschedule(&f->erase_work, K_NO_WAIT);
+            return;
+        }
+        f->erase_in_progress = false;
+        f->set_suppress(f->ctx, false);
+        dm_machine_erase_finished(f->machine);
+        return;
+    }
+
     if (f->status_mode && status_advance(f)) {
         return;
     }
