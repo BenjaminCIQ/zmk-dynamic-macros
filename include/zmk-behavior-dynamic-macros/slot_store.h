@@ -71,9 +71,12 @@ typedef enum {
  * deliver_async — not here.
  *
  * RAM-only slots never reach the sink; slot_store calls it only for NVS slots.
+ * `save` takes the events + count directly (not a struct dm_slot): the store no
+ * longer holds a dm_slot for stored slots — the events live in its shared arena.
  */
 typedef struct {
-    dm_result (*save)(void *ctx, int slot, const struct dm_slot *s, uint32_t generation);
+    dm_result (*save)(void *ctx, int slot, const struct dm_event *events, uint32_t count,
+                      uint32_t generation);
     dm_result (*del)(void *ctx, int slot, uint32_t generation);
     void *ctx;
 } dm_nvs_sink;
@@ -89,9 +92,12 @@ void slot_store_init(slot_store *s, const dm_nvs_sink *sink);
 
 /* ---- Queries -------------------------------------------------------------- */
 
-bool                  slot_store_is_empty(const slot_store *s, int idx);
-const struct dm_slot *slot_store_get(const slot_store *s, int idx); /* NULL if empty */
-int                   slot_store_count(const slot_store *s, slot_class cls);
+bool                slot_store_is_empty(const slot_store *s, int idx);
+/* A view into the shared arena: {count, events-ptr}, or {0, NULL} if empty. The
+ * pointer is valid until the next allocating call (draft_commit/move/load), which
+ * may compact the arena — read it within the current handler, do not cache it. */
+struct dm_slot_view slot_store_get(const slot_store *s, int idx);
+int                 slot_store_count(const slot_store *s, slot_class cls);
 
 /* ---- Mutations — each handles its own persistence for NVS slots ----------- */
 
@@ -126,16 +132,20 @@ void      slot_store_draft_reset(slot_store *s);                     /* REC star
 bool      slot_store_draft_append(slot_store *s, const struct dm_event *e); /* false = full */
 uint32_t  slot_store_draft_count(const slot_store *s);              /* guard input */
 dm_result slot_store_draft_chain(slot_store *s, int src);          /* chain src into draft */
-/* Assign: draft -> dst, RAM ONLY (DM_OK | DM_REJECTED_OCCUPIED). Persistence is
- * the separate slot_store_persist() above, deferred to typing-finished. */
+/* Assign: draft -> dst, RAM ONLY. Compacts the shared arena (safe: never while a
+ * slot is playing) then bump-allocates the draft's events into it. Returns
+ * DM_OK | DM_REJECTED_OCCUPIED (dst not empty) | DM_REJECTED_FULL (the draft does
+ * not fit the free arena space, or a slot is playing so the arena can't compact).
+ * Persistence is the separate slot_store_persist() above, deferred to
+ * typing-finished. */
 dm_result slot_store_draft_commit(slot_store *s, int dst);
 
 /* ---- Restore surface — dm_nvs only (boot settings_load + DM_TEST_RELOAD) --- */
 
 /* Raw populate of slot idx from decoded storage: no sink echo, no generation
  * bump, clears a stale pending bit. Serialization validation (version, length)
- * is dm_nvs's job; the store only defends count <= MAX_EVENTS (false = reject).
- * Never called by the machine. */
+ * is dm_nvs's job; the store defends count <= MAX_EVENTS and the shared-arena
+ * capacity (false = reject either). Never called by the machine. */
 bool slot_store_load(slot_store *s, int idx, const struct dm_event *events, uint32_t count);
 
 /* Zero all slots, pending bits, and generations ahead of a settings_load re-run

@@ -37,4 +37,19 @@ struct dm_event {
     uint8_t _reserved;
 } __packed;
 
+/*
+ * A read-only window onto a stored macro: a live count plus a pointer to its
+ * events. Stored events live in slot_store's shared arena, not in any one struct,
+ * so callers receive this view by value (events == NULL when the slot is empty).
+ *
+ * Defined in this lowest shared header so the storage module, the renderer, and
+ * their host tests all name ONE type. The renderer spells it `dm_render_slot_view`
+ * (a typedef alias in dm_render.h); slot_store returns `struct dm_slot_view`. Same
+ * type, two names — never copy fields between them.
+ */
+struct dm_slot_view {
+    uint32_t               event_count;
+    const struct dm_event *events;
+};
+
 #endif /* DM_EVENT_H */

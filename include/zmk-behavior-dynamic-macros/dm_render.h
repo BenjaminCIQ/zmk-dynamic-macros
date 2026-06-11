@@ -66,14 +66,12 @@ typedef struct {
 
 /*
  * Slot view the renderer reads. The renderer never owns or mutates a slot; it
- * walks event_count events. Defined here (pure) so the renderer and its host
- * tests need no Zephyr; the behavior's struct dm_slot is layout-compatible with
- * this view for the fields the renderer touches.
+ * walks event_count events. This is an alias for `struct dm_slot_view` (defined in
+ * dm_event.h) — slot_store_get returns exactly this, so the renderer, the query
+ * projection, and the feedback pump pass the view straight through without copying
+ * fields into a second type.
  */
-typedef struct {
-    uint32_t event_count;
-    const struct dm_event *events;
-} dm_render_slot_view;
+typedef struct dm_slot_view dm_render_slot_view;
 
 /*
  * Resume cursor for the paused walk. The ring sink pauses rendering on

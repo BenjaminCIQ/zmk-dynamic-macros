@@ -15,8 +15,14 @@
  *   - load / reset are the restore surface: populate without persist echo or
  *     generation bump; reset zeroes slots/pending/generations
  *
- * White-box: the store tests read slots[]/pending_delete/slot_generation via
- * the private layout to assert the dual-write outcome directly.
+ *   - the shared arena: commit rejects a full pool, delete+commit reclaims a
+ *     hole by compaction, move reuses a region with no extra space, load rejects
+ *     arena overflow, and compaction never runs (so never moves bytes) while a
+ *     slot is playing
+ *
+ * White-box: the store tests read events_arena[]/meta[]/pending_delete/
+ * slot_generation via the private layout to assert the dual-write outcome and the
+ * arena packing directly.
  *
  * The fake dm_nvs sink records the last op and can be armed to fail the next
  * enqueue (DM_SAVE_QUEUE_FULL / DM_DELETE_QUEUE_FULL), letting the ordering +
@@ -57,9 +63,11 @@ static void fake_trace(struct fake_nvs *f, char c, int slot) {
     }
 }
 
-static dm_result fake_save(void *ctx, int slot, const struct dm_slot *s, uint32_t generation) {
+static dm_result fake_save(void *ctx, int slot, const struct dm_event *events, uint32_t count,
+                           uint32_t generation) {
     struct fake_nvs *f = ctx;
-    (void)s;
+    (void)events;
+    (void)count;
     if (f->fail_next_save) {
         f->fail_next_save = false;
         return DM_SAVE_QUEUE_FULL;
@@ -103,12 +111,26 @@ static slot_store *fresh_store(void) {
     return &g_store;
 }
 
-/* Put `n` synthetic events directly into a slot (test helper; bypasses draft). */
-static void seed_slot(slot_store *s, int idx, uint32_t n) {
-    s->slots[idx].event_count = n;
-    for (uint32_t i = 0; i < n && i < MAX_EVENTS; i++) {
-        s->slots[idx].events[i].keycode = (uint16_t)(0x04 + i);
+/* Sum of all live meta counts — the arena's first free offset (white-box helper,
+ * mirrors slot_store.c's arena_live). */
+static uint16_t arena_live_test(const slot_store *s) {
+    uint16_t n = 0;
+    for (int i = 0; i < MAX_SLOTS; i++) {
+        n = (uint16_t)(n + s->meta[i].count);
     }
+    return n;
+}
+
+/* Bump-allocate `n` synthetic events for a slot directly in the arena (test
+ * helper; bypasses the draft). Appends at the current high-water mark so seeded
+ * slots never overlap, regardless of seed order. */
+static void seed_slot(slot_store *s, int idx, uint32_t n) {
+    uint16_t start = arena_live_test(s);
+    for (uint32_t i = 0; i < n && (start + i) < ARENA_EVENTS; i++) {
+        s->events_arena[start + i].keycode = (uint16_t)(0x04 + i);
+    }
+    s->meta[idx].start = start;
+    s->meta[idx].count = (uint16_t)n;
 }
 
 ZTEST_SUITE(slot_store, NULL, NULL, NULL, NULL, NULL);
@@ -125,10 +147,10 @@ ZTEST(slot_store, move_dst_persist_fail_rolls_back) {
     zassert_equal(r, DM_SAVE_QUEUE_FULL,
                   "dst enqueue failure surfaces as DM_SAVE_QUEUE_FULL (names the failing op)");
     /* src untouched: same events, same generation, no delete attempted */
-    zassert_equal(s->slots[NVS_A].event_count, 3, "src kept its events");
+    zassert_equal(s->meta[NVS_A].count, 3, "src kept its events");
     zassert_equal(s->slot_generation[NVS_A], src_gen_before, "src generation unchanged");
     /* dst rolled back to empty */
-    zassert_equal(s->slots[NVS_B].event_count, 0, "dst rolled back to empty");
+    zassert_equal(s->meta[NVS_B].count, 0, "dst rolled back to empty");
     zassert_equal(g_nvs.del_calls, 0, "no src delete on dst-persist failure");
 }
 
@@ -142,7 +164,7 @@ ZTEST(slot_store, move_src_delete_fail_keeps_dst) {
 
     zassert_equal(r, DM_DELETE_QUEUE_FULL,
                   "src delete failure surfaces as DM_DELETE_QUEUE_FULL (names the failing op)");
-    zassert_equal(s->slots[NVS_B].event_count, 2, "dst persisted and kept");
+    zassert_equal(s->meta[NVS_B].count, 2, "dst persisted and kept");
     zassert_equal(g_nvs.save_calls, 1, "dst was saved exactly once");
     /* dst is written+persisted BEFORE src is deleted: ordering witness */
     zassert_str_equal(g_nvs.trace, "S1", "only dst save reached the sink (src delete failed)");
@@ -156,8 +178,8 @@ ZTEST(slot_store, move_happy_orders_dst_then_src) {
     dm_result r = slot_store_move(s, NVS_A, NVS_B);
 
     zassert_equal(r, DM_OK, "clean move returns DM_OK");
-    zassert_equal(s->slots[NVS_B].event_count, 4, "dst holds the macro");
-    zassert_equal(s->slots[NVS_A].event_count, 0, "src zeroed after delete enqueued");
+    zassert_equal(s->meta[NVS_B].count, 4, "dst holds the macro");
+    zassert_equal(s->meta[NVS_A].count, 0, "src zeroed after delete enqueued");
     zassert_str_equal(g_nvs.trace, "S1D0", "dst saved (S1) strictly before src deleted (D0)");
 }
 
@@ -174,7 +196,7 @@ ZTEST(slot_store, move_occupied_dst_rejected) {
     seed_slot(s, NVS_B, 1);
     dm_result r = slot_store_move(s, NVS_A, NVS_B);
     zassert_equal(r, DM_REJECTED_OCCUPIED, "moving onto an occupied target is rejected");
-    zassert_equal(s->slots[NVS_A].event_count, 1, "src untouched on rejection");
+    zassert_equal(s->meta[NVS_A].count, 1, "src untouched on rejection");
 }
 
 /* ---- delete-while-playing skips the RAM zero on completion (fe3689e) ------- */
@@ -191,7 +213,7 @@ ZTEST(slot_store, delete_while_playing_skips_zero) {
     dm_result c = slot_store_complete_delete(s, NVS_A, gen, true);
 
     zassert_equal(c, DM_OK, "completion reports OK");
-    zassert_equal(s->slots[NVS_A].event_count, 5, "playing slot NOT zeroed (fe3689e)");
+    zassert_equal(s->meta[NVS_A].count, 5, "playing slot NOT zeroed (fe3689e)");
     zassert_false(s->pending_delete[NVS_A], "pending_delete cleared even when zero skipped");
 }
 
@@ -204,7 +226,7 @@ ZTEST(slot_store, delete_complete_zeroes_idle_slot) {
 
     dm_result c = slot_store_complete_delete(s, NVS_A, gen, true);
     zassert_equal(c, DM_OK, "completion ok");
-    zassert_equal(s->slots[NVS_A].event_count, 0, "non-playing slot zeroed on completion");
+    zassert_equal(s->meta[NVS_A].count, 0, "non-playing slot zeroed on completion");
 }
 
 /* ---- a stale-generation completion is ignored ------------------------------ */
@@ -220,7 +242,7 @@ ZTEST(slot_store, stale_completion_ignored) {
 
     dm_result c = slot_store_complete_delete(s, NVS_A, stale, true);
     zassert_equal(c, DM_DELETE_STALE, "stale completion is a no-op, reports DM_DELETE_STALE");
-    zassert_equal(s->slots[NVS_A].event_count, 2, "reassigned slot NOT clobbered by stale delete");
+    zassert_equal(s->meta[NVS_A].count, 2, "reassigned slot NOT clobbered by stale delete");
 }
 
 /* ---- delete failure surfaces DM_DELETE_FAILED ------------------------------ */
@@ -259,8 +281,9 @@ ZTEST(slot_store, draft_commit_copies_to_slot_ram_only) {
 
     dm_result r = slot_store_draft_commit(s, NVS_A);
     zassert_equal(r, DM_OK, "commit into an empty NVS slot succeeds");
-    zassert_equal(s->slots[NVS_A].event_count, 2, "draft copied into the slot");
-    zassert_equal(s->slots[NVS_A].events[1].keycode, 0x05, "draft bytes landed in order");
+    zassert_equal(s->meta[NVS_A].count, 2, "draft copied into the slot");
+    zassert_equal(s->events_arena[s->meta[NVS_A].start + 1].keycode, 0x05,
+                  "draft bytes landed in order");
     zassert_equal(g_nvs.save_calls, 0, "commit does NOT touch the sink (persist is deferred)");
 }
 
@@ -308,7 +331,7 @@ ZTEST(slot_store, delete_enqueue_full_rolls_back_pending) {
 
     zassert_equal(r, DM_DELETE_QUEUE_FULL, "saturated queue surfaces as DM_DELETE_QUEUE_FULL");
     zassert_false(s->pending_delete[NVS_A], "pending bit rolled back on enqueue failure");
-    zassert_equal(s->slots[NVS_A].event_count, 3, "slot contents untouched");
+    zassert_equal(s->meta[NVS_A].count, 3, "slot contents untouched");
 }
 
 ZTEST(slot_store, draft_commit_rejects_occupied) {
@@ -365,8 +388,9 @@ ZTEST(slot_store, load_populates_without_persist_echo) {
     bool ok = slot_store_load(s, NVS_A, evs, 2);
 
     zassert_true(ok, "valid load accepted");
-    zassert_equal(s->slots[NVS_A].event_count, 2, "loaded events landed");
-    zassert_equal(s->slots[NVS_A].events[1].keycode, 0x05, "loaded bytes in order");
+    zassert_equal(s->meta[NVS_A].count, 2, "loaded events landed");
+    zassert_equal(s->events_arena[s->meta[NVS_A].start + 1].keycode, 0x05,
+                  "loaded bytes in order");
     zassert_equal(g_nvs.save_calls, 0, "load never echoes back into the sink");
     zassert_equal(s->slot_generation[NVS_A], 0, "load does not bump the generation");
     zassert_false(s->pending_delete[NVS_A], "load clears a stale pending bit");
@@ -381,7 +405,7 @@ ZTEST(slot_store, load_rejects_overflow) {
     bool ok = slot_store_load(s, NVS_A, evs, MAX_EVENTS + 1);
 
     zassert_false(ok, "count past MAX_EVENTS is rejected");
-    zassert_equal(s->slots[NVS_A].event_count, 0, "slot untouched on rejected load");
+    zassert_equal(s->meta[NVS_A].count, 0, "slot untouched on rejected load");
 }
 
 /* DM_TEST_RELOAD zeroes slots, pending bits, and generations before re-running
@@ -398,9 +422,181 @@ ZTEST(slot_store, reset_clears_slots_pending_generations) {
 
     slot_store_reset(s);
 
-    zassert_equal(s->slots[NVS_A].event_count, 0, "NVS slot zeroed");
-    zassert_equal(s->slots[RAM_A].event_count, 0, "RAM slot zeroed");
+    zassert_equal(s->meta[NVS_A].count, 0, "NVS slot zeroed");
+    zassert_equal(s->meta[RAM_A].count, 0, "RAM slot zeroed");
     zassert_false(s->pending_delete[NVS_B], "pending bits cleared");
     zassert_equal(s->slot_generation[NVS_A], 0, "generations zeroed");
     zassert_equal(slot_store_draft_count(s), 1, "draft survives a reset (reload is IDLE-only)");
+}
+
+/* ---- shared arena --------------------------------------------------------- */
+
+/* Stage `n` events in the draft so a following commit allocates them. */
+static void fill_draft(slot_store *s, uint32_t n) {
+    slot_store_draft_reset(s);
+    for (uint32_t i = 0; i < n; i++) {
+        struct dm_event e = {.keycode = (uint16_t)(0x04 + i)};
+        slot_store_draft_append(s, &e);
+    }
+}
+
+/* Fill the whole arena with MAX_EVENTS-sized slots; returns how many slots used.
+ * ARENA_EVENTS is a multiple of MAX_EVENTS in the host config (256 / 64 = 4). */
+static int fill_arena(slot_store *s) {
+    int used = 0;
+    for (int i = 0; arena_live_test(s) + MAX_EVENTS <= ARENA_EVENTS; i++) {
+        seed_slot(s, i, MAX_EVENTS);
+        used++;
+    }
+    return used;
+}
+
+/* A non-empty commit into an exhausted pool is rejected; the target stays empty. */
+ZTEST(slot_store, commit_full_pool_rejected) {
+    slot_store *s = fresh_store();
+    int filled = fill_arena(s);
+    zassert_equal(arena_live_test(s), ARENA_EVENTS, "arena is exactly full");
+
+    fill_draft(s, 1);
+    dm_result r = slot_store_draft_commit(s, filled); /* first untouched slot */
+    zassert_equal(r, DM_REJECTED_FULL, "commit into a full pool is rejected");
+    zassert_equal(s->meta[filled].count, 0, "rejected target stays empty");
+}
+
+/* Deleting a slot frees its bytes; the next commit reclaims them by compaction —
+ * a commit that ONLY fits because the hole was repacked proves lazy compaction. */
+ZTEST(slot_store, delete_then_commit_reclaims_space) {
+    slot_store *s = fresh_store();
+    int filled = fill_arena(s);
+    zassert_true(filled >= 2, "host arena holds at least two full slots");
+
+    /* Free a low RAM-class hole so no NVS async is involved. Use slot 0 (NVS) via
+     * the immediate completion path instead: delete + complete. */
+    slot_store_delete(s, 0);
+    uint32_t gen = s->slot_generation[0];
+    slot_store_complete_delete(s, 0, gen, true);
+    zassert_equal(s->meta[0].count, 0, "deleted slot freed");
+
+    /* Now MAX_EVENTS of free space exists, but as a hole at offset 0 with live
+     * slots above it. A commit must compact to place the new macro. */
+    fill_draft(s, MAX_EVENTS);
+    dm_result r = slot_store_draft_commit(s, 0);
+    zassert_equal(r, DM_OK, "commit reclaims the freed hole via compaction");
+    zassert_equal(s->meta[0].count, MAX_EVENTS, "new macro stored");
+    zassert_equal(arena_live_test(s), ARENA_EVENTS, "pool full again, no bytes leaked");
+}
+
+/* Move is a descriptor reassignment: it needs no free arena space even when the
+ * pool is exactly full, because dst aliases src's region until src is freed. */
+ZTEST(slot_store, move_reuses_region_no_extra_space) {
+    slot_store *s = fresh_store();
+    seed_slot(s, NVS_A, MAX_EVENTS);
+    /* fill the rest of the pool so there is zero free space */
+    int next = NVS_B;
+    while (arena_live_test(s) + MAX_EVENTS <= ARENA_EVENTS) {
+        seed_slot(s, next++, MAX_EVENTS);
+    }
+    uint16_t live_before = arena_live_test(s);
+
+    /* free a non-NVS destination to move into (RAM_A is empty here only if the
+     * fill didn't reach it; pick a high RAM slot guaranteed empty) */
+    int dst = MAX_SLOTS - 1;
+    zassert_equal(s->meta[dst].count, 0, "chosen dst is empty");
+
+    dm_result r = slot_store_move(s, NVS_A, dst);
+    zassert_equal(r, DM_OK, "move succeeds with no free arena space");
+    zassert_equal(s->meta[dst].count, MAX_EVENTS, "dst holds the macro");
+    zassert_equal(s->meta[NVS_A].count, 0, "src freed");
+    zassert_equal(arena_live_test(s), live_before, "total occupancy unchanged by move");
+}
+
+/* Load defends the arena bound: a load that would overflow the pool is rejected
+ * and leaves the slot untouched. */
+ZTEST(slot_store, load_rejects_arena_overflow) {
+    slot_store *s = fresh_store();
+    int filled = fill_arena(s); /* pool exactly full */
+    (void)filled;
+
+    static struct dm_event evs[1] = {{.keycode = 0x04}};
+    bool ok = slot_store_load(s, MAX_SLOTS - 1, evs, 1);
+    zassert_false(ok, "load past arena capacity is rejected");
+    zassert_equal(s->meta[MAX_SLOTS - 1].count, 0, "slot untouched on arena-overflow load");
+}
+
+/* After a hole is repacked, live slots sit contiguously from offset 0 — no
+ * permanent gap survives a compaction. */
+ZTEST(slot_store, compaction_repacks_after_hole) {
+    slot_store *s = fresh_store();
+    seed_slot(s, NVS_A, 10); /* A at [0,10)  */
+    seed_slot(s, NVS_B, 10); /* B at [10,20) */
+    seed_slot(s, RAM_A, 10); /* C at [20,30) */
+
+    /* delete B (RAM-immediate path needs NVS async; B is NVS, so complete it) */
+    slot_store_delete(s, NVS_B);
+    slot_store_complete_delete(s, NVS_B, s->slot_generation[NVS_B], true);
+
+    fill_draft(s, 5);
+    dm_result r = slot_store_draft_commit(s, RAM_A + 1);
+    zassert_equal(r, DM_OK, "commit after the hole succeeds");
+
+    /* A stayed at 0; C repacked down to follow A; D after C — all contiguous. */
+    zassert_equal(s->meta[NVS_A].start, 0, "A anchored at 0");
+    zassert_equal(s->meta[RAM_A].start, 10, "C repacked to follow A (hole closed)");
+    zassert_equal(s->meta[RAM_A + 1].start, 20, "D placed right after C");
+}
+
+/* R1: while a slot plays, an allocating commit that needs compaction is REJECTED
+ * and moves no bytes — the guard, not the arithmetic, blocks it. Clearing playback
+ * then lets the same commit succeed. */
+ZTEST(slot_store, commit_while_playing_rejected_no_move) {
+    slot_store *s = fresh_store();
+    seed_slot(s, NVS_A, 10); /* [0,10)  */
+    seed_slot(s, NVS_B, 10); /* [10,20) */
+    /* fill the rest so only a compactable hole could satisfy a new commit */
+    int next = RAM_A;
+    while (arena_live_test(s) + MAX_EVENTS <= ARENA_EVENTS) {
+        seed_slot(s, next++, MAX_EVENTS);
+    }
+    /* free A, leaving a 10-event hole at offset 0 below live slots */
+    slot_store_delete(s, NVS_A);
+    slot_store_complete_delete(s, NVS_A, s->slot_generation[NVS_A], true);
+    uint16_t b_start_before = s->meta[NVS_B].start;
+
+    slot_store_mark_playing(s, NVS_B);
+    fill_draft(s, 10);
+    dm_result r = slot_store_draft_commit(s, NVS_A);
+    zassert_equal(r, DM_REJECTED_FULL, "commit needing compaction is rejected while playing");
+    zassert_equal(s->meta[NVS_B].start, b_start_before, "no bytes moved: B's offset unchanged");
+
+    slot_store_clear_playing(s);
+    r = slot_store_draft_commit(s, NVS_A);
+    zassert_equal(r, DM_OK, "same commit succeeds once playback clears (guard, not math)");
+}
+
+/* R3: a pending-delete slot that is also playing keeps its bytes pinned — nothing
+ * relocates them, because the only mover (compaction) is blocked while playing. */
+ZTEST(slot_store, play_pending_delete_bytes_pinned) {
+    slot_store *s = fresh_store();
+    seed_slot(s, NVS_A, 10); /* the playing + pending-delete slot */
+    seed_slot(s, NVS_B, 10);
+    int next = RAM_A;
+    while (arena_live_test(s) + MAX_EVENTS <= ARENA_EVENTS) {
+        seed_slot(s, next++, MAX_EVENTS);
+    }
+    uint16_t a_start = s->meta[NVS_A].start;
+    uint16_t a_count = s->meta[NVS_A].count;
+
+    slot_store_mark_playing(s, NVS_A);
+    slot_store_delete(s, NVS_A); /* NVS: marks pending, bytes stay parked */
+    zassert_true(s->pending_delete[NVS_A], "slot pending delete");
+
+    /* an allocating commit into an empty high slot would need compaction to fit —
+     * blocked while playing */
+    int dst = MAX_SLOTS - 1;
+    zassert_equal(s->meta[dst].count, 0, "chosen dst is empty");
+    fill_draft(s, 4);
+    dm_result r = slot_store_draft_commit(s, dst);
+    zassert_equal(r, DM_REJECTED_FULL, "compaction blocked while playing");
+    zassert_equal(s->meta[NVS_A].start, a_start, "playing+pending slot's bytes not relocated");
+    zassert_equal(s->meta[NVS_A].count, a_count, "playing+pending slot's count intact");
 }

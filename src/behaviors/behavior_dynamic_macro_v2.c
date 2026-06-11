@@ -53,6 +53,11 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 /* -------------------------------------------------------------------------- */
 
 BUILD_ASSERT(MAX_EVENTS > 0, "Dynamic macros require at least 1 event per slot");
+BUILD_ASSERT(AVG_EVENTS >= 1, "AVG_EVENTS_PER_SLOT must be at least 1");
+BUILD_ASSERT(MAX_EVENTS <= ARENA_EVENTS,
+             "A single macro (MAX_EVENTS) cannot exceed the shared pool "
+             "(AVG_EVENTS_PER_SLOT x number of slots)");
+BUILD_ASSERT(ARENA_EVENTS <= UINT16_MAX, "arena offsets must fit in uint16_t");
 BUILD_ASSERT(NVS_SLOTS <= 16, "Dynamic macros support at most 16 NVS slots");
 BUILD_ASSERT(RAM_SLOTS <= 48, "Dynamic macros support at most 48 RAM slots");
 BUILD_ASSERT(MAX_SLOTS <= 64, "Dynamic macros support at most 64 total slots");
@@ -289,13 +294,13 @@ static void playback_work_handler(struct k_work *work) {
         k_timer_stop(&inst->playback_timer);
         return;
     }
-    const struct dm_slot *slot = slot_store_get(&inst->store, inst->playback_slot);
-    if (slot == NULL || inst->playback_event >= slot->event_count) {
+    struct dm_slot_view slot = slot_store_get(&inst->store, inst->playback_slot);
+    if (slot.events == NULL || inst->playback_event >= slot.event_count) {
         playback_finish(inst);
         return;
     }
 
-    const struct dm_event *ev = &slot->events[inst->playback_event++];
+    const struct dm_event *ev = &slot.events[inst->playback_event++];
     struct zmk_keycode_state_changed kc = {
         .usage_page = ev->usage_page,
         .keycode = ev->keycode,
@@ -309,7 +314,7 @@ static void playback_work_handler(struct k_work *work) {
     raise_zmk_keycode_state_changed(kc);
     inst->suppress_recording = false;
 
-    if (inst->playback_event >= slot->event_count) {
+    if (inst->playback_event >= slot.event_count) {
         playback_finish(inst);
     } else {
         k_timer_start(&inst->playback_timer, K_MSEC(TAP_DELAY), K_NO_WAIT);

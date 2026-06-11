@@ -36,10 +36,10 @@ are staging/transfer buffers, not stored slots.
 | D1 | Keep `struct dm_slot { uint32_t event_count; struct dm_event events[MAX_EVENTS]; }` as the **staging/transfer** type (draft + NVS op + NVS buffers). Do **not** use it for stored slots. | The draft can't know its final length while recording, so it needs a full-size buffer. NVS copies must be size-`MAX_EVENTS` for async safety. |
 | D2 | Stored slots become `events_arena[ARENA_EVENTS]` + `meta[SLOT_CAPACITY]`. | This is the RAM win: pay for total expected use, not worst case. |
 | D3 | **Two knobs only:** keep existing `MAX_EVENTS` (per-macro cap, also sizes the draft); add `AVG_EVENTS_PER_SLOT` → `ARENA_EVENTS = AVG_EVENTS_PER_SLOT × SLOT_CAPACITY`. **No min/floor knob.** | Decided in design discussion: a floor adds a knob + accounting for a rare case the graceful "pool full" path already covers. `MAX_EVENTS` is kept (not renamed) so existing user configs don't break — its Kconfig prompt already says "per macro slot". |
-| D4 | `slot_store_get()` returns a **view** `struct dm_slot_view { uint32_t event_count; const struct dm_event *events; }` by value (empty → `{0, NULL}`), instead of `const struct dm_slot *`. | Stored events live in the arena, not in a `dm_slot`. Every new-stack caller already only needs count + pointer; three of four already build a `dm_render_slot_view` from it. |
+| D4 | `slot_store_get()` returns a **view** by value (empty → `{0, NULL}`), instead of `const struct dm_slot *`. The view type is the **existing** `dm_render_slot_view { uint32_t event_count; const struct dm_event *events; }` — *not* a new `dm_slot_view`. To avoid `slot_store` depending on the renderer, the struct is hoisted into `dm_event.h` (the lowest header both already include) as `struct dm_slot_view`, and `dm_render.h` keeps `dm_render_slot_view` as a typedef alias so all renderer/query/build code compiles unchanged. | Stored events live in the arena, not in a `dm_slot`. Every new-stack caller already only needs count + pointer; three of four already build a `dm_render_slot_view` from it. **One** view type at this seam — a second identically-shaped struct would be a shallow wrapper whose only job is field-for-field copying (the original two-view sketch spread that copy across `dm_events.c`, `dm_feedback_pump.c`, and the nvs export). |
 | D5 | The `dm_nvs_sink.save` signature changes from `(…, const struct dm_slot *s, …)` to `(…, const struct dm_event *events, uint32_t count, …)`. | The store no longer has a `dm_slot` to hand over. Avoids a ~516 B stack temp, matching the codebase's "static buffers, no big stack" convention. |
-| D6 | **Lazy compaction**: `delete` only sets `count = 0` (leaves a hole); compaction runs inside the allocators (`draft_commit`, `move`, `load`). Those run only in `PENDING_ASSIGN` / `MOVE_PENDING` / boot-`IDLE`, where `playing_slot == -1`, so compaction never moves bytes out from under the playback pointer. | Ports the existing playing-slot invariant (`fe3689e`) to byte movement, for free. |
-| D7 | `move` becomes a **descriptor reassignment** (`meta[dst] = meta[src]`, no event copy, no extra space). | The arena makes move cheaper than today: dst aliases src's region until src is freed; the dual-write ordering is unchanged. |
+| D6 | **Lazy compaction**: `delete` only sets `count = 0` (leaves a hole); compaction runs inside the allocators (`draft_commit`, `move`, `load`). Compaction is **guarded at the store interface**: `arena_repack` refuses (returns "can't compact") whenever `playing_slot != -1`, and the allocators map that refusal to `DM_REJECTED_FULL` rather than relocating bytes. So compaction can never move bytes out from under a live playback pointer — the safety is a runtime guard in `slot_store`, not an assumption about which machine state called in. | Ports the existing playing-slot invariant (`fe3689e`) into the store itself, where it is testable at the store's own interface. The machine-state argument ("commit/move only run outside PLAYING") is then a *belt*, not the only line of defence. |
+| D7 | `move` becomes a **descriptor reassignment** (`meta[dst] = meta[src]`, no event copy, no extra space). During the window between the reassignment and `free_slot(src)`, **two meta entries alias one arena region** — so that window must contain **no allocator call** (no `arena_repack`). `move` calls none; it is asserted (`arena_live <= ARENA_EVENTS` post-move) rather than trusted. | The arena makes move cheaper than today: dst aliases src's region until src is freed; the dual-write ordering is unchanged. The aliasing is safe only because nothing compacts inside the window — documented + asserted so a future edit that adds an allocator there fails loudly instead of double-packing the shared region. |
 | D8 | A commit/move/load that doesn't fit returns `DM_REJECTED_FULL`. `slot_assign` (`dm_machine.c:233`) already treats any non-`DM_OK` from `draft_commit` as a failure that stays in `PENDING_ASSIGN`. | Graceful degradation with near-zero machine change. Optional polish in §9 adds a distinct "[DM POOL FULL]" message. |
 
 **Default for `AVG_EVENTS_PER_SLOT`:** ship **32** (with `MAX_EVENTS` default 64).
@@ -86,17 +86,25 @@ struct slot_store {
 `uint16_t` for `start`/`count` is safe: `ARENA_EVENTS ≤ AVG(≤?)×64`; assert it fits
 (see §7). `MAX_SLOTS ≤ 64`.
 
-### View type (new, in `slot_store.h`)
+### View type (hoisted into `dm_event.h`, aliased in `dm_render.h`)
 
 ```c
+/* dm_event.h — the lowest header slot_store.h and dm_render.h both include */
 struct dm_slot_view {
     uint32_t               event_count;
     const struct dm_event *events;   /* points into the arena; NULL if empty */
 };
 ```
 
-Layout-identical to `dm_render_slot_view` (`dm_render.h`), so the feedback/query
-callers can copy fields one-to-one.
+```c
+/* dm_render.h — keep the renderer's spelling as an alias; no caller churn */
+typedef struct dm_slot_view dm_render_slot_view;
+```
+
+This is **one** type with two names, not two types. `slot_store_get` returns it;
+the renderer/query/build code keeps saying `dm_render_slot_view`. The feedback,
+events, and nvs-export callers stop copying fields — they pass the view straight
+through.
 
 ---
 
@@ -147,7 +155,8 @@ Keep `MAX_EVENTS` exactly as-is.
 
 ### 5.2 `include/zmk-behavior-dynamic-macros/slot_store.h`
 
-1. Add `struct dm_slot_view` (see §3).
+1. No new struct here — the view (`struct dm_slot_view`) lives in `dm_event.h`
+   (§3), which `slot_store.h` already pulls in transitively via `dm_event.h`.
 2. Change the accessor:
    ```c
    struct dm_slot_view slot_store_get(const slot_store *s, int idx); /* {0,NULL} if empty */
@@ -181,10 +190,15 @@ static uint16_t arena_live(const slot_store *s) {
     return n;
 }
 
-/* repack all live slots to the low end in index order; returns the first free
- * offset (== arena_live). SAFE only when playing_slot == -1 (callers guarantee
- * this — see D6). memmove because shifted regions may overlap. */
-static uint16_t arena_repack(slot_store *s) {
+/* Repack all live slots to the low end in index order, writing the first free
+ * offset (== arena_live) to *out_free. Returns false WITHOUT touching anything if
+ * a slot is playing: relocating bytes would dangle the playback pointer the emit
+ * handler holds (see D6 — this is the store-level enforcement of fe3689e, not a
+ * caller assumption). memmove because shifted regions may overlap. */
+static bool arena_repack(slot_store *s, uint16_t *out_free) {
+    if (s->playing_slot != -1) {
+        return false;             /* compaction unsafe while playing */
+    }
     uint16_t w = 0;
     for (int i = 0; i < MAX_SLOTS; i++) {
         if (s->meta[i].count == 0) continue;
@@ -195,9 +209,17 @@ static uint16_t arena_repack(slot_store *s) {
         }
         w += s->meta[i].count;
     }
-    return w;
+    *out_free = w;
+    return true;
 }
 ```
+
+The guard returns `DM_REJECTED_FULL` / `false` up through the allocators: a
+commit or load that arrives while a slot plays is rejected, not corrupting — the
+exact same graceful "pool full" path the user already sees, and `slot_assign`
+already routes to. In practice the machine never issues an allocating command
+during `PLAYING`, so the guard is rarely hit; it exists so the *store* is safe
+even if that ever changes.
 
 Function-by-function:
 
@@ -207,10 +229,11 @@ Function-by-function:
 | `zero_slot` → `free_slot` | `s->meta[idx].count = 0;` (no memset needed — bytes return to the pool) |
 | `slot_store_init` | unchanged (`memset` zeroes meta/arena; set `playing_slot=-1`, `sink`) |
 | `slot_store_get` | return `{ meta[idx].count, &events_arena[meta[idx].start] }`, or `{0,NULL}` if invalid/empty |
-| `slot_store_count` | iterate `meta[i].count != 0` (skip pending) — same logic, new field |
+| `slot_store_count` | keep using the `slot_empty()` helper (which ORs in `pending_delete`) — do **not** inline `meta[i].count != 0`, or a pending-delete slot would be miscounted as present |
+| `slot_empty` / `draft_chain` | `draft_chain` keeps its `slot_empty(s, src)` guard, so a pending-delete src is rejected before its (still-parked) arena bytes are read |
 | `nvs_save` | `return s->sink->save(ctx, idx, &s->events_arena[s->meta[idx].start], s->meta[idx].count, gen);` |
 | `nvs_delete` | unchanged |
-| `slot_store_move` | descriptor reassignment (D7): `meta[dst]=meta[src]` in step 1; on save-fail roll back with `meta[dst].count=0`; on success `free_slot(src)`. Ordering + generation bumps identical to today. **No event copy.** |
+| `slot_store_move` | descriptor reassignment (D7): `meta[dst]=meta[src]` in step 1; on save-fail roll back with `meta[dst].count=0`; on success `free_slot(src)`. Ordering + generation bumps identical to today. **No event copy, no allocator call** in the aliased window. End with `DM_ASSERT(arena_live(s) <= ARENA_EVENTS)` so a future allocator slipped into the window trips immediately. |
 | `slot_store_persist` | unchanged (delegates to `nvs_save`) |
 | `slot_store_delete` | RAM path: `meta[idx].count = 0;` NVS path: unchanged (pending + enqueue) |
 | `slot_store_complete_delete` | replace `zero_slot(idx)` with `free_slot(idx)`; keep the `playing_slot != idx` guard and the generation/pending checks verbatim |
@@ -225,7 +248,8 @@ Function-by-function:
 dm_result slot_store_draft_commit(slot_store *s, int dst) {
     if (!idx_valid(dst) || !slot_empty(s, dst)) return DM_REJECTED_OCCUPIED;
     uint32_t n = s->draft.event_count;             /* n <= MAX_EVENTS by construction */
-    uint16_t used = arena_repack(s);               /* safe: PENDING_ASSIGN ⇒ not playing */
+    uint16_t used;
+    if (!arena_repack(s, &used)) return DM_REJECTED_FULL;  /* playing ⇒ can't compact */
     if (n > (uint32_t)(ARENA_EVENTS - used)) return DM_REJECTED_FULL;
     if (n > 0)
         memcpy(&s->events_arena[used], s->draft.events, (size_t)n * sizeof(struct dm_event));
@@ -241,7 +265,8 @@ dm_result slot_store_draft_commit(slot_store *s, int dst) {
 bool slot_store_load(slot_store *s, int idx, const struct dm_event *events, uint32_t count) {
     if (!idx_valid(idx) || count > MAX_EVENTS) return false;
     s->meta[idx].count = 0;                        /* free any prior occupant first */
-    uint16_t used = arena_repack(s);               /* boot/reload ⇒ IDLE ⇒ not playing */
+    uint16_t used;
+    if (!arena_repack(s, &used)) return false;     /* boot/reload ⇒ not playing; guard anyway */
     if (count > (uint32_t)(ARENA_EVENTS - used)) return false; /* arena overflow */
     if (count > 0)
         memcpy(&s->events_arena[used], events, (size_t)count * sizeof(struct dm_event));
@@ -310,24 +335,32 @@ bool slot_store_load(slot_store *s, int idx, const struct dm_event *events, uint
 
 ### 5.7 `src/dm_feedback_pump.c` (lines 119–135)
 
-`slot_store_get` returns a view; both call sites already want a view:
+`slot_store_get` returns a view; both call sites already want a view. With the
+single view type, `slot_view()` collapses to the accessor itself:
 ```c
 struct dm_slot_view v = slot_store_get(f->store, spec->slot);
+facts.slot_is_empty       = (v.events == NULL);
 facts.preview_event_count = (int)v.event_count;     /* was s ? s->event_count : 0 */
 …
-struct dm_slot_view v = (slot >= 0) ? slot_store_get(f->store, slot)
-                                    : (struct dm_slot_view){0, NULL};
-return (dm_render_slot_view){ .event_count = v.event_count, .events = v.events };
+/* slot_view(f, slot) becomes a one-liner — get already returns the render view: */
+static dm_render_slot_view slot_view(const dm_feedback *f, int slot) {
+    return (slot >= 0) ? slot_store_get(f->store, slot)
+                       : (dm_render_slot_view){0, NULL};
+}
 ```
 
 ### 5.8 `src/dm_events.c` (lines 86–90, 109–115, 128–134)
 
-Same mechanical swap to the view at all three `slot_store_get` sites, e.g.:
+Same swap to the view at all three `slot_store_get` sites. Because `get` now
+returns the render view directly, `view_for()` (line 85) becomes a pass-through:
 ```c
-struct dm_slot_view v = slot_store_get(store, slot_idx);
-return (dm_render_slot_view){ .event_count = v.event_count, .events = v.events };
+static dm_render_slot_view view_for(slot_store *store, int slot_idx) {
+    return slot_store_get(store, slot_idx);   /* {0,NULL} when empty */
+}
 ```
-and for the raw projection (line 109): `*count = v.event_count; return v.events;`.
+`dm_get_slot_events` (line 101) and `dm_get_preview_string` (line 118) read the
+view's fields: `struct dm_slot_view v = slot_store_get(...); *count = v.event_count;
+return v.events;` — the `s == NULL` empty check becomes `v.events == NULL`.
 
 ### 5.9 `Kconfig`
 
@@ -382,9 +415,15 @@ expressed over `meta`/arena instead of `slots[]`:
 - [ ] `draft_commit` is RAM-only; persist is the separate deferred step.
 - [ ] Load is a raw populate: no sink echo, no generation bump, clears pending.
 - [ ] **New invariant (D6):** the arena is only ever compacted while
-      `playing_slot == -1`. Document it beside `arena_repack` and assert it in the
-      pure unit test (call `mark_playing` then assert a commit/move path is never
-      taken in `PLAYING` — enforced structurally by the machine states).
+      `playing_slot == -1`. Enforced at the **store interface**: `arena_repack`
+      returns false (→ `DM_REJECTED_FULL` / load `false`) when a slot plays.
+      Tested directly at the store: `mark_playing(x)` then a `draft_commit` that
+      needs compaction → rejected, no bytes moved (R1). Plus the
+      playing + pending-delete intersection (R3): a pending-delete *playing* slot's
+      bytes are never relocated, because the only thing that would relocate them
+      is a repack, which the guard blocks while playing.
+- [ ] **Move aliasing window (D7):** no allocator runs between `meta[dst]=meta[src]`
+      and `free_slot(src)`; asserted by `arena_live <= ARENA_EVENTS` at move's end.
 
 ---
 
@@ -457,6 +496,14 @@ static dm_result fake_save(void *ctx, int slot,
    `ARENA_EVENTS` → that `slot_store_load` returns `false`, slot untouched.
 5. `compaction_repacks_after_hole` — seed slots A,B,C; delete B; commit D;
    assert `meta[].start` values are contiguous (no permanent hole).
+6. `commit_while_playing_rejected_no_move` (R1) — fill the arena leaving a hole,
+   `mark_playing` some slot, `draft_commit` a macro that would need compaction to
+   fit → `DM_REJECTED_FULL`; assert every `meta[].start` is unchanged (no bytes
+   moved). `clear_playing`, retry → `DM_OK` (proves the guard, not the math,
+   blocked it).
+7. `play_pending_delete_bytes_pinned` (R3) — seed a playing slot, mark it
+   pending-delete, then attempt an allocating commit on another slot → rejected
+   while playing; the playing slot's `start`/`count` are untouched.
 
 ### 8.2 Host unit tests — others
 
@@ -527,7 +574,9 @@ value.
 ## 11. Files touched (summary)
 
 **Modified:** `include/zmk-behavior-dynamic-macros/dm_config.h`,
-`…/slot_store.h`, `…/slot_store_priv.h`, `src/slot_store.c`, `src/dm_nvs.c`,
+`…/dm_event.h` (hoist `struct dm_slot_view`), `…/dm_render.h` (alias
+`dm_render_slot_view`), `…/slot_store.h`, `…/slot_store_priv.h`,
+`src/slot_store.c`, `src/dm_nvs.c`,
 `src/behaviors/behavior_dynamic_macro_v2.c`, `src/dm_feedback_pump.c`,
 `src/dm_events.c`, `Kconfig`, `tests/unit/test_slot_store.c`,
 `docs/architecture-redesign.md`.

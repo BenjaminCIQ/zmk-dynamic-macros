@@ -7,8 +7,24 @@ config ZMK_BEHAVIOR_DYNAMIC_MACRO
 if ZMK_BEHAVIOR_DYNAMIC_MACRO
 
 config ZMK_BEHAVIOR_DYNAMIC_MACRO_MAX_EVENTS
-    int "Maximum number of events per macro slot (press + release = 2 events)"
+    int "Maximum number of events a single macro can hold (press + release = 2 events)"
     default 64
+    help
+      Maximum events a single macro can hold. Also sizes the in-progress recording
+      buffer. Must be <= AVG_EVENTS_PER_SLOT x number of slots.
+
+config ZMK_BEHAVIOR_DYNAMIC_MACRO_AVG_EVENTS_PER_SLOT
+    int "Average events per slot (sizes the shared recording pool)"
+    default 32
+    range 1 64
+    help
+      All macro slots share one recording pool sized AVG_EVENTS_PER_SLOT x number
+      of slots. A single macro can be longer than this average, as long as the
+      total recorded across all slots stays within the pool -- so a few long
+      macros leave less room for the rest. A typical keystroke is 2 events
+      (press + release). Set this equal to "Maximum events per macro" to guarantee
+      every slot can be filled to the maximum at once (no pool sharing, no RAM
+      savings).
 
 config ZMK_BEHAVIOR_DYNAMIC_MACRO_TAP_DELAY
     int "Delay in ms between each event during playback"

@@ -83,11 +83,7 @@ void dm_events_raise(struct dm_inst *inst, int machine_event, int slot) {
 #if defined(DM_NEW_STACK)
 
 static dm_render_slot_view view_for(slot_store *store, int slot_idx) {
-    const struct dm_slot *s = slot_store_get(store, slot_idx);
-    if (!s) {
-        return (dm_render_slot_view){.event_count = 0, .events = NULL};
-    }
-    return (dm_render_slot_view){.event_count = s->event_count, .events = s->events};
+    return slot_store_get(store, slot_idx); /* {0, NULL} when empty */
 }
 
 bool dm_is_slot_empty(int slot_idx) {
@@ -106,13 +102,14 @@ const struct dm_event *dm_get_slot_events(int slot_idx, uint32_t *count) {
         return NULL;
     }
     struct dm_inst *inst = dm_shell_instance();
-    const struct dm_slot *s = inst ? slot_store_get(&inst->store, slot_idx) : NULL;
-    if (!s) {
+    struct dm_slot_view v = inst ? slot_store_get(&inst->store, slot_idx)
+                                 : (struct dm_slot_view){0, NULL};
+    if (v.events == NULL) {
         *count = 0;
         return NULL;
     }
-    *count = s->event_count;
-    return s->events;
+    *count = v.event_count;
+    return v.events;
 }
 
 int dm_get_preview_string(int slot_idx, char *buf, size_t len) {
@@ -125,13 +122,11 @@ int dm_get_preview_string(int slot_idx, char *buf, size_t len) {
     if (!inst || slot_idx < 0 || slot_idx >= MAX_SLOTS) {
         return 0;
     }
-    const struct dm_slot *s = slot_store_get(&inst->store, slot_idx);
-    if (!s) {
+    dm_render_slot_view view = view_for(&inst->store, slot_idx);
+    if (view.events == NULL) {
         return 0;
     }
-
-    dm_render_slot_view view = view_for(&inst->store, slot_idx);
-    return dm_query_preview_string(&view, DM_LOCALE, s->event_count,
+    return dm_query_preview_string(&view, DM_LOCALE, view.event_count,
                                    DM_TYPING_ENABLED, buf, len);
 }
 

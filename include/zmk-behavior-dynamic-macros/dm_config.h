@@ -35,6 +35,9 @@
 #ifndef MAX_EVENTS
 #define MAX_EVENTS CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_MAX_EVENTS
 #endif
+#ifndef AVG_EVENTS
+#define AVG_EVENTS CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_AVG_EVENTS_PER_SLOT
+#endif
 #ifndef NVS_SLOTS
 #if defined(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_PERSIST)
 #define NVS_SLOTS CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_NVS_SLOTS
@@ -51,6 +54,11 @@
 #ifndef MAX_EVENTS
 #define MAX_EVENTS 64
 #endif
+/* Host build keeps the pool small enough that a unit test can fill it:
+ * ARENA_EVENTS = 16 * 16 = 256. */
+#ifndef AVG_EVENTS
+#define AVG_EVENTS 16
+#endif
 #ifndef NVS_SLOTS
 #define NVS_SLOTS 8
 #endif
@@ -66,6 +74,13 @@
 
 #ifndef SLOT_CAPACITY
 #define SLOT_CAPACITY (MAX_SLOTS > 0 ? MAX_SLOTS : 1)
+#endif
+
+/* The shared event arena: all stored slots draw from this one pool, sized for the
+ * expected average rather than the per-slot worst case. A single macro may exceed
+ * AVG_EVENTS (up to MAX_EVENTS), as long as the total across slots fits. */
+#ifndef ARENA_EVENTS
+#define ARENA_EVENTS (AVG_EVENTS * SLOT_CAPACITY)
 #endif
 
 #endif /* DM_CONFIG_H */

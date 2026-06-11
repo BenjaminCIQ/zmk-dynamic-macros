@@ -120,19 +120,17 @@ static dm_fb_facts gather_facts(const dm_feedback *f, const dm_feedback_spec *sp
         .slot_is_empty = false,
     };
     if (spec->slot >= 0) {
-        const struct dm_slot *s = slot_store_get(f->store, spec->slot);
-        facts.slot_is_empty = (s == NULL);
-        facts.preview_event_count = s ? (int)s->event_count : 0;
+        struct dm_slot_view v = slot_store_get(f->store, spec->slot);
+        facts.slot_is_empty = (v.events == NULL);
+        facts.preview_event_count = (int)v.event_count;
     }
     return facts;
 }
 
 static dm_render_slot_view slot_view(const dm_feedback *f, int slot) {
-    const struct dm_slot *s = (slot >= 0) ? slot_store_get(f->store, slot) : NULL;
-    if (!s) {
-        return (dm_render_slot_view){.event_count = 0, .events = NULL};
-    }
-    return (dm_render_slot_view){.event_count = s->event_count, .events = s->events};
+    /* slot_store_get already returns the render view; just guard the negative slot. */
+    return (slot >= 0) ? slot_store_get(f->store, slot)
+                       : (dm_render_slot_view){.event_count = 0, .events = NULL};
 }
 
 /* ---- finishing & continuation ----------------------------------------------- */

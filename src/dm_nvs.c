@@ -224,14 +224,15 @@ static void dm_storage_work_handler(struct k_work *work) {
 #endif
 }
 
-static dm_result enqueue(enum dm_storage_op_type type, int slot_idx, const struct dm_slot *slot,
-                         uint32_t generation) {
+static dm_result enqueue(enum dm_storage_op_type type, int slot_idx,
+                         const struct dm_event *events, uint32_t count, uint32_t generation) {
     struct dm_storage_op op = {0};
     op.type = type;
     op.slot_idx = slot_idx;
     op.generation = generation;
-    if (slot != NULL) {
-        memcpy(&op.slot, slot, sizeof(op.slot));
+    op.slot.event_count = count;
+    if (events != NULL && count > 0) {
+        memcpy(op.slot.events, events, (size_t)count * sizeof(struct dm_event));
     }
 
     int rc = k_msgq_put(&dm_storage_msgq, &op, K_NO_WAIT);
@@ -245,14 +246,15 @@ static dm_result enqueue(enum dm_storage_op_type type, int slot_idx, const struc
 
 /* ---- the dm_nvs_sink slot_store calls -------------------------------------- */
 
-static dm_result sink_save(void *ctx, int slot, const struct dm_slot *s, uint32_t generation) {
+static dm_result sink_save(void *ctx, int slot, const struct dm_event *events, uint32_t count,
+                           uint32_t generation) {
     (void)ctx;
-    return enqueue(DM_STORAGE_OP_SAVE, slot, s, generation);
+    return enqueue(DM_STORAGE_OP_SAVE, slot, events, count, generation);
 }
 
 static dm_result sink_del(void *ctx, int slot, uint32_t generation) {
     (void)ctx;
-    return enqueue(DM_STORAGE_OP_DELETE, slot, NULL, generation);
+    return enqueue(DM_STORAGE_OP_DELETE, slot, NULL, 0, generation);
 }
 
 static const dm_nvs_sink dm_nvs_sink_impl = {
@@ -420,8 +422,8 @@ static int dm_settings_export(int (*storage_func)(const char *name, const void *
         if (!slot_is_nvs(i)) {
             continue;
         }
-        const struct dm_slot *s = slot_store_get(dm_store, i);
-        if (s == NULL) {
+        struct dm_slot_view v = slot_store_get(dm_store, i);
+        if (v.events == NULL) {
             continue;
         }
 
@@ -430,11 +432,11 @@ static int dm_settings_export(int (*storage_func)(const char *name, const void *
 
         struct dm_slot_header header = {
             .version = DM_STORAGE_VERSION,
-            .event_count = s->event_count,
+            .event_count = v.event_count,
         };
         memcpy(export_buf, &header, sizeof(header));
-        size_t events_size = s->event_count * sizeof(struct dm_event);
-        memcpy(export_buf + sizeof(struct dm_slot_header), s->events, events_size);
+        size_t events_size = v.event_count * sizeof(struct dm_event);
+        memcpy(export_buf + sizeof(struct dm_slot_header), v.events, events_size);
 
         int rc = storage_func(key, export_buf, sizeof(struct dm_slot_header) + events_size);
         if (rc) {
