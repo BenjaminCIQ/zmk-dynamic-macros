@@ -531,16 +531,19 @@ so this case bakes `CONFIG_…_NEW_STACK=y` into its own `native_sim.conf` and i
 listed in `generate.sh`'s `EXCLUDE` (no legacy oracle to mirror, so no parity
 twin).
 - `native_sim.conf`: `…_MAX_EVENTS=8`, `…_AVG_EVENTS_PER_SLOT=2`,
-  `…_RAM_SLOTS=3` (pool = 2×3 = 6 events), `PERSIST=n`, `FEEDBACK_OFF=y`,
-  `ASSIGN_TIMEOUT=500`, `NEW_STACK=y`.
-- `native_sim.keymap`: record A (2 ev) → slot 0; record B B (4 ev) → slot 1
-  (pool now 6/6 full); record C (2 ev) → assign slot 2 must be **rejected**
-  (stays PENDING_ASSIGN); wait past the timeout to cancel; play slot 2 (empty,
-  no output) then slots 0 and 1 (intact).
+  `…_RAM_SLOTS=4` (pool = 2×4 = **8** events, == `MAX_EVENTS` so the
+  `MAX_EVENTS ≤ ARENA_EVENTS` build guard holds — a 3-slot/pool-6 config would
+  fail to build), `PERSIST=n`, `FEEDBACK_OFF=y`, `ASSIGN_TIMEOUT=500`,
+  `NEW_STACK=y`.
+- `native_sim.keymap`: record A (2 ev) → slot 0; record B B (4 ev) → slot 1;
+  record C (2 ev) → slot 2 (pool now 8/8 full); record D (2 ev) → assign slot 3
+  must be **rejected** (stays PENDING_ASSIGN); wait past the timeout to cancel;
+  play slot 3 (empty, no output) then slots 0,1,2 (intact).
 - `keycode_events.snapshot` / `events.patterns`: with `FEEDBACK_OFF` the snapshot
-  is pure record-passthrough + playback — `A / B B / C` (live record, incl. the
-  rejected take's passthrough) then `A / B B` (playback of the two stored slots),
-  and **nothing** for slot 2, proving the third macro was not stored.
+  is pure record-passthrough + playback — `A / B B / C / D` (live record, incl.
+  the rejected take's passthrough) then `A / B B / C` (playback of the three
+  stored slots), and **nothing** for slot 3, proving the fourth macro was not
+  stored.
   **The committed snapshot is the hand-derived expectation; it must be confirmed
   by one `west test` record run** (the new-stack native_sim build can't run on the
   Windows host loop). CI is the first place it actually executes.
