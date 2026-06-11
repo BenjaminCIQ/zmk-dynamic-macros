@@ -8,6 +8,7 @@ on:
       - "include/**"
       - "src/**"
       - "tests/**"
+      - "Kconfig"
       - "VERSION"
       - ".github/workflows/**"
   pull_request:
@@ -16,6 +17,7 @@ on:
       - "include/**"
       - "src/**"
       - "tests/**"
+      - "Kconfig"
       - "VERSION"
       - ".github/workflows/**"
   schedule:
