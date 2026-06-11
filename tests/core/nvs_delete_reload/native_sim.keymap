@@ -1,0 +1,77 @@
+#include <dt-bindings/zmk/keys.h>
+#include <behaviors.dtsi>
+#include <dt-bindings/zmk/kscan_mock.h>
+#include <behaviors/dynamic_macro.dtsi>
+#include <dt-bindings/zmk/dynamic_macros.h>
+
+/*
+ * NVS delete DURABILITY across a reboot. The other NVS cases prove save/load
+ * fidelity (nvs_roundtrip, multi_slot_nvs) or load-time mapping (nvs_load); none
+ * proves a DELETE actually erased the slot from flash and STAYS erased across a
+ * power cycle. This does:
+ *
+ *   record A B -> assign NVS slot 0 (persists to flash) -> DEL -> delete slot 0
+ *   (async settings_delete erases it from flash) -> TEST_RELOAD (flush, zero RAM,
+ *   reload from flash) -> play slot 0.
+ *
+ * If the erase committed and survived the reload, the slot is empty and the
+ * final play emits NOTHING. So the snapshot is only the live A,B typed during
+ * recording — a regression that left the slot on flash would resurrect A,B on
+ * the post-reload play and the snapshot would not match. Flash is process-
+ * private (--flash_in_ram, defaulted by Kconfig under TEST_RELOAD).
+ *
+ * Key layout (4 rows x 2 cols):
+ *   (0,0)=REC        (0,1)=STP
+ *   (1,0)=NVS slot 0 (1,1)=NVS slot 1
+ *   (2,0)=DEL        (2,1)=TEST_RELOAD
+ *   (3,0)=A          (3,1)=B
+ */
+
+&kscan {
+    rows = <4>;
+    columns = <2>;
+    exit-after;
+    events = <
+        /* REC */
+        ZMK_MOCK_PRESS(0,0,10)
+        ZMK_MOCK_RELEASE(0,0,10)
+        /* A (recorded) */
+        ZMK_MOCK_PRESS(3,0,10)
+        ZMK_MOCK_RELEASE(3,0,10)
+        /* B (recorded) */
+        ZMK_MOCK_PRESS(3,1,10)
+        ZMK_MOCK_RELEASE(3,1,10)
+        /* STP */
+        ZMK_MOCK_PRESS(0,1,10)
+        ZMK_MOCK_RELEASE(0,1,10)
+        /* SLOT_NVS 0 (assign — persists to flash) */
+        ZMK_MOCK_PRESS(1,0,500)
+        ZMK_MOCK_RELEASE(1,0,10)
+        /* DEL (enter delete mode) */
+        ZMK_MOCK_PRESS(2,0,10)
+        ZMK_MOCK_RELEASE(2,0,10)
+        /* SLOT_NVS 0 (delete — async erase from flash; let it settle) */
+        ZMK_MOCK_PRESS(1,0,500)
+        ZMK_MOCK_RELEASE(1,0,10)
+        /* TEST_RELOAD (flush NVS, zero RAM, reload from flash) */
+        ZMK_MOCK_PRESS(2,1,10)
+        ZMK_MOCK_RELEASE(2,1,10)
+        /* SLOT_NVS 0 (play — must be EMPTY: delete survived the reload) */
+        ZMK_MOCK_PRESS(1,0,2000)
+        ZMK_MOCK_RELEASE(1,0,10)
+    >;
+};
+
+/ {
+    keymap {
+        compatible = "zmk,keymap";
+        default_layer {
+            bindings = <
+                &dm DM_REC 0      &dm DM_STP 0
+                &dm DM_SLOT_NVS 0 &dm DM_SLOT_NVS 1
+                &dm DM_DEL 0      &dm DM_TEST_RELOAD 0
+                &kp A             &kp B
+            >;
+        };
+    };
+};
