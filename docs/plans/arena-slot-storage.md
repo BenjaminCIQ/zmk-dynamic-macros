@@ -524,16 +524,26 @@ Procedure:
    `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_AVG_EVENTS_PER_SLOT=64` (parity) — do **not**
    blanket-edit all confs.
 
-**New `native_sim` test to add — `tests/core/pool_full/`** (copy the `overflow/`
-test as the template; it already sets a tiny `MAX_EVENTS`):
-- `native_sim.conf`: `…_MAX_EVENTS=8`, `…_AVG_EVENTS_PER_SLOT=2`, multiple slots,
-  `PERSIST=n`, feedback on (to capture the message).
-- `native_sim.keymap`: record two short macros that together exceed the pool, then
-  record + assign a third that must be rejected.
-- `keycode_events.snapshot` / `events.patterns`: generated, then asserted — shows
-  the third assign producing the "full" feedback rather than storing.
-  (If the optional `DM_FB_POOL_FULL` message from §5.10 is implemented, the
-  snapshot captures it; otherwise it captures the reused "slot full" message.)
+**New `native_sim` test added — `tests/core/pool_full/`** (`overflow/` as the
+template). **New-stack-only:** the shared pool and its "full" rejection do not
+exist on the legacy per-slot stack (which would simply store all three macros),
+so this case bakes `CONFIG_…_NEW_STACK=y` into its own `native_sim.conf` and is
+listed in `generate.sh`'s `EXCLUDE` (no legacy oracle to mirror, so no parity
+twin).
+- `native_sim.conf`: `…_MAX_EVENTS=8`, `…_AVG_EVENTS_PER_SLOT=2`,
+  `…_RAM_SLOTS=3` (pool = 2×3 = 6 events), `PERSIST=n`, `FEEDBACK_OFF=y`,
+  `ASSIGN_TIMEOUT=500`, `NEW_STACK=y`.
+- `native_sim.keymap`: record A (2 ev) → slot 0; record B B (4 ev) → slot 1
+  (pool now 6/6 full); record C (2 ev) → assign slot 2 must be **rejected**
+  (stays PENDING_ASSIGN); wait past the timeout to cancel; play slot 2 (empty,
+  no output) then slots 0 and 1 (intact).
+- `keycode_events.snapshot` / `events.patterns`: with `FEEDBACK_OFF` the snapshot
+  is pure record-passthrough + playback — `A / B B / C` (live record, incl. the
+  rejected take's passthrough) then `A / B B` (playback of the two stored slots),
+  and **nothing** for slot 2, proving the third macro was not stored.
+  **The committed snapshot is the hand-derived expectation; it must be confirmed
+  by one `west test` record run** (the new-stack native_sim build can't run on the
+  Windows host loop). CI is the first place it actually executes.
 
 ---
 

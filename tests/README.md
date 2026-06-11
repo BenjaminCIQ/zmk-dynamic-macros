@@ -41,6 +41,7 @@ Two test layers run in CI:
 | `chain` | Chain an existing slot into a new recording |
 | `chain_no_room` | Chain rejected when it would overflow the draft |
 | `overflow` | Recording past `MAX_EVENTS` → pending assign |
+| `pool_full` | Shared event arena exhausted → third assign rejected, stored slots intact (new-stack only) |
 | `modifier_record` | Modifier chords (Shift/Ctrl + key) record and replay |
 | `load_e2e` | Several RAM slots filled to capacity, loaded and played |
 | `nvs_roundtrip` | Record → save to NVS → reload → play (save/load fidelity) |

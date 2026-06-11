@@ -27,12 +27,14 @@ out="$here"
 
 cfg="CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_NEW_STACK=y"
 
-# Cases excluded from the parity tree (space-separated "suite/case"). Empty
-# since the §4.3 shared-flash.bin hazard was fixed at the root: the module
-# Kconfig defaults NATIVE_EXTRA_CMDLINE_ARGS to "--flash_in_ram" for TEST_RELOAD
-# builds, so every test process gets a private, pristine flash and the
-# NVS-roundtrip cases no longer cross-contaminate their legacy twins.
-EXCLUDE=""
+# Cases excluded from the parity tree (space-separated "suite/case").
+#
+# core/pool_full is new-stack-only: it exercises the shared-arena "pool full"
+# rejection, which has no legacy equivalent (the legacy per-slot arrays would
+# simply store all three macros). It already sets NEW_STACK=y in its own conf,
+# so there is no legacy oracle to mirror — generating a twin would just duplicate
+# the same new-stack run against the same snapshot.
+EXCLUDE="core/pool_full"
 
 generated=0
 for suite in core feedback events; do
