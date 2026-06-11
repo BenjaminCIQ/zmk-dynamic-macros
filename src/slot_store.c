@@ -57,24 +57,43 @@ static uint16_t arena_live(const slot_store *s) {
 }
 
 /*
- * Repack all live slots to the low end of the arena in index order, writing the
- * first free offset (== arena_live) to *out_free. Returns false WITHOUT moving a
- * byte if a slot is currently playing: relocating events would dangle the raw
- * pointer the playback handler holds into the arena. This is slot_store's own
- * enforcement of the playing-slot rule (fe3689e) ported to byte movement -- the
- * safety is a runtime guard here, not an assumption about which caller invoked.
+ * Repack all live slots to the low end of the arena, writing the first free
+ * offset (== arena_live) to *out_free. Returns false WITHOUT moving a byte if a
+ * slot is currently playing: relocating events would dangle the raw pointer the
+ * playback handler holds into the arena. This is slot_store's own enforcement of
+ * the playing-slot rule (fe3689e) ported to byte movement -- the safety is a
+ * runtime guard here, not an assumption about which caller invoked.
  *
- * memmove (not memcpy): a slot shifted left may overlap its old location.
+ * Slots are packed in ASCENDING start-offset order, NOT index order. After a
+ * move (meta[dst]=meta[src]) a higher-indexed slot can sit at a lower arena
+ * offset than a lower-indexed one, so index order != memory order. Packing left
+ * in source-offset order guarantees each memmove's destination (w) never lands on
+ * a region not yet relocated, so a forward copy can't clobber a pending slot.
+ * memmove (not memcpy): a left-shifted slot may overlap its old location.
  */
 static bool arena_repack(slot_store *s, uint16_t *out_free) {
     if (s->playing_slot != -1) {
         return false; /* compaction is unsafe while a slot plays */
     }
-    uint16_t w = 0;
+
+    /* order live slot indices by current start (insertion sort; MAX_SLOTS<=64) */
+    int order[MAX_SLOTS];
+    int n = 0;
     for (int i = 0; i < MAX_SLOTS; i++) {
         if (s->meta[i].count == 0) {
             continue;
         }
+        int j = n++;
+        while (j > 0 && s->meta[order[j - 1]].start > s->meta[i].start) {
+            order[j] = order[j - 1];
+            j--;
+        }
+        order[j] = i;
+    }
+
+    uint16_t w = 0;
+    for (int k = 0; k < n; k++) {
+        int i = order[k];
         if (s->meta[i].start != w) {
             memmove(&s->events_arena[w], &s->events_arena[s->meta[i].start],
                     (size_t)s->meta[i].count * sizeof(struct dm_event));

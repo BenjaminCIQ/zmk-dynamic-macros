@@ -545,6 +545,53 @@ ZTEST(slot_store, compaction_repacks_after_hole) {
     zassert_equal(s->meta[RAM_A + 1].start, 20, "D placed right after C");
 }
 
+/* Seed a slot whose every event keycode == tag, so a slot's identity survives a
+ * relocation and a cross-slot mixup is detectable. */
+static void seed_tagged(slot_store *s, int idx, uint32_t n, uint16_t tag) {
+    uint16_t start = arena_live_test(s);
+    for (uint32_t i = 0; i < n && (start + i) < ARENA_EVENTS; i++) {
+        s->events_arena[start + i].keycode = tag;
+    }
+    s->meta[idx].start = start;
+    s->meta[idx].count = (uint16_t)n;
+}
+
+/* Regression (load_e2e parity failure): after a move, a higher-indexed slot can
+ * sit at a LOWER arena offset than a lower-indexed one, so index order != memory
+ * order. A repack that packed in index order issued a forward memmove that
+ * clobbered the not-yet-moved region, swapping two slots' contents. arena_repack
+ * must pack in ascending start-offset order. */
+ZTEST(slot_store, repack_after_move_preserves_slot_identity) {
+    slot_store *s = fresh_store();
+    seed_tagged(s, NVS_A, 10, 0xAA); /* [0,10)  index 0 */
+    seed_tagged(s, NVS_B, 10, 0xBB); /* [10,20) index 1 */
+    seed_tagged(s, RAM_A, 10, 0xCC); /* [20,30) index 8 */
+
+    /* move B (index 1) -> a HIGH index; dst now aliases [10,20) but at index 9,
+     * so memory order (0:idx0, 10:idx9, 20:idx8) diverges from index order. */
+    int moved = RAM_A + 1; /* index 9 */
+    dm_result mr = slot_store_move(s, NVS_B, moved);
+    zassert_equal(mr, DM_OK, "move B -> high slot");
+    zassert_equal(s->meta[moved].start, 10, "moved slot still at offset 10");
+    zassert_equal(s->meta[RAM_A].start, 20, "C above moved slot: memory order != index order");
+
+    /* a commit triggers arena_repack while index order != memory order */
+    fill_draft(s, 5);
+    dm_result r = slot_store_draft_commit(s, NVS_B); /* slot 1 is now empty */
+    zassert_equal(r, DM_OK, "commit after move compacts");
+
+    /* every slot must still read its OWN tag — no cross-slot clobber */
+    struct dm_slot_view va = slot_store_get(s, NVS_A);
+    struct dm_slot_view vc = slot_store_get(s, RAM_A);
+    struct dm_slot_view vm = slot_store_get(s, moved);
+    zassert_equal(va.events[0].keycode, 0xAA, "slot A kept its data");
+    zassert_equal(vc.events[0].keycode, 0xCC, "slot C kept its data (not clobbered)");
+    zassert_equal(vm.events[0].keycode, 0xBB, "moved slot kept B's data (not C's)");
+    zassert_equal(va.event_count, 10, "A count intact");
+    zassert_equal(vc.event_count, 10, "C count intact");
+    zassert_equal(vm.event_count, 10, "moved count intact");
+}
+
 /* R1: while a slot plays, an allocating commit that needs compaction is REJECTED
  * and moves no bytes — the guard, not the arithmetic, blocks it. Clearing playback
  * then lets the same commit succeed. */
