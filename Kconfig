@@ -191,3 +191,16 @@ config ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS
       slot contents.
 
 endif
+
+# The native_sim flash simulator defaults to a file backing (./flash.bin,
+# relative to the process working directory). ZMK's run-test.sh runs every
+# test binary from one shared directory, up to four in parallel, so any two
+# NVS tests would share — and corrupt — the same flash file, and a previous
+# run's slots would leak into the next. Backing the flash with RAM gives each
+# test process a pristine, private flash; DM_TEST_RELOAD still exercises the
+# full settings/NVS round-trip in-process. Gated on the test-only RELOAD
+# symbol so production native builds are unaffected.
+config NATIVE_EXTRA_CMDLINE_ARGS
+    string
+    depends on ARCH_POSIX
+    default "--flash_in_ram" if ZMK_BEHAVIOR_DYNAMIC_MACRO_TEST_RELOAD && FLASH_SIMULATOR
