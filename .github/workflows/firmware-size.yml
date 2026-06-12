@@ -101,7 +101,9 @@ jobs:
           fi
           # ZMK_EXTRA_MODULES points the build at the checked-out module;
           # BOARD_ROOT exposes the in-repo size shield under tests/size/boards/.
-          west build -s zmk/app -d build -b nice_nano_v2 -p always -- \
+          # hwmv2 board naming (matches ../zmk-config): nice!nano v2 is
+          # nice_nano@2.0.0//zmk, NOT the legacy nice_nano_v2.
+          west build -s zmk/app -d build -b "nice_nano@2.0.0//zmk" -p always -- \
             -DSHIELD=dm_size \
             -DZMK_EXTRA_MODULES="$GITHUB_WORKSPACE" \
             -DBOARD_ROOT="$GITHUB_WORKSPACE/tests/size" \
