@@ -91,9 +91,9 @@ typedef struct {
     /*
      * Type one feedback message. The machine builds the spec from the parts it
      * already holds (kind + slot + slot2) and calls this once per transition,
-     * AFTER it has written state and parked the return-state. One slot replaces
-     * the old 24 speak_* — the message enum is collapsed at the seam, not
-     * re-expanded into a pointer per kind. Fire-and-forget: completion comes back
+     * AFTER it has written state and parked the return-state. One callback slot
+     * carries every message kind in the spec — the enum is not re-expanded into a
+     * pointer per kind. Fire-and-forget: completion comes back
      * via dm_machine_typing_finished. Transitions that type nothing (preview)
      * skip this and call typing_finished directly; the machine, not a phantom
      * speak, owns the no-type case.

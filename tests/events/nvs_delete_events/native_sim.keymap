@@ -5,15 +5,14 @@
 #include <dt-bindings/zmk/dynamic_macros.h>
 
 /*
- * NVS-delete notification parity (covers the corpus blind spot where every NVS
- * snapshot case ran FEEDBACK_OFF *without* EVENTS, so the NVS×notification path
- * was untested). Records one event into an NVS slot, assigns it, then deletes
- * it, watching the dm_event notification stream.
+ * NVS-delete notification coverage (the NVS snapshot cases run FEEDBACK_OFF
+ * *without* EVENTS, so the NVS×notification path needs its own case). Records one
+ * event into an NVS slot, assigns it, then deletes it, watching the dm_event
+ * notification stream.
  *
  * The invariant under test: a persisted (NVS) delete raises DELETED (type=3)
  * EXACTLY ONCE, deferred to the async storage completion — not once
- * optimistically at the command and again on completion. The pre-fix new stack
- * raised it twice; the old path raises it once. Flash is process-private
+ * optimistically at the command and again on completion. Flash is process-private
  * (--flash_in_ram, defaulted by the module Kconfig under TEST_RELOAD), so no
  * shared-residue clear is needed.
  *

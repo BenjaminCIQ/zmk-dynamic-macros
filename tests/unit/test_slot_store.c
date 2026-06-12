@@ -409,8 +409,8 @@ ZTEST(slot_store, load_rejects_overflow) {
 }
 
 /* DM_TEST_RELOAD zeroes slots, pending bits, and generations before re-running
- * settings_load. The draft is NOT touched (reload only dispatches from IDLE;
- * parity with dm_storage_test_reload, which never clears recording_buffer). */
+ * settings_load. The draft is NOT touched (reload only dispatches from IDLE, so
+ * an in-progress recording cannot be live). */
 ZTEST(slot_store, reset_clears_slots_pending_generations) {
     slot_store *s = fresh_store();
     seed_slot(s, NVS_A, 3);
@@ -487,8 +487,8 @@ ZTEST(slot_store, rejected_commit_leaves_stored_slots_intact) {
     zassert_equal(r, DM_REJECTED_FULL, "over-full commit rejected");
     zassert_equal(s->meta[reject_dst].count, 0, "rejected target stays empty");
 
-    /* The head slots are untouched — this is the invariant the e2e caught when
-     * slot 0 played nothing. */
+    /* The head slots are untouched — this is the invariant the pool_full
+     * native_sim case caught when slot 0 played nothing. */
     struct dm_slot_view va = slot_store_get(s, NVS_A);
     struct dm_slot_view vb = slot_store_get(s, NVS_B);
     zassert_equal(va.event_count, a, "slot A count intact after rejected commit");
@@ -602,10 +602,11 @@ static void seed_tagged(slot_store *s, int idx, uint32_t n, uint16_t tag) {
     s->meta[idx].count = (uint16_t)n;
 }
 
-/* Regression (load_e2e parity failure): after a move, a higher-indexed slot can
- * sit at a LOWER arena offset than a lower-indexed one, so index order != memory
- * order. A repack that packed in index order issued a forward memmove that
- * clobbered the not-yet-moved region, swapping two slots' contents. arena_repack
+/* Regression (caught by the load_e2e native_sim case): after a move, a
+ * higher-indexed slot can sit at a LOWER arena offset than a lower-indexed one,
+ * so index order != memory order. A repack that packed in index order issued a
+ * forward memmove that clobbered the not-yet-moved region, swapping two slots'
+ * contents. arena_repack
  * must pack in ascending start-offset order. */
 ZTEST(slot_store, repack_after_move_preserves_slot_identity) {
     slot_store *s = fresh_store();

@@ -11,9 +11,9 @@
  * depending on dm_feedback's builder, and dm_feedback_build can consume one
  * without depending on the machine. Both include this; neither owns it.
  *
- * This replaces the old 24-slot speak_* vtable: the machine emits ONE spec per
- * transition instead of naming a dedicated speak_X callback, so the message enum
- * is collapsed at the seam exactly as it is collapsed inside the builder.
+ * The machine emits ONE spec per transition rather than naming a dedicated
+ * per-kind callback, so the message enum is carried across the seam exactly as it
+ * is inside the builder.
  */
 
 #ifndef DM_SPEC_H

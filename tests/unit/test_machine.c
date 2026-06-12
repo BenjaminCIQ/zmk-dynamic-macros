@@ -119,8 +119,7 @@ static void cb_clear_playing(void *c) { (void)c; log_tag("clear_playing"); }
 /*
  * speak — one thunk for every message. It maps spec->kind back to the short tag
  * the assertions use, and records the slot args a few tests check (saved slot,
- * moved src/dst). One spec call per transition replaces the old 24 speak_X
- * pointers — the test surface tracks the collapse.
+ * moved src/dst). One spec call per transition carries every message kind.
  *
  * Auto-finish mirrors the real OFF/below-level path: a synchronous transition
  * speak happens while the machine is in TYPING_FEEDBACK (it parked a
@@ -429,8 +428,8 @@ ZTEST(dm_machine, rec_from_preview_pending_starts_recording) {
     setup();
     goto_state(DM_STATE_PREVIEW_PENDING);
     fx.log_n = 0;
-    /* parity with the old cmd_record: PREVIEW_PENDING is NOT in its blocklist, so
-     * REC there cancels the preview timeout and starts a fresh recording. */
+    /* REC is allowed from PREVIEW_PENDING: it cancels the preview timeout and
+     * starts a fresh recording. */
     dm_result rc = cmd(DM_CMD_REC, 0);
     zassert_equal(rc, DM_OK, NULL);
     zassert_true(log_has("draft_reset"), NULL);
@@ -511,8 +510,7 @@ ZTEST(dm_machine, assign_persist_queue_full_surfaces) {
     fx.log_n = 0;
     /* the deferred assign-persist enqueue is refused: the machine must NOT drop it
      * silently — it speaks SAVE QUEUE FULL and raises ERROR_QUEUE_FULL, naming the
-     * slot, from the settled state (as the old feedback_complete -> dm_save_slot ->
-     * dm_feedback_save_queue_full did). */
+     * slot, from the settled state. */
     fx.persist_rc = DM_SAVE_QUEUE_FULL;
     dm_result rc = cmd(DM_CMD_SLOT, RAM0);
     zassert_equal(rc, DM_OK, NULL); /* the assign itself committed */
@@ -746,7 +744,7 @@ ZTEST(dm_machine, play_empty_slot_rejected) {
  * a timeout drops the machine to IDLE; then playing an EMPTY slot speaks
  * SLOT_EMPTY. Pre-fix, the OFF-path typing_finished resurrected PENDING_ASSIGN
  * (and re-armed its timeout), so the NEXT slot press was eaten as an assign
- * instead of a play — exactly the swallowed playback the e2e caught. */
+ * instead of a play — exactly the swallowed playback the pool_full native_sim case caught. */
 ZTEST(dm_machine, empty_play_does_not_resurrect_parked_state) {
     setup();
     /* a rejected assign: stays PENDING_ASSIGN, parks return_state = PENDING_ASSIGN */

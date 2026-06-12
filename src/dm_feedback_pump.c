@@ -283,9 +283,8 @@ static void emit_timer_handler(struct k_timer *timer) {
 
 void dm_feedback_speak(dm_feedback *f, const dm_feedback_spec *spec) {
     /* STATUS gates on the compile-time status_detail knob, not the runtime level.
-     * A KNOB confirmation always types, regardless of the resulting level (the old
-     * cmd_feedback_adjust / cmd_style_toggle / cmd_erase_toggle type their cue
-     * unconditionally). Everything else gates on the runtime level. */
+     * A KNOB confirmation always types its cue, regardless of the resulting level.
+     * Everything else gates on the runtime level. */
     bool is_status = (spec->kind == DM_FB_STATUS_HEADER);
     if (is_status) {
         if (f->status_detail < DM_FB_STATUS_COUNT) {

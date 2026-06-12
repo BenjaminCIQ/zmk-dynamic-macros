@@ -79,7 +79,7 @@ static void notify(dm_machine *m, int event, int slot) {
 }
 
 /* Build a spec from the parts the transition already holds and type it. One
- * call per transition replaces the old per-message speak_X pointer. */
+ * call per transition; the message kind is carried in the spec, not the slot. */
 static void speak(dm_machine *m, dm_fb_kind kind, int slot, int slot2, bool show_preview) {
     dm_feedback_spec spec = {
         .kind = kind, .slot = slot, .slot2 = slot2, .show_preview = show_preview, .knob_text = 0,
@@ -118,8 +118,8 @@ static void enter_typing(dm_machine *m, dm_state return_to) {
 static dm_result do_rec(dm_machine *m) {
     /* REC restarts recording from IDLE, RECORDING (re-record), PENDING_ASSIGN
      * (a finished-but-unassigned take is discarded), and PREVIEW_PENDING. Cancel
-     * any pending-state timeout so a stale timer cannot fire mid-recording — the
-     * old cmd_record cancels assign_timeout_work unconditionally. */
+     * any pending-state timeout unconditionally so a stale timer cannot fire
+     * mid-recording. */
     cancel_timeout(m);
     /* REC from PENDING_ASSIGN with a non-empty draft discards the unassigned
      * take in favor of a fresh recording. */
@@ -143,8 +143,8 @@ static dm_result do_stop(dm_machine *m) {
         speak(m, DM_FB_NO_REC, -1, -1, false);
         return DM_OK;
     }
-    /* raise STOPPED while still RECORDING (coarse state = RECORDING), as the old
-     * feedback_stop does, before parking PENDING_ASSIGN. */
+    /* raise STOPPED while still RECORDING (so the event's coarse state reads
+     * RECORDING) before parking PENDING_ASSIGN. */
     notify(m, DM_EVT_RECORDING_STOPPED, -1);
     enter_typing(m, DM_STATE_PENDING_ASSIGN);
     speak(m, DM_FB_STOP, -1, -1, false);
@@ -202,7 +202,7 @@ static dm_result do_knob(dm_machine *m, dm_command cmd) {
 /* SLOT in RECORDING = chain source into the draft. */
 static dm_result slot_recording(dm_machine *m, int idx) {
     if (slot_empty(m, idx)) {
-        /* raise while still RECORDING (coarse=RECORDING), as old feedback_chain_empty */
+        /* raise while still RECORDING (so the event's coarse state reads RECORDING) */
         notify(m, DM_EVT_ERROR_SLOT_EMPTY, idx);
         enter_typing(m, DM_STATE_RECORDING);
         speak(m, DM_FB_CHAIN_EMPTY, idx, -1, false);
@@ -417,16 +417,14 @@ dm_result dm_machine_command(dm_machine *m, dm_command cmd, int param) {
 /* ---- up-calls ------------------------------------------------------------- */
 
 void dm_machine_typing_finished(dm_machine *m) {
-    /* fire the deferred post-save persist, then settle (matching the old
-     * feedback_complete order: state restored, timeout rescheduled, dm_save_slot
-     * last). Capture the slot before clearing so a queue-full outcome can name it
-     * AFTER the state has settled. */
+    /* Settle in a fixed order: state restored, timeout rescheduled, deferred
+     * post-save persist last. Capture the slot before clearing so a queue-full
+     * outcome can name it AFTER the state has settled. */
     int persist_slot = m->post_save_slot;
     m->post_save_slot = -1;
 
     m->state = m->return_state;
-    /* a return into a *_PENDING state re-arms the assign/move timeout (the old
-     * feedback_complete reschedules assign_timeout_work for exactly these). */
+    /* a return into a *_PENDING state re-arms the assign/move timeout. */
     if (m->state == DM_STATE_PENDING_ASSIGN || m->state == DM_STATE_DELETE_PENDING ||
         m->state == DM_STATE_MOVE_PENDING || m->state == DM_STATE_PREVIEW_PENDING) {
         arm_timeout(m);
@@ -437,8 +435,7 @@ void dm_machine_typing_finished(dm_machine *m) {
         if (rc == DM_SAVE_QUEUE_FULL) {
             /* the deferred assign-persist enqueue was refused: the macro will not
              * survive a reboot. Speak it from the settled state (a fresh feedback
-             * typing, exactly as the old dm_feedback_save_queue_full did inside
-             * feedback_complete), parking the current state as the return-state. */
+             * typing), parking the current state as the return-state. */
             notify(m, DM_EVT_ERROR_QUEUE_FULL, persist_slot);
             enter_typing(m, m->state);
             speak(m, DM_FB_SAVE_QFULL, persist_slot, -1, false);
@@ -463,8 +460,7 @@ void dm_machine_deliver_async(dm_machine *m, dm_result outcome, int slot) {
     }
     /* Park the IDLE return-state and enter TYPING_FEEDBACK before speaking, so the
      * machine reads as busy while the deferred message types and settles back to
-     * IDLE on typing_finished — exactly as a synchronous transition does (the old
-     * deferred dm_feedback_deleted typed through TYPING_FEEDBACK the same way). */
+     * IDLE on typing_finished — exactly as a synchronous transition does. */
     notify(m, notify_evt, slot);
     enter_typing(m, DM_STATE_IDLE);
     speak(m, kind, slot, -1, false);
@@ -479,9 +475,7 @@ void dm_machine_erase_due(dm_machine *m) {
     }
     m->state = DM_STATE_TYPING_ERASE;
     /* The erase emission is armed by the erase scheduler itself (the pump pushes
-     * backspaces right after this returns); the machine only parks the state. The
-     * old speak_erase slot was a no-op in the typing build and dead in the
-     * no-typing build (no scheduler), so it is gone. */
+     * backspaces right after this returns); the machine only parks the state. */
 }
 
 /* Both the clean-drain (erase_finished) and the abort (erase_cancel) paths

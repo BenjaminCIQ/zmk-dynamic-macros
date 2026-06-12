@@ -6,11 +6,10 @@
  * Tests for dm_feedback_build — the pure message-builder core.
  *
  * The builder emits fb_events (keycode+mods). To assert against the human
- * message strings the old dm_feedback.c produced, a decoding sink maps each
- * fb_event back to the character it types on the given locale (the inverse of
- * the builder's ascii_to_hid), so a US "[DM SAVED N3" asserts as that literal.
- * This pins parity with the live output string-for-string while exercising the
- * actual keycode path.
+ * message strings, a decoding sink maps each fb_event back to the character it
+ * types on the given locale (the inverse of the builder's ascii_to_hid), so a US
+ * "[DM SAVED N3" asserts as that literal. This pins the output string-for-string
+ * while exercising the actual keycode path.
  */
 
 #include "ztest_shim.h"

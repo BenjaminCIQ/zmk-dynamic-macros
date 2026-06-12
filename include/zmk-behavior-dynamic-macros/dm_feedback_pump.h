@@ -85,8 +85,8 @@ typedef struct {
 
     /*
      * Raise a keycode press/release. Indirected so the pump stays free of a
-     * direct ZMK event-manager dependency in the host/parity build; the firmware
-     * wires raise_zmk_keycode_state_changed, the parity harness wires a capture.
+     * direct ZMK event-manager dependency and is host-testable; the firmware
+     * wires raise_zmk_keycode_state_changed.
      */
     void (*raise_keycode)(void *ctx, uint16_t keycode, uint8_t mods, bool pressed);
 
