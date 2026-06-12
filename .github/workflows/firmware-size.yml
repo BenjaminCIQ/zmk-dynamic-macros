@@ -114,7 +114,9 @@ jobs:
         working-directory: ${{ runner.temp }}/ws
         run: |
           set -euo pipefail
-          elf=build/zephyr/zephyr.elf
+          # ZMK renames the final image zmk.elf (not Zephyr's default zephyr.elf).
+          elf=build/zephyr/zmk.elf
+          [ -f "$elf" ] || elf=build/zephyr/zephyr.elf  # fallback, just in case
           # The Zephyr SDK ARM toolchain is arm-zephyr-eabi-*, not arm-none-eabi-*,
           # and may not be on PATH. Resolve a size binary robustly.
           SIZE=""
