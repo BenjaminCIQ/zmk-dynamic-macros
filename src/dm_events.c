@@ -80,7 +80,6 @@ void dm_events_raise(struct dm_inst *inst, int machine_event, int slot) {
 }
 
 /* ---- the dm_get_* widget query API ---------------------------------------- */
-#if defined(DM_NEW_STACK)
 
 static dm_render_slot_view view_for(slot_store *store, int slot_idx) {
     return slot_store_get(store, slot_idx); /* {0, NULL} when empty */
@@ -160,7 +159,5 @@ uint32_t dm_get_recording_event_count(void) {
     }
     return slot_store_draft_count(&inst->store);
 }
-
-#endif /* DM_NEW_STACK */
 
 #endif /* CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS */

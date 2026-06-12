@@ -1,9 +1,0 @@
-type=0 slot=-1 state=0
-pressed: usage_page 0x07 keycode 0x04 implicit_mods 0x00 explicit_mods 0x00
-released: usage_page 0x07 keycode 0x04 implicit_mods 0x00 explicit_mods 0x00
-type=1 slot=-1 state=1
-type=2 slot=0 state=0
-type=5 slot=0 state=2
-pressed: usage_page 0x07 keycode 0x04 implicit_mods 0x00 explicit_mods 0x00
-released: usage_page 0x07 keycode 0x04 implicit_mods 0x00 explicit_mods 0x00
-type=6 slot=0 state=0

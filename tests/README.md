@@ -12,10 +12,7 @@ Two test layers run in CI:
   invariant. See `tests/unit/README.md`.
 - **`native_sim` keymap-snapshot cases** (below) — full-firmware integration: a keymap
   of mock keypresses is run and the emitted keycode (and, where enabled, `dm_event`
-  notification) stream is diffed against a recorded `keycode_events.snapshot`. The
-  parallel `tests/parity/e2e/` tree re-runs each case against the modular stack
-  (`NEW_STACK=y`) and asserts the same snapshot (regenerate with
-  `tests/parity/e2e/generate.sh`).
+  notification) stream is diffed against a recorded `keycode_events.snapshot`.
 
 ## native_sim cases
 

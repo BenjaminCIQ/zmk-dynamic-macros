@@ -206,15 +206,6 @@ config ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS
       for external display widgets to subscribe to. Also enables query API for
       slot contents.
 
-config ZMK_BEHAVIOR_DYNAMIC_MACRO_NEW_STACK
-    bool "Build the modular dynamic-macro stack"
-    default n
-    help
-      Builds the modular stack (dm_machine + slot_store + dm_render +
-      dm_feedback_pump + dm_events + dm_nvs + the behavior shell). The native_sim
-      test harness sets this to run the command corpus through it and diff the
-      output against the recorded snapshots. Test-only; not for production builds.
-
 endif
 
 # The native_sim flash simulator defaults to a file backing (./flash.bin,
