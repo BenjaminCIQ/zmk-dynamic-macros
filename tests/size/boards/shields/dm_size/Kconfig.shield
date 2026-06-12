@@ -1,0 +1,5 @@
+# Copyright (c) 2026 Benjamin H
+# SPDX-License-Identifier: MIT
+
+config SHIELD_DM_SIZE
+    def_bool $(shields_list_contains,dm_size)

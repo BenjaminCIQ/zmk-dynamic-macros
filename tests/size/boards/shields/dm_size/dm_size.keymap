@@ -1,0 +1,53 @@
+/*
+ * Copyright (c) 2026 Benjamin H
+ * SPDX-License-Identifier: MIT
+ *
+ * Size-measurement keymap. One keymap serves both builds via the DM_SIZE_BASELINE
+ * preprocessor define (passed by the size workflow for the baseline only):
+ *   - default (module ON)  -> includes the dynamic-macro behavior node + bindings,
+ *                             exercising every command family (record, slots,
+ *                             delete, move, knobs, status, preview).
+ *   - DM_SIZE_BASELINE set  -> no behavior node, no &dm bindings; the module's
+ *                             devicetree compatible is never instantiated, so the
+ *                             Kconfig auto-enable (dt_compat_enabled) stays off and
+ *                             NONE of the module compiles. This is the true zero.
+ *
+ * The matrix is 4 rows x 3 cols = 12 positions (see dm_size.overlay).
+ */
+
+#include <behaviors.dtsi>
+#include <dt-bindings/zmk/keys.h>
+
+#ifndef DM_SIZE_BASELINE
+
+#include <dt-bindings/zmk/dynamic_macros.h>
+#include <behaviors/dynamic_macro.dtsi>
+
+#define DM_ROW_1 &dm DM_REC 0          &dm DM_STP 0           &dm DM_STATE 0
+#define DM_ROW_2 &dm DM_SLOT_NVS 0     &dm DM_SLOT_NVS 1      &dm DM_SLOT_RAM 0
+#define DM_ROW_3 &dm DM_DEL 0          &dm DM_MOV 0           &dm DM_PREVIEW 0
+#define DM_ROW_4 &dm DM_FEEDBACK_INC 0 &dm DM_STYLE_TOGGLE 0  &dm DM_ERASE_TOGGLE 0
+
+#else /* baseline: no dynamic-macro node, no references — the true zero */
+
+#define DM_ROW_1 &none &none &none
+#define DM_ROW_2 &none &none &none
+#define DM_ROW_3 &none &none &none
+#define DM_ROW_4 &none &none &none
+
+#endif
+
+/ {
+    keymap {
+        compatible = "zmk,keymap";
+
+        default_layer {
+            bindings = <
+                DM_ROW_1
+                DM_ROW_2
+                DM_ROW_3
+                DM_ROW_4
+            >;
+        };
+    };
+};

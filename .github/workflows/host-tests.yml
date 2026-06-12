@@ -13,14 +13,12 @@ on:
       - "include/**"
       - "src/**"
       - "tests/unit/**"
-      - "tests/parity/**"
       - ".github/workflows/host-tests.yml"
   pull_request:
     paths:
       - "include/**"
       - "src/**"
       - "tests/unit/**"
-      - "tests/parity/**"
       - ".github/workflows/host-tests.yml"
 
 jobs:
