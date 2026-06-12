@@ -451,6 +451,52 @@ static int fill_arena(slot_store *s) {
     return used;
 }
 
+/* Commit `n` tagged events (every keycode == tag) into dst, so a slot's identity
+ * is checkable after later compactions. */
+static dm_result commit_tagged(slot_store *s, int dst, uint32_t n, uint16_t tag) {
+    slot_store_draft_reset(s);
+    for (uint32_t i = 0; i < n; i++) {
+        struct dm_event e = {.keycode = tag};
+        slot_store_draft_append(s, &e);
+    }
+    return slot_store_draft_commit(s, dst);
+}
+
+/* Regression (native_sim pool_full: slot 0 played nothing): commit several slots
+ * to fill the pool, then a rejected over-full commit, and confirm EVERY stored
+ * slot still reads its own data. A rejected draft_commit must not disturb the
+ * slots already in the arena. */
+ZTEST(slot_store, rejected_commit_leaves_stored_slots_intact) {
+    slot_store *s = fresh_store();
+    /* Tagged small head slots, then pad the rest of the pool with MAX_EVENTS-sized
+     * filler so the pool is EXACTLY full (each slot <= MAX_EVENTS). */
+    uint32_t a = 10, b = 20;
+    zassert_equal(commit_tagged(s, NVS_A, a, 0xAA), DM_OK, "slot A committed");
+    zassert_equal(commit_tagged(s, NVS_B, b, 0xBB), DM_OK, "slot B committed");
+    int dst = RAM_A;
+    while (arena_live_test(s) < ARENA_EVENTS) {
+        uint32_t room = (uint32_t)ARENA_EVENTS - arena_live_test(s);
+        uint32_t chunk = room < MAX_EVENTS ? room : MAX_EVENTS;
+        zassert_equal(commit_tagged(s, dst++, chunk, 0xCC), DM_OK, "filler committed");
+    }
+    zassert_equal(arena_live_test(s), ARENA_EVENTS, "pool exactly full");
+
+    /* Next commit can't fit -> rejected. */
+    int reject_dst = dst;
+    dm_result r = commit_tagged(s, reject_dst, 2, 0xDD);
+    zassert_equal(r, DM_REJECTED_FULL, "over-full commit rejected");
+    zassert_equal(s->meta[reject_dst].count, 0, "rejected target stays empty");
+
+    /* The head slots are untouched — this is the invariant the e2e caught when
+     * slot 0 played nothing. */
+    struct dm_slot_view va = slot_store_get(s, NVS_A);
+    struct dm_slot_view vb = slot_store_get(s, NVS_B);
+    zassert_equal(va.event_count, a, "slot A count intact after rejected commit");
+    zassert_equal(va.events[0].keycode, 0xAA, "slot A data intact");
+    zassert_equal(vb.event_count, b, "slot B count intact");
+    zassert_equal(vb.events[0].keycode, 0xBB, "slot B data intact");
+}
+
 /* A non-empty commit into an exhausted pool is rejected; the target stays empty. */
 ZTEST(slot_store, commit_full_pool_rejected) {
     slot_store *s = fresh_store();
