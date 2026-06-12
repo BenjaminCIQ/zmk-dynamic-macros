@@ -1,0 +1,145 @@
+name: Firmware size
+
+# Builds the dynamic-macro module across its config combinations (plus a baseline
+# with the module entirely absent) for a real nice!nano v2 target, sizes each ELF,
+# and reports a markdown table of flash/RAM with deltas vs. the baseline. Use the
+# numbers to populate the "Firmware Size" section of README.md.
+#
+# Manual only: footprint changes rarely, so this is run on demand rather than per
+# push. Trigger from the Actions tab (workflow_dispatch).
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    container:
+      image: zmkfirmware/zmk-build-arm:stable
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: 0-baseline
+            name: "Baseline (module absent)"
+            conf: tests/size/baseline.conf
+            baseline: true
+          - id: 1-minimal
+            name: "Minimal (RAM only, no feedback)"
+            conf: tests/size/minimal.conf
+          - id: 2-persist-nofeedback
+            name: "Persistent, no feedback"
+            conf: tests/size/persist_nofeedback.conf
+          - id: 3-feedback-nopersist
+            name: "Feedback, no persistence"
+            conf: tests/size/feedback_nopersist.conf
+          - id: 4-default
+            name: "Default (feedback + persistence)"
+            conf: tests/size/default.conf
+          - id: 5-full
+            name: "Full (feedback + events + persistence + auto-erase)"
+            conf: tests/size/full.conf
+    steps:
+      - name: Checkout module
+        uses: actions/checkout@v4
+        with:
+          path: zmk-dynamic-macros
+
+      - name: Cache west modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            modules/
+            tools/
+            zephyr/
+            bootloader/
+            zmk/
+          key: size-west-${{ hashFiles('zmk-dynamic-macros/tests/size/west.yml') }}
+          restore-keys: size-west-
+
+      - name: West init + update
+        run: |
+          west init -l zmk-dynamic-macros/tests/size
+          west update --fetch-opt=--depth=1
+          west zephyr-export
+
+      - name: Build ${{ matrix.name }}
+        run: |
+          set -euo pipefail
+          # The baseline passes DM_SIZE_BASELINE to the devicetree preprocessor so
+          # the keymap omits the behavior node entirely; with no zmk,behavior-
+          # dynamic-macro compatible present, the module's Kconfig auto-enable
+          # (dt_compat_enabled) stays off and none of the module compiles.
+          DTC_FLAGS=""
+          if [ "${{ matrix.baseline }}" = "true" ]; then
+            DTC_FLAGS="-DEXTRA_DTC_FLAGS=-DDM_SIZE_BASELINE"
+          fi
+          # The module is already a Zephyr module via the west manifest (self:),
+          # so it does not need ZMK_EXTRA_MODULES. BOARD_ROOT points Zephyr at the
+          # in-repo size shield under tests/size/boards/shields/.
+          west build -s zmk/app -d build -b nice_nano_v2 -p always -- \
+            -DSHIELD=dm_size \
+            -DBOARD_ROOT="$GITHUB_WORKSPACE/zmk-dynamic-macros/tests/size" \
+            -DEXTRA_CONF_FILE="$GITHUB_WORKSPACE/zmk-dynamic-macros/${{ matrix.conf }}" \
+            $DTC_FLAGS
+
+      - name: Size the ELF
+        run: |
+          set -euo pipefail
+          arm-none-eabi-size -A build/zephyr/zephyr.elf | tee size_raw.txt
+          # flash = text + rodata + data ; ram = data + bss. Use the section totals
+          # arm-none-eabi-size -B gives (text/data/bss) for a stable parse.
+          read -r text data bss _ < <(arm-none-eabi-size -B build/zephyr/zephyr.elf | awk 'NR==2{print $1, $2, $3}')
+          flash=$((text + data))
+          ram=$((data + bss))
+          mkdir -p out
+          printf '%s\t%s\t%s\t%s\n' "${{ matrix.id }}" "${{ matrix.name }}" "$flash" "$ram" > "out/${{ matrix.id }}.tsv"
+          echo "id=${{ matrix.id }} flash=$flash ram=$ram"
+
+      - name: Upload size fragment
+        uses: actions/upload-artifact@v4
+        with:
+          name: size-${{ matrix.id }}
+          path: out/${{ matrix.id }}.tsv
+
+  report:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Collect size fragments
+        uses: actions/download-artifact@v4
+        with:
+          pattern: size-*
+          path: frags
+          merge-multiple: true
+
+      - name: Build the size table
+        run: |
+          set -euo pipefail
+          # gather rows: id <tab> name <tab> flash <tab> ram
+          cat frags/*.tsv | sort > all.tsv
+          base_flash=$(awk -F'\t' '$1=="0-baseline"{print $3}' all.tsv)
+          base_ram=$(awk -F'\t' '$1=="0-baseline"{print $4}' all.tsv)
+
+          {
+            echo "## Firmware size — nice!nano v2 (\`arm-none-eabi-size\`)"
+            echo ""
+            echo "Baseline (module absent): **flash ${base_flash} B**, **RAM ${base_ram} B**. Deltas below are the module's contribution."
+            echo ""
+            echo "| Configuration | Flash (B) | Δ Flash | RAM (B) | Δ RAM |"
+            echo "| --- | --: | --: | --: | --: |"
+            while IFS=$'\t' read -r id name flash ram; do
+              if [ "$id" = "0-baseline" ]; then
+                printf '| %s | %s | — | %s | — |\n' "$name" "$flash" "$ram"
+              else
+                df=$((flash - base_flash)); dr=$((ram - base_ram))
+                printf '| %s | %s | +%s | %s | +%s |\n' "$name" "$flash" "$df" "$ram" "$dr"
+              fi
+            done < all.tsv
+          } | tee size_table.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload size table
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-size-table
+          path: size_table.md

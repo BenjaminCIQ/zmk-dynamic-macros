@@ -1,0 +1,23 @@
+/*
+ * Copyright (c) 2026 Benjamin H
+ * SPDX-License-Identifier: MIT
+ *
+ * Minimal kscan so the firmware links. A 4x3 mock matrix gives enough key
+ * positions to host every dynamic-macro binding the size keymap places (slots +
+ * control keys). No real input is driven; this build exists only to be sized.
+ */
+
+#include <dt-bindings/zmk/matrix_transform.h>
+
+/ {
+    chosen {
+        zmk,kscan = &dm_size_kscan;
+    };
+
+    dm_size_kscan: dm_size_kscan {
+        compatible = "zmk,kscan-mock";
+        columns = <3>;
+        rows = <4>;
+        events = <>;
+    };
+};
