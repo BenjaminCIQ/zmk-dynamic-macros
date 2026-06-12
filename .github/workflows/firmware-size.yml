@@ -10,6 +10,12 @@ name: Firmware size
 
 on:
   workflow_dispatch:
+  # TEMPORARY: run on push to the fix branch to iterate the build setup without
+  # round-tripping through main (workflow_dispatch only fires from the default
+  # branch). REMOVE this push: block once the matrix is green.
+  push:
+    branches:
+      - fix/size-workflow-west-topology
 
 jobs:
   build:
