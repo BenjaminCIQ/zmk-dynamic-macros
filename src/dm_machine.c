@@ -357,7 +357,14 @@ static dm_result slot_preview(dm_machine *m, int idx) {
 /* SLOT in IDLE = play idx (or reject empty). */
 static dm_result slot_play(dm_machine *m, int idx) {
     if (slot_empty(m, idx)) {
+        /* Park the IDLE return-state before speaking (transaction rule): the OFF
+         * path turns speak into an immediate typing_finished, which restores
+         * m->return_state. Without parking IDLE here it would restore whatever the
+         * PREVIOUS transition parked (e.g. a long-settled PENDING_ASSIGN from a
+         * rejected assign), silently resurrecting that state and re-arming its
+         * timeout — swallowing the next play as an assign. */
         notify(m, DM_EVT_ERROR_SLOT_EMPTY, idx);
+        enter_typing(m, DM_STATE_IDLE);
         speak(m, DM_FB_SLOT_EMPTY, idx, -1, false);
         return DM_REJECTED_EMPTY;
     }

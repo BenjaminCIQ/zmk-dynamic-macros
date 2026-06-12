@@ -619,6 +619,37 @@ ZTEST(dm_machine, play_empty_slot_rejected) {
     zassert_equal(dm_machine_state(&fx.m), DM_STATE_IDLE, NULL);
 }
 
+/* Regression (native_sim core/pool_full: slot 0 played nothing). On the OFF /
+ * below-level path, speak() finishes synchronously via typing_finished, which
+ * restores m->return_state. The empty-play branch therefore MUST park IDLE as the
+ * return-state first; otherwise it restores whatever a PRIOR transition parked.
+ *
+ * Repro: a rejected assign parks return_state = PENDING_ASSIGN and stays pending;
+ * a timeout drops the machine to IDLE; then playing an EMPTY slot speaks
+ * SLOT_EMPTY. Pre-fix, the OFF-path typing_finished resurrected PENDING_ASSIGN
+ * (and re-armed its timeout), so the NEXT slot press was eaten as an assign
+ * instead of a play — exactly the swallowed playback the e2e caught. */
+ZTEST(dm_machine, empty_play_does_not_resurrect_parked_state) {
+    setup();
+    /* a rejected assign: stays PENDING_ASSIGN, parks return_state = PENDING_ASSIGN */
+    goto_state(DM_STATE_PENDING_ASSIGN);
+    fx.commit_rc = DM_REJECTED_FULL;
+    cmd(DM_CMD_SLOT, RAM0); /* RAM0 empty -> slot_full reject path keeps PENDING_ASSIGN */
+    zassert_equal(dm_machine_state(&fx.m), DM_STATE_PENDING_ASSIGN, NULL);
+
+    /* the pending assign times out back to IDLE */
+    dm_machine_timeout(&fx.m);
+    zassert_equal(dm_machine_state(&fx.m), DM_STATE_IDLE, NULL);
+
+    /* play an empty slot from IDLE: must stay IDLE, NOT bounce to PENDING_ASSIGN */
+    fx.log_n = 0;
+    dm_result rc = cmd(DM_CMD_SLOT, RAM0 + 1); /* empty */
+    zassert_equal(rc, DM_REJECTED_EMPTY, NULL);
+    zassert_true(log_has("slot_empty"), NULL);
+    zassert_equal(dm_machine_state(&fx.m), DM_STATE_IDLE,
+                  "empty play must not resurrect the parked PENDING_ASSIGN");
+}
+
 ZTEST(dm_machine, play_occupied_slot_starts_playing) {
     setup();
     occupy(RAM0);
