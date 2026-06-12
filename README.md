@@ -153,14 +153,15 @@ See [docs/keycodes.md](docs/keycodes.md) for the full binding reference includin
 
 ### Core
 
-| Option           | Default | Description                          |
-| ---------------- | ------- | ------------------------------------ |
-| `MAX_EVENTS`     | 64      | Events per slot (press+release = 2)  |
-| `TAP_DELAY`      | 30      | ms between events during playback    |
-| `ASSIGN_TIMEOUT` | 10000   | ms before pending mode auto-cancels  |
-| `PERSIST`        | y       | Enable NVS persistence               |
-| `NVS_SLOTS`      | 8       | Persistent slots (0-16)              |
-| `RAM_SLOTS`      | 8       | Temporary slots (0-48)               |
+| Option                | Default | Description                          |
+| --------------------- | ------- | ------------------------------------ |
+| `MAX_EVENTS`          | 64      | Largest single macro (press+release = 2 events) |
+| `AVG_EVENTS_PER_SLOT` | 32      | Per-slot average the shared RAM pool is sized for (1-64) — see [The shared event pool](#the-shared-event-pool-ram-sizing) |
+| `TAP_DELAY`           | 30      | ms between events during playback    |
+| `ASSIGN_TIMEOUT`      | 10000   | ms before pending mode auto-cancels  |
+| `PERSIST`             | y       | Enable NVS persistence               |
+| `NVS_SLOTS`           | 8       | Persistent slots (0-16)              |
+| `RAM_SLOTS`           | 8       | Temporary slots (0-48)               |
 
 All options prefixed with `CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_`.
 
@@ -262,6 +263,55 @@ The event system provides:
 
 See [docs/event-api.md](docs/event-api.md) for full API reference, code examples, and integration guide.
 
+## Firmware Size
+
+> **🚧 Placeholder — numbers to be measured.** The flash/RAM figures below are not yet
+> filled in. They will be measured per configuration on a representative target
+> (e.g. nice!nano v2 / nRF52840) and reported here so you can estimate the module's
+> cost before building. The table structure and the switches that drive it are final;
+> only the measured values are pending.
+
+The module's footprint is driven almost entirely by a handful of **compile-time**
+switches that include or exclude whole subsystems. Runtime knobs (feedback level,
+style, locale selection at runtime) do not change firmware size — only the build-time
+selections below do.
+
+### What each switch adds
+
+| Switch | Default | Code it includes when on | Relative flash impact |
+| --- | --- | --- | --- |
+| **Typed feedback** (`FEEDBACK_*` > OFF, or any `STATUS_*` > OFF) | Verbose | The feedback pump, message builder, `dm_render`, the active locale table, ring + preview streaming | _TBD_ (largest single lever) |
+| `EVENTS` | n | Event notifications, the query API, preview mode | _TBD_ |
+| `PERSIST` | y | The full NVS storage backend (`dm_nvs`): async work queue, serialization, settings handlers | _TBD_ |
+| `FEEDBACK_AUTO_ERASE` | n | The auto-erase scheduler + backspace batching | _TBD_ (small) |
+| `TEST_RELOAD` | n | Test-only reload command — **do not enable in production** | _TBD_ (test only) |
+
+Notes for when the figures land:
+- **Typed feedback is the dominant lever.** Turning it fully off (`FEEDBACK_OFF` *and*
+  `STATUS_OFF`) compiles out the pump, renderer, and locale tables together — the
+  single biggest saving. With it off, the module is just the state machine + slot
+  storage (+ NVS if `PERSIST`).
+- **Locale choice does not change size** meaningfully — exactly one `static const`
+  locale table is linked regardless of which locale you pick; selecting a different
+  locale swaps the table, it doesn't add one.
+- `MAX_EVENTS` / `AVG_EVENTS_PER_SLOT` / slot counts affect **RAM**, not flash (they
+  size the pool and buffers — see [The shared event pool](#the-shared-event-pool-ram-sizing)).
+
+### Representative combinations
+
+The combinations worth quoting (each a row once measured: flash Δ vs. baseline, RAM Δ):
+
+| Configuration | Feedback | EVENTS | PERSIST | Flash | RAM |
+| --- | --- | --- | --- | --- | --- |
+| **Minimal** (record/play only, RAM slots) | off | n | n | _TBD_ | _TBD_ |
+| **Persistent, no feedback** | off | n | y | _TBD_ | _TBD_ |
+| **Feedback, no persistence** | verbose | n | n | _TBD_ | _TBD_ |
+| **Default** | verbose | n | y | _TBD_ | _TBD_ |
+| **Full** (widgets + feedback + persistence) | verbose | y | y | _TBD_ | _TBD_ |
+
+Baseline = ZMK firmware without the module. Figures will be stated as the delta the
+module adds, so they remain comparable across ZMK versions.
+
 ## Notes
 
 ### Slot Numbering
@@ -298,8 +348,40 @@ Feedback level can be adjusted at runtime with `DM_FEEDBACK_INC` / `DM_FEEDBACK_
 
 ### Storage
 
-- **RAM:** each slot index (`NVS_SLOTS + RAM_SLOTS`) reserves a full in-memory buffer — `4 + MAX_EVENTS × 8` bytes (~520 B at default 64 events), whether empty or not, plus one recording buffer. Example: 8 NVS + 8 RAM → (16 + 1) × ~520 B ≈ 8.8 KB. RAM slot contents are lost on reboot; NVS slots are loaded back from flash into the same buffers.
-- **NVS (flash):** only written when you save to an NVS slot — `8` byte header + `8` bytes × event count (not padded to `MAX_EVENTS`). Empty slots use no flash entry. Max ~520 B per saved slot at default settings. Shares ZMK settings partition; format version in header — incompatible upgrades clear saved macros.
+- **RAM:** all slots share **one event pool** sized `AVG_EVENTS_PER_SLOT × (NVS_SLOTS + RAM_SLOTS)` events — not a full worst-case buffer per slot. A slot's events live in the pool only while it holds a macro; empty slots cost almost nothing (just a small descriptor). See [The shared event pool](#the-shared-event-pool-ram-sizing) below for how to size it. RAM slot contents are lost on reboot; NVS slots are loaded back from flash into the pool on boot.
+- **NVS (flash):** only written when you save to an NVS slot — `8` byte header + `8` bytes × event count (not padded to `MAX_EVENTS`). Each slot is its own flash record (no pool, no compaction); empty slots use no flash entry. A 2-event macro writes 24 bytes; a full `MAX_EVENTS` macro writes `8 + MAX_EVENTS × 8` bytes (~520 B at the default 64). Shares ZMK settings partition; format version in header — incompatible upgrades clear saved macros.
+
+### The shared event pool (RAM sizing)
+
+All macro slots — NVS-backed and RAM-only alike — draw their event storage from **one shared pool in RAM**, rather than each slot reserving its own worst-case buffer. This is the key knob for trading RAM against capacity.
+
+**How it's sized.** The pool holds:
+
+```
+AVG_EVENTS_PER_SLOT × (NVS_SLOTS + RAM_SLOTS)   events
+```
+
+Each event is 8 bytes, so the pool is `AVG_EVENTS_PER_SLOT × total_slots × 8` bytes. At the defaults (`AVG=32`, 8 NVS + 8 RAM = 16 slots) that's `32 × 16 × 8 ≈ 4 KB` — versus ~8.8 KB if every slot reserved a full 64-event buffer.
+
+**How it behaves.** A macro's events occupy a contiguous run in the pool. A single macro may be **longer than the average** — up to `MAX_EVENTS` — as long as the *total* recorded across all slots stays within the pool. So a few long macros simply leave less room for the rest; you are budgeting a shared total, not a per-slot cap. Deleting or moving a macro frees its space back to the pool (reclaimed lazily — the freed space is compacted back in the next time you save a macro), so space is never permanently lost to fragmentation.
+
+**The two knobs and what each does:**
+
+| Setting | Default | What it controls | Effect of raising it |
+| --- | --- | --- | --- |
+| `MAX_EVENTS` | 64 | The largest a **single** macro can be, and the size of the in-progress recording buffer. | A longer individual macro is allowed; the recording buffer grows by `MAX_EVENTS × 8` bytes. Does **not** change the pool size. |
+| `AVG_EVENTS_PER_SLOT` | 32 | The **per-slot average** the shared pool is budgeted for — i.e. the pool's total size. | The pool grows, so more total events can be stored across all slots at once. Costs `total_slots × 8` bytes of RAM per unit. |
+
+**The rule that ties them together:** `MAX_EVENTS ≤ AVG_EVENTS_PER_SLOT × total_slots` (a single macro can never be allowed to exceed the whole pool — this is a build-time assertion).
+
+**How to choose:**
+
+- **Most macros similar length:** set `AVG_EVENTS_PER_SLOT` near your typical macro length and `MAX_EVENTS` to your longest. The pool comfortably holds everything; you save RAM versus worst-case.
+- **A few long macros, many short ones:** keep `AVG` modest (the average you actually expect) and `MAX_EVENTS` high for the outliers. The long ones borrow space the short ones don't use. Watch for `[DM ... FULL]` (pool exhausted) — if you hit it often, raise `AVG`.
+- **Guarantee every slot can be full at once (no sharing):** set `AVG_EVENTS_PER_SLOT = MAX_EVENTS`. Now the pool equals the old per-slot worst case — every slot can independently hold a maximum macro, at the cost of the extra RAM (no pool savings).
+- **Tight on RAM:** lower `AVG_EVENTS_PER_SLOT` and/or reduce slot counts. The pool shrinks linearly; you trade total capacity for memory.
+
+> **Pool exhausted vs. recording buffer full — two different limits, two different messages.** `MAX_EVENTS` is hit *while recording* (the in-progress buffer fills) — `[DM FULL]`, the overflow message. The pool is exhausted *at save/assign time* (no room for the finished macro across all slots) — the assign is rejected with the slot-full message (`[DM SLOT N0 FULL]`), the slot stays empty, and the macros already stored are untouched. Raising `MAX_EVENTS` fixes the first; raising `AVG_EVENTS_PER_SLOT` fixes the second.
 
 ### Flash Wear
 
@@ -320,6 +402,7 @@ Runs on central half only. Both halves' keystrokes are captured during recording
 | Symptom | Cause | Fix |
 | ------- | ----- | --- |
 | `[DM FULL]` during recording | Recording buffer reached MAX_EVENTS | Increase `MAX_EVENTS` or record a shorter sequence. The partial recording can still be saved. |
+| `[DM SLOT N0 FULL]` when assigning | Shared event pool exhausted — no room for this macro across all slots | Increase `AVG_EVENTS_PER_SLOT` (grows the pool), or free space by deleting a stored macro. Slots already saved are unaffected. See [The shared event pool](#the-shared-event-pool-ram-sizing). |
 | `[DM SAVE FAILED N0]` | NVS write error | Check flash health. Settings partition may be full — reduce NVS_SLOTS or MAX_EVENTS. |
 | `[DM SAVE QUEUE FULL N0]` | Too many storage operations queued | Wait a moment and retry. Occurs when rapidly saving/deleting multiple NVS slots. |
 | Slot shows occupied but was deleted | NVS delete still in progress | The slot is marked pending-delete and will clear shortly. It cannot be played or assigned during this time. |
