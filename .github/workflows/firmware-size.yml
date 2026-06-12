@@ -16,85 +16,147 @@ jobs:
     runs-on: ubuntu-24.04
     container:
       image: zmkfirmware/zmk-build-arm:stable
+    # The zmk-build-arm container's default shell is dash (sh), which rejects
+    # `set -o pipefail`. Force bash for every run step in this job.
+    defaults:
+      run:
+        shell: bash
     strategy:
       fail-fast: false
       matrix:
         include:
+          # Names spell out every compile-time switch explicitly (feedback / NVS
+          # persistence / events / auto-erase) rather than relying on "default" as
+          # shorthand, so the table is self-describing.
           - id: 0-baseline
-            name: "Baseline (module absent)"
+            name: "Module absent (baseline)"
             conf: tests/size/baseline.conf
             baseline: true
           - id: 1-minimal
-            name: "Minimal (RAM only, no feedback)"
+            name: "feedback OFF · NVS off · events off"
             conf: tests/size/minimal.conf
           - id: 2-persist-nofeedback
-            name: "Persistent, no feedback"
+            name: "feedback OFF · NVS on · events off"
             conf: tests/size/persist_nofeedback.conf
           - id: 3-feedback-nopersist
-            name: "Feedback, no persistence"
+            name: "feedback VERBOSE · NVS off · events off"
             conf: tests/size/feedback_nopersist.conf
           - id: 4-default
-            name: "Default (feedback + persistence)"
+            name: "feedback VERBOSE · NVS on · events off (shipping defaults)"
             conf: tests/size/default.conf
-          - id: 5-full
-            name: "Full (feedback + events + persistence + auto-erase)"
+          - id: 5-auto-erase
+            name: "feedback VERBOSE · NVS on · events off · auto-erase"
+            conf: tests/size/auto_erase.conf
+          - id: 6-full
+            name: "feedback VERBOSE · NVS on · events ON · auto-erase"
             conf: tests/size/full.conf
     steps:
       - name: Checkout module
         uses: actions/checkout@v4
-        with:
-          path: zmk-dynamic-macros
+        # default path: the repo at $GITHUB_WORKSPACE (no nesting). The west
+        # workspace lives in an isolated temp dir; the module is referenced into
+        # the build via ZMK_EXTRA_MODULES, NOT as a west `self` project — this is
+        # the urob/zmk-actions pattern for "a repo that is itself a Zephyr module".
+
+      - name: Set up isolated west workspace
+        run: |
+          set -euo pipefail
+          ws="$RUNNER_TEMP/ws"
+          mkdir -p "$ws/config"
+          # the manifest dir west init -l points at; ZMK-only manifest (no module)
+          cp "$GITHUB_WORKSPACE/tests/size/west.yml" "$ws/config/west.yml"
+          echo "WS=$ws" >> "$GITHUB_ENV"
 
       - name: Cache west modules
         uses: actions/cache@v4
         with:
           path: |
-            modules/
-            tools/
-            zephyr/
-            bootloader/
-            zmk/
-          key: size-west-${{ hashFiles('zmk-dynamic-macros/tests/size/west.yml') }}
+            ${{ runner.temp }}/ws/modules/
+            ${{ runner.temp }}/ws/tools/
+            ${{ runner.temp }}/ws/zephyr/
+            ${{ runner.temp }}/ws/bootloader/
+            ${{ runner.temp }}/ws/zmk/
+          key: size-west-${{ hashFiles('tests/size/west.yml') }}
           restore-keys: size-west-
 
       - name: West init + update
+        working-directory: ${{ runner.temp }}/ws
         run: |
-          west init -l zmk-dynamic-macros/tests/size
-          west update --fetch-opt=--depth=1
+          set -euo pipefail
+          west init -l config
+          west update --fetch-opt=--filter=tree:0
           west zephyr-export
 
       - name: Build ${{ matrix.name }}
+        working-directory: ${{ runner.temp }}/ws
         run: |
           set -euo pipefail
           # The baseline passes DM_SIZE_BASELINE to the devicetree preprocessor so
           # the keymap omits the behavior node entirely; with no zmk,behavior-
           # dynamic-macro compatible present, the module's Kconfig auto-enable
           # (dt_compat_enabled) stays off and none of the module compiles.
-          DTC_FLAGS=""
+          BASELINE_ARGS=""
           if [ "${{ matrix.baseline }}" = "true" ]; then
-            DTC_FLAGS="-DEXTRA_DTC_FLAGS=-DDM_SIZE_BASELINE"
+            # DTS_EXTRA_CPPFLAGS makes DM_SIZE_BASELINE visible to the keymap's
+            # C-preprocessor pass (the overlay CPP — EXTRA_DTC_FLAGS goes to dtc, NOT
+            # this pass), so the behavior node + &dm bindings are omitted. With no
+            # zmk,behavior-dynamic-macro node present, the module's Kconfig auto-enable
+            # (default $(dt_compat_enabled,...)) stays off and CMakeLists compiles none
+            # of it. (The symbol has no prompt, so it cannot be forced off via
+            # -DCONFIG_...=n — the keymap node absence is the only lever, and it is
+            # sufficient.)
+            BASELINE_ARGS='-DDTS_EXTRA_CPPFLAGS=-DDM_SIZE_BASELINE'
           fi
-          # The module is already a Zephyr module via the west manifest (self:),
-          # so it does not need ZMK_EXTRA_MODULES. BOARD_ROOT points Zephyr at the
-          # in-repo size shield under tests/size/boards/shields/.
-          west build -s zmk/app -d build -b nice_nano_v2 -p always -- \
+          # ZMK_EXTRA_MODULES points the build at the checked-out module;
+          # BOARD_ROOT exposes the in-repo size shield under tests/size/boards/.
+          # hwmv2 board naming (matches ../zmk-config): nice!nano v2 is
+          # nice_nano@2.0.0//zmk, NOT the legacy nice_nano_v2.
+          # Tee the build output so the size step can read Zephyr's memory-region
+          # report (FLASH/RAM "Region Size" = the board's usable capacity).
+          west build -s zmk/app -d build -b "nice_nano@2.0.0//zmk" -p always -- \
             -DSHIELD=dm_size \
-            -DBOARD_ROOT="$GITHUB_WORKSPACE/zmk-dynamic-macros/tests/size" \
-            -DEXTRA_CONF_FILE="$GITHUB_WORKSPACE/zmk-dynamic-macros/${{ matrix.conf }}" \
-            $DTC_FLAGS
+            -DZMK_EXTRA_MODULES="$GITHUB_WORKSPACE" \
+            -DBOARD_ROOT="$GITHUB_WORKSPACE/tests/size" \
+            -DEXTRA_CONF_FILE="$GITHUB_WORKSPACE/${{ matrix.conf }}" \
+            $BASELINE_ARGS 2>&1 | tee build.out
 
       - name: Size the ELF
+        working-directory: ${{ runner.temp }}/ws
         run: |
           set -euo pipefail
-          arm-none-eabi-size -A build/zephyr/zephyr.elf | tee size_raw.txt
-          # flash = text + rodata + data ; ram = data + bss. Use the section totals
-          # arm-none-eabi-size -B gives (text/data/bss) for a stable parse.
-          read -r text data bss _ < <(arm-none-eabi-size -B build/zephyr/zephyr.elf | awk 'NR==2{print $1, $2, $3}')
-          flash=$((text + data))
-          ram=$((data + bss))
-          mkdir -p out
-          printf '%s\t%s\t%s\t%s\n' "${{ matrix.id }}" "${{ matrix.name }}" "$flash" "$ram" > "out/${{ matrix.id }}.tsv"
-          echo "id=${{ matrix.id }} flash=$flash ram=$ram"
+          # Use Zephyr's OWN memory-region report (printed at link time, captured in
+          # build.out) as the source of truth — it is board-accurate, matching what
+          # the linker reserves and what a user sees in their own build. A bare
+          # `size -B` section sum overcounts RAM vs. this region accounting. The
+          # report lines read:
+          #   FLASH:      202868 B       792 KB     25.01%
+          #     RAM:       60812 B       256 KB     23.20%
+          # fields: $1=FLASH:  $2=usedNum $3=B  $4=capNum $5=KB.
+          #
+          # region <LABEL> used|cap → bytes (capacity unit kB/MB normalised; Used is
+          # already in bytes). Returns empty on no match; caller defaults to 0.
+          region() {
+            awk -v lbl="$1" -v which="$2" '
+              $1==lbl":" {
+                if (which=="used") { printf "%d", $2; exit }
+                n=$4; u=$5;
+                if (u ~ /MB/) n*=1024*1024; else if (u ~ /KB|kB/) n*=1024;
+                printf "%d", n; exit
+              }' build.out
+          }
+          flash="$(region FLASH used || true)";  flash="${flash:-0}"
+          ram="$(region RAM used || true)";      ram="${ram:-0}"
+          flash_cap="$(region FLASH cap || true)"; flash_cap="${flash_cap:-0}"
+          ram_cap="$(region RAM cap || true)";     ram_cap="${ram_cap:-0}"
+          # Diagnostic: also dump the full section breakdown for the log.
+          for cand in arm-zephyr-eabi-size arm-none-eabi-size size; do
+            command -v "$cand" >/dev/null 2>&1 && { "$cand" -A build/zephyr/zmk.elf || true; break; }
+          done
+          mkdir -p "$GITHUB_WORKSPACE/out"
+          printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+            "${{ matrix.id }}" "${{ matrix.name }}" "$flash" "$ram" "$flash_cap" "$ram_cap" \
+            > "$GITHUB_WORKSPACE/out/${{ matrix.id }}.tsv"
+          echo "id=${{ matrix.id }} flash=$flash/$flash_cap ram=$ram/$ram_cap"
 
       - name: Upload size fragment
         uses: actions/upload-artifact@v4
@@ -116,24 +178,27 @@ jobs:
       - name: Build the size table
         run: |
           set -euo pipefail
-          # gather rows: id <tab> name <tab> flash <tab> ram
+          # gather rows: id <tab> name <tab> flash <tab> ram <tab> flash_cap <tab> ram_cap
           cat frags/*.tsv | sort > all.tsv
           base_flash=$(awk -F'\t' '$1=="0-baseline"{print $3}' all.tsv)
           base_ram=$(awk -F'\t' '$1=="0-baseline"{print $4}' all.tsv)
 
           {
-            echo "## Firmware size — nice!nano v2 (\`arm-none-eabi-size\`)"
+            echo "## Firmware size — nice!nano v2"
             echo ""
-            echo "Baseline (module absent): **flash ${base_flash} B**, **RAM ${base_ram} B**. Deltas below are the module's contribution."
+            echo "The dynamic-macro module's contribution per config, measured as the Δ vs."
+            echo "a module-absent baseline (bare ZMK + the size shield). Flash/RAM \"used\""
+            echo "come from Zephyr's own memory-region accounting."
             echo ""
-            echo "| Configuration | Flash (B) | Δ Flash | RAM (B) | Δ RAM |"
-            echo "| --- | --: | --: | --: | --: |"
-            while IFS=$'\t' read -r id name flash ram; do
+            echo "| Configuration | Δ Flash | Δ RAM |"
+            echo "| --- | --: | --: |"
+            # %+d renders the sign for both positive and negative deltas.
+            while IFS=$'\t' read -r id name flash ram fcap rcap; do
               if [ "$id" = "0-baseline" ]; then
-                printf '| %s | %s | — | %s | — |\n' "$name" "$flash" "$ram"
+                printf '| %s | — | — |\n' "$name"
               else
                 df=$((flash - base_flash)); dr=$((ram - base_ram))
-                printf '| %s | %s | +%s | %s | +%s |\n' "$name" "$flash" "$df" "$ram" "$dr"
+                printf '| %s | %+d B | %+d B |\n' "$name" "$df" "$dr"
               fi
             done < all.tsv
           } | tee size_table.md >> "$GITHUB_STEP_SUMMARY"
