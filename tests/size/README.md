@@ -14,12 +14,17 @@ A 6-entry matrix, all the same board + shield, differing only in config:
 
 | id | Config | Module |
 | --- | --- | --- |
-| 0-baseline | (none) | **absent** — behavior node omitted via `-DDM_SIZE_BASELINE` |
+| 0-baseline | (none) | **absent** — behavior node omitted via `DM_SIZE_BASELINE` |
 | 1-minimal | `minimal.conf` | RAM only, no feedback, no events |
 | 2-persist-nofeedback | `persist_nofeedback.conf` | NVS, no feedback |
 | 3-feedback-nopersist | `feedback_nopersist.conf` | verbose feedback, RAM only |
 | 4-default | `default.conf` | shipping defaults (feedback + NVS) |
-| 5-full | `full.conf` | feedback + events + NVS + auto-erase |
+| 5-auto-erase | `auto_erase.conf` | default **+ auto-erase only** (isolates its cost) |
+| 6-full | `full.conf` | feedback + events + NVS + auto-erase |
+
+The matrix is ordered so each switch's cost is an incremental delta: auto-erase =
+`5-auto-erase − 4-default`, and events = `6-full − 5-auto-erase` (since full adds
+both auto-erase and events on top of default).
 
 ## How the baseline stays truly module-free
 

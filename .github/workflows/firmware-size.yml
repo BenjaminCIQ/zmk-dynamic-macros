@@ -47,7 +47,10 @@ jobs:
           - id: 4-default
             name: "Default (feedback + persistence)"
             conf: tests/size/default.conf
-          - id: 5-full
+          - id: 5-auto-erase
+            name: "Default + auto-erase"
+            conf: tests/size/auto_erase.conf
+          - id: 6-full
             name: "Full (feedback + events + persistence + auto-erase)"
             conf: tests/size/full.conf
     steps:
