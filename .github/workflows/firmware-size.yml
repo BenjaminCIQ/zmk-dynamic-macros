@@ -130,40 +130,34 @@ jobs:
         working-directory: ${{ runner.temp }}/ws
         run: |
           set -euo pipefail
-          # ZMK renames the final image zmk.elf (not Zephyr's default zephyr.elf).
-          elf=build/zephyr/zmk.elf
-          [ -f "$elf" ] || elf=build/zephyr/zephyr.elf  # fallback, just in case
-          # The Zephyr SDK ARM toolchain is arm-zephyr-eabi-*, not arm-none-eabi-*,
-          # and may not be on PATH. Resolve a size binary robustly.
-          SIZE=""
-          for cand in arm-zephyr-eabi-size arm-none-eabi-size size; do
-            if command -v "$cand" >/dev/null 2>&1; then SIZE="$cand"; break; fi
-          done
-          if [ -z "$SIZE" ]; then
-            SIZE="$(find "${ZEPHYR_SDK_INSTALL_DIR:-/opt}" -name '*-size' -type f 2>/dev/null | head -1)"
-          fi
-          echo "Using size tool: $SIZE"
-          "$SIZE" -A "$elf"
-          # flash = text + data ; ram = data + bss, from the -B (Berkeley) totals.
-          read -r text data bss _ < <("$SIZE" -B "$elf" | awk 'NR==2{print $1, $2, $3}')
-          flash=$((text + data))
-          ram=$((data + bss))
-          # Board capacity from Zephyr's own memory-region report, whose lines read:
+          # Use Zephyr's OWN memory-region report (printed at link time, captured in
+          # build.out) as the source of truth — it is board-accurate, matching what
+          # the linker reserves and what a user sees in their own build. A bare
+          # `size -B` section sum overcounts RAM vs. this region accounting. The
+          # report lines read:
           #   FLASH:      202868 B       792 KB     25.01%
           #     RAM:       60812 B       256 KB     23.20%
-          # i.e. label-with-colon, then "<num> <unit>" for Region Size in fields 4-5
-          # ($1=FLASH:, $2=usedNum, $3=B, $4=capNum, $5=KB). Convert cap to bytes.
-          # Non-fatal: a grep miss must not abort the step (set -e + pipefail).
-          region_bytes() {
-            awk -v lbl="$1" '
+          # fields: $1=FLASH:  $2=usedNum $3=B  $4=capNum $5=KB.
+          #
+          # region <LABEL> used|cap → bytes (capacity unit kB/MB normalised; Used is
+          # already in bytes). Returns empty on no match; caller defaults to 0.
+          region() {
+            awk -v lbl="$1" -v which="$2" '
               $1==lbl":" {
+                if (which=="used") { printf "%d", $2; exit }
                 n=$4; u=$5;
                 if (u ~ /MB/) n*=1024*1024; else if (u ~ /KB|kB/) n*=1024;
                 printf "%d", n; exit
               }' build.out
           }
-          flash_cap="$(region_bytes FLASH || true)"; flash_cap="${flash_cap:-0}"
-          ram_cap="$(region_bytes RAM || true)";     ram_cap="${ram_cap:-0}"
+          flash="$(region FLASH used || true)";  flash="${flash:-0}"
+          ram="$(region RAM used || true)";      ram="${ram:-0}"
+          flash_cap="$(region FLASH cap || true)"; flash_cap="${flash_cap:-0}"
+          ram_cap="$(region RAM cap || true)";     ram_cap="${ram_cap:-0}"
+          # Diagnostic: also dump the full section breakdown for the log.
+          for cand in arm-zephyr-eabi-size arm-none-eabi-size size; do
+            command -v "$cand" >/dev/null 2>&1 && { "$cand" -A build/zephyr/zmk.elf || true; break; }
+          done
           mkdir -p "$GITHUB_WORKSPACE/out"
           printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
             "${{ matrix.id }}" "${{ matrix.name }}" "$flash" "$ram" "$flash_cap" "$ram_cap" \
@@ -204,7 +198,8 @@ jobs:
           {
             echo "## Firmware size — nice!nano v2"
             echo ""
-            echo "Total firmware (flash = text+data, RAM = data+bss) and the module's"
+            echo "Flash/RAM used as reported by Zephyr's own memory-region accounting"
+            echo "(board-accurate — matches what the linker reserves), with the module's"
             echo "contribution (Δ vs. the module-absent baseline). Percentages are of the"
             echo "board's usable capacity: **flash $(kib "$flash_cap") KiB**, **RAM $(kib "$ram_cap") KiB**."
             echo ""
