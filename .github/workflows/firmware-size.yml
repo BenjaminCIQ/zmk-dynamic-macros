@@ -10,12 +10,6 @@ name: Firmware size
 
 on:
   workflow_dispatch:
-  # TEMPORARY: run on push to the fix branch to iterate the build setup without
-  # round-tripping through main (workflow_dispatch only fires from the default
-  # branch). REMOVE this push: block once the matrix is green.
-  push:
-    branches:
-      - fix/size-workflow-west-topology
 
 jobs:
   build:
@@ -188,37 +182,25 @@ jobs:
           cat frags/*.tsv | sort > all.tsv
           base_flash=$(awk -F'\t' '$1=="0-baseline"{print $3}' all.tsv)
           base_ram=$(awk -F'\t' '$1=="0-baseline"{print $4}' all.tsv)
-          flash_cap=$(awk -F'\t' '$1=="0-baseline"{print $5}' all.tsv)
-          ram_cap=$(awk -F'\t' '$1=="0-baseline"{print $6}' all.tsv)
-
-          # KiB to one decimal, and percent of capacity to one decimal.
-          kib()  { awk -v b="$1" 'BEGIN{printf "%.1f", b/1024}'; }
-          pct()  { awk -v u="$1" -v c="$2" 'BEGIN{ if(c>0) printf "%.1f", 100*u/c; else printf "?"}'; }
 
           {
             echo "## Firmware size — nice!nano v2"
             echo ""
-            echo "Flash/RAM used as reported by Zephyr's own memory-region accounting"
-            echo "(board-accurate — matches what the linker reserves), with the module's"
-            echo "contribution (Δ vs. the module-absent baseline). Percentages are of the"
-            echo "board's usable capacity: **flash $(kib "$flash_cap") KiB**, **RAM $(kib "$ram_cap") KiB**."
+            echo "The dynamic-macro module's contribution per config, measured as the Δ vs."
+            echo "a module-absent baseline (bare ZMK + the size shield). Flash/RAM \"used\""
+            echo "come from Zephyr's own memory-region accounting."
             echo ""
-            echo "| Configuration | Flash | Flash % | Δ Flash | RAM | RAM % | Δ RAM |"
-            echo "| --- | --: | --: | --: | --: | --: | --: |"
+            echo "| Configuration | Δ Flash | Δ RAM |"
+            echo "| --- | --: | --: |"
             # %+d renders the sign for both positive and negative deltas.
             while IFS=$'\t' read -r id name flash ram fcap rcap; do
-              fk="$(kib "$flash") KiB"; rk="$(kib "$ram") KiB"
-              fp="$(pct "$flash" "$flash_cap")%"; rp="$(pct "$ram" "$ram_cap")%"
               if [ "$id" = "0-baseline" ]; then
-                printf '| %s | %s | %s | — | %s | %s | — |\n' "$name" "$fk" "$fp" "$rk" "$rp"
+                printf '| %s | — | — |\n' "$name"
               else
                 df=$((flash - base_flash)); dr=$((ram - base_ram))
-                printf '| %s | %s | %s | %+d B | %s | %s | %+d B |\n' \
-                  "$name" "$fk" "$fp" "$df" "$rk" "$rp" "$dr"
+                printf '| %s | %+d B | %+d B |\n' "$name" "$df" "$dr"
               fi
             done < all.tsv
-            echo ""
-            echo "_Raw bytes: baseline flash ${base_flash} B, RAM ${base_ram} B._"
           } | tee size_table.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload size table
