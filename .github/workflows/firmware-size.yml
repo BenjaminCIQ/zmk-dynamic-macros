@@ -114,12 +114,14 @@ jobs:
           # BOARD_ROOT exposes the in-repo size shield under tests/size/boards/.
           # hwmv2 board naming (matches ../zmk-config): nice!nano v2 is
           # nice_nano@2.0.0//zmk, NOT the legacy nice_nano_v2.
+          # Tee the build output so the size step can read Zephyr's memory-region
+          # report (FLASH/RAM "Region Size" = the board's usable capacity).
           west build -s zmk/app -d build -b "nice_nano@2.0.0//zmk" -p always -- \
             -DSHIELD=dm_size \
             -DZMK_EXTRA_MODULES="$GITHUB_WORKSPACE" \
             -DBOARD_ROOT="$GITHUB_WORKSPACE/tests/size" \
             -DEXTRA_CONF_FILE="$GITHUB_WORKSPACE/${{ matrix.conf }}" \
-            $BASELINE_ARGS
+            $BASELINE_ARGS 2>&1 | tee build.out
 
       - name: Size the ELF
         working-directory: ${{ runner.temp }}/ws
@@ -143,10 +145,21 @@ jobs:
           read -r text data bss _ < <("$SIZE" -B "$elf" | awk 'NR==2{print $1, $2, $3}')
           flash=$((text + data))
           ram=$((data + bss))
+          # Board capacity from Zephyr's own memory-region report (the "Region Size"
+          # column): FLASH = app code partition, RAM = SRAM available to the app.
+          # Robust to the kB/MB suffix the report uses.
+          to_bytes() { awk '{u=$0; n=u; sub(/[ ]*B$/,"",n);
+            if (u ~ /MB$/){sub(/MB/,"",n); print n*1024*1024}
+            else if (u ~ /kB$/||u ~ /KB$/){sub(/[kK]B/,"",n); print n*1024}
+            else {sub(/B/,"",n); print n+0}}'; }
+          flash_cap=$(grep -E "^\s*FLASH\s+" build.out | awk '{print $3}' | to_bytes)
+          ram_cap=$(grep -E "^\s*RAM\s+"   build.out | awk '{print $3}' | to_bytes)
+          : "${flash_cap:=0}"; : "${ram_cap:=0}"
           mkdir -p "$GITHUB_WORKSPACE/out"
-          printf '%s\t%s\t%s\t%s\n' "${{ matrix.id }}" "${{ matrix.name }}" "$flash" "$ram" \
+          printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+            "${{ matrix.id }}" "${{ matrix.name }}" "$flash" "$ram" "$flash_cap" "$ram_cap" \
             > "$GITHUB_WORKSPACE/out/${{ matrix.id }}.tsv"
-          echo "id=${{ matrix.id }} flash=$flash ram=$ram"
+          echo "id=${{ matrix.id }} flash=$flash/$flash_cap ram=$ram/$ram_cap"
 
       - name: Upload size fragment
         uses: actions/upload-artifact@v4
@@ -168,27 +181,40 @@ jobs:
       - name: Build the size table
         run: |
           set -euo pipefail
-          # gather rows: id <tab> name <tab> flash <tab> ram
+          # gather rows: id <tab> name <tab> flash <tab> ram <tab> flash_cap <tab> ram_cap
           cat frags/*.tsv | sort > all.tsv
           base_flash=$(awk -F'\t' '$1=="0-baseline"{print $3}' all.tsv)
           base_ram=$(awk -F'\t' '$1=="0-baseline"{print $4}' all.tsv)
+          flash_cap=$(awk -F'\t' '$1=="0-baseline"{print $5}' all.tsv)
+          ram_cap=$(awk -F'\t' '$1=="0-baseline"{print $6}' all.tsv)
+
+          # KiB to one decimal, and percent of capacity to one decimal.
+          kib()  { awk -v b="$1" 'BEGIN{printf "%.1f", b/1024}'; }
+          pct()  { awk -v u="$1" -v c="$2" 'BEGIN{ if(c>0) printf "%.1f", 100*u/c; else printf "?"}'; }
 
           {
-            echo "## Firmware size — nice!nano v2 (flash = text+data, RAM = data+bss)"
+            echo "## Firmware size — nice!nano v2"
             echo ""
-            echo "Baseline (module absent): **flash ${base_flash} B**, **RAM ${base_ram} B**. Deltas below are the module's contribution."
+            echo "Total firmware (flash = text+data, RAM = data+bss) and the module's"
+            echo "contribution (Δ vs. the module-absent baseline). Percentages are of the"
+            echo "board's usable capacity: **flash $(kib "$flash_cap") KiB**, **RAM $(kib "$ram_cap") KiB**."
             echo ""
-            echo "| Configuration | Flash (B) | Δ Flash | RAM (B) | Δ RAM |"
-            echo "| --- | --: | --: | --: | --: |"
-            # %+d renders the sign correctly for both positive and negative deltas.
-            while IFS=$'\t' read -r id name flash ram; do
+            echo "| Configuration | Flash | Flash % | Δ Flash | RAM | RAM % | Δ RAM |"
+            echo "| --- | --: | --: | --: | --: | --: | --: |"
+            # %+d renders the sign for both positive and negative deltas.
+            while IFS=$'\t' read -r id name flash ram fcap rcap; do
+              fk="$(kib "$flash") KiB"; rk="$(kib "$ram") KiB"
+              fp="$(pct "$flash" "$flash_cap")%"; rp="$(pct "$ram" "$ram_cap")%"
               if [ "$id" = "0-baseline" ]; then
-                printf '| %s | %s | — | %s | — |\n' "$name" "$flash" "$ram"
+                printf '| %s | %s | %s | — | %s | %s | — |\n' "$name" "$fk" "$fp" "$rk" "$rp"
               else
                 df=$((flash - base_flash)); dr=$((ram - base_ram))
-                printf '| %s | %s | %+d | %s | %+d |\n' "$name" "$flash" "$df" "$ram" "$dr"
+                printf '| %s | %s | %s | %+d B | %s | %s | %+d B |\n' \
+                  "$name" "$fk" "$fp" "$df" "$rk" "$rp" "$dr"
               fi
             done < all.tsv
+            echo ""
+            echo "_Raw bytes: baseline flash ${base_flash} B, RAM ${base_ram} B._"
           } | tee size_table.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload size table
