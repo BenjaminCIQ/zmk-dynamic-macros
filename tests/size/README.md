@@ -12,19 +12,22 @@ Driven by `.github/workflows/firmware-size.yml` (manual trigger — Actions tab 
 
 A 6-entry matrix, all the same board + shield, differing only in config:
 
-| id | Config | Module |
-| --- | --- | --- |
-| 0-baseline | (none) | **absent** — behavior node omitted via `DM_SIZE_BASELINE` |
-| 1-minimal | `minimal.conf` | RAM only, no feedback, no events |
-| 2-persist-nofeedback | `persist_nofeedback.conf` | NVS, no feedback |
-| 3-feedback-nopersist | `feedback_nopersist.conf` | verbose feedback, RAM only |
-| 4-default | `default.conf` | shipping defaults (feedback + NVS) |
-| 5-auto-erase | `auto_erase.conf` | default **+ auto-erase only** (isolates its cost) |
-| 6-full | `full.conf` | feedback + events + NVS + auto-erase |
+Config names spell out each compile-time switch (feedback level / NVS persistence
+/ events / auto-erase) — no reliance on "default" as shorthand:
+
+| id | Config | feedback | NVS | events | auto-erase |
+| --- | --- | --- | --- | --- | --- |
+| 0-baseline | `baseline.conf` | — module absent (node omitted via `DM_SIZE_BASELINE`) — | | | |
+| 1-minimal | `minimal.conf` | OFF | off | off | off |
+| 2-persist-nofeedback | `persist_nofeedback.conf` | OFF | on | off | off |
+| 3-feedback-nopersist | `feedback_nopersist.conf` | VERBOSE | off | off | off |
+| 4-default | `default.conf` | VERBOSE | on | off | off |
+| 5-auto-erase | `auto_erase.conf` | VERBOSE | on | off | **on** |
+| 6-full | `full.conf` | VERBOSE | on | **on** | on |
 
 The matrix is ordered so each switch's cost is an incremental delta: auto-erase =
-`5-auto-erase − 4-default`, and events = `6-full − 5-auto-erase` (since full adds
-both auto-erase and events on top of default).
+`5-auto-erase − 4-default`, and events = `6-full − 5-auto-erase` (each adds exactly
+one switch to the row above it).
 
 ## How the baseline stays truly module-free
 

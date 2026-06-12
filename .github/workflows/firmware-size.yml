@@ -31,27 +31,30 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Names spell out every compile-time switch explicitly (feedback / NVS
+          # persistence / events / auto-erase) rather than relying on "default" as
+          # shorthand, so the table is self-describing.
           - id: 0-baseline
-            name: "Baseline (module absent)"
+            name: "Module absent (baseline)"
             conf: tests/size/baseline.conf
             baseline: true
           - id: 1-minimal
-            name: "Minimal (RAM only, no feedback)"
+            name: "feedback OFF · NVS off · events off"
             conf: tests/size/minimal.conf
           - id: 2-persist-nofeedback
-            name: "Persistent, no feedback"
+            name: "feedback OFF · NVS on · events off"
             conf: tests/size/persist_nofeedback.conf
           - id: 3-feedback-nopersist
-            name: "Feedback, no persistence"
+            name: "feedback VERBOSE · NVS off · events off"
             conf: tests/size/feedback_nopersist.conf
           - id: 4-default
-            name: "Default (feedback + persistence)"
+            name: "feedback VERBOSE · NVS on · events off (shipping defaults)"
             conf: tests/size/default.conf
           - id: 5-auto-erase
-            name: "Default + auto-erase"
+            name: "feedback VERBOSE · NVS on · events off · auto-erase"
             conf: tests/size/auto_erase.conf
           - id: 6-full
-            name: "Full (feedback + events + persistence + auto-erase)"
+            name: "feedback VERBOSE · NVS on · events ON · auto-erase"
             conf: tests/size/full.conf
     steps:
       - name: Checkout module
@@ -145,16 +148,22 @@ jobs:
           read -r text data bss _ < <("$SIZE" -B "$elf" | awk 'NR==2{print $1, $2, $3}')
           flash=$((text + data))
           ram=$((data + bss))
-          # Board capacity from Zephyr's own memory-region report (the "Region Size"
-          # column): FLASH = app code partition, RAM = SRAM available to the app.
-          # Robust to the kB/MB suffix the report uses.
-          to_bytes() { awk '{u=$0; n=u; sub(/[ ]*B$/,"",n);
-            if (u ~ /MB$/){sub(/MB/,"",n); print n*1024*1024}
-            else if (u ~ /kB$/||u ~ /KB$/){sub(/[kK]B/,"",n); print n*1024}
-            else {sub(/B/,"",n); print n+0}}'; }
-          flash_cap=$(grep -E "^\s*FLASH\s+" build.out | awk '{print $3}' | to_bytes)
-          ram_cap=$(grep -E "^\s*RAM\s+"   build.out | awk '{print $3}' | to_bytes)
-          : "${flash_cap:=0}"; : "${ram_cap:=0}"
+          # Board capacity from Zephyr's own memory-region report, whose lines read:
+          #   FLASH:      202868 B       792 KB     25.01%
+          #     RAM:       60812 B       256 KB     23.20%
+          # i.e. label-with-colon, then "<num> <unit>" for Region Size in fields 4-5
+          # ($1=FLASH:, $2=usedNum, $3=B, $4=capNum, $5=KB). Convert cap to bytes.
+          # Non-fatal: a grep miss must not abort the step (set -e + pipefail).
+          region_bytes() {
+            awk -v lbl="$1" '
+              $1==lbl":" {
+                n=$4; u=$5;
+                if (u ~ /MB/) n*=1024*1024; else if (u ~ /KB|kB/) n*=1024;
+                printf "%d", n; exit
+              }' build.out
+          }
+          flash_cap="$(region_bytes FLASH || true)"; flash_cap="${flash_cap:-0}"
+          ram_cap="$(region_bytes RAM || true)";     ram_cap="${ram_cap:-0}"
           mkdir -p "$GITHUB_WORKSPACE/out"
           printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
             "${{ matrix.id }}" "${{ matrix.name }}" "$flash" "$ram" "$flash_cap" "$ram_cap" \
