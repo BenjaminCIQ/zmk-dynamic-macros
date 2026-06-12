@@ -42,28 +42,42 @@ jobs:
     steps:
       - name: Checkout module
         uses: actions/checkout@v4
-        with:
-          path: zmk-dynamic-macros
+        # default path: the repo at $GITHUB_WORKSPACE (no nesting). The west
+        # workspace lives in an isolated temp dir; the module is referenced into
+        # the build via ZMK_EXTRA_MODULES, NOT as a west `self` project — this is
+        # the urob/zmk-actions pattern for "a repo that is itself a Zephyr module".
+
+      - name: Set up isolated west workspace
+        run: |
+          set -euo pipefail
+          ws="$RUNNER_TEMP/ws"
+          mkdir -p "$ws/config"
+          # the manifest dir west init -l points at; ZMK-only manifest (no module)
+          cp "$GITHUB_WORKSPACE/tests/size/west.yml" "$ws/config/west.yml"
+          echo "WS=$ws" >> "$GITHUB_ENV"
 
       - name: Cache west modules
         uses: actions/cache@v4
         with:
           path: |
-            modules/
-            tools/
-            zephyr/
-            bootloader/
-            zmk/
-          key: size-west-${{ hashFiles('zmk-dynamic-macros/tests/size/west.yml') }}
+            ${{ runner.temp }}/ws/modules/
+            ${{ runner.temp }}/ws/tools/
+            ${{ runner.temp }}/ws/zephyr/
+            ${{ runner.temp }}/ws/bootloader/
+            ${{ runner.temp }}/ws/zmk/
+          key: size-west-${{ hashFiles('tests/size/west.yml') }}
           restore-keys: size-west-
 
       - name: West init + update
+        working-directory: ${{ runner.temp }}/ws
         run: |
-          west init -l zmk-dynamic-macros/tests/size
-          west update --fetch-opt=--depth=1
+          set -euo pipefail
+          west init -l config
+          west update --fetch-opt=--filter=tree:0
           west zephyr-export
 
       - name: Build ${{ matrix.name }}
+        working-directory: ${{ runner.temp }}/ws
         run: |
           set -euo pipefail
           # The baseline passes DM_SIZE_BASELINE to the devicetree preprocessor so
@@ -74,26 +88,28 @@ jobs:
           if [ "${{ matrix.baseline }}" = "true" ]; then
             DTC_FLAGS="-DEXTRA_DTC_FLAGS=-DDM_SIZE_BASELINE"
           fi
-          # The module is already a Zephyr module via the west manifest (self:),
-          # so it does not need ZMK_EXTRA_MODULES. BOARD_ROOT points Zephyr at the
-          # in-repo size shield under tests/size/boards/shields/.
+          # ZMK_EXTRA_MODULES points the build at the checked-out module;
+          # BOARD_ROOT exposes the in-repo size shield under tests/size/boards/.
           west build -s zmk/app -d build -b nice_nano_v2 -p always -- \
             -DSHIELD=dm_size \
-            -DBOARD_ROOT="$GITHUB_WORKSPACE/zmk-dynamic-macros/tests/size" \
-            -DEXTRA_CONF_FILE="$GITHUB_WORKSPACE/zmk-dynamic-macros/${{ matrix.conf }}" \
+            -DZMK_EXTRA_MODULES="$GITHUB_WORKSPACE" \
+            -DBOARD_ROOT="$GITHUB_WORKSPACE/tests/size" \
+            -DEXTRA_CONF_FILE="$GITHUB_WORKSPACE/${{ matrix.conf }}" \
             $DTC_FLAGS
 
       - name: Size the ELF
+        working-directory: ${{ runner.temp }}/ws
         run: |
           set -euo pipefail
-          arm-none-eabi-size -A build/zephyr/zephyr.elf | tee size_raw.txt
-          # flash = text + rodata + data ; ram = data + bss. Use the section totals
-          # arm-none-eabi-size -B gives (text/data/bss) for a stable parse.
-          read -r text data bss _ < <(arm-none-eabi-size -B build/zephyr/zephyr.elf | awk 'NR==2{print $1, $2, $3}')
+          elf=build/zephyr/zephyr.elf
+          arm-none-eabi-size -A "$elf"
+          # flash = text + data ; ram = data + bss, from the -B (Berkeley) totals.
+          read -r text data bss _ < <(arm-none-eabi-size -B "$elf" | awk 'NR==2{print $1, $2, $3}')
           flash=$((text + data))
           ram=$((data + bss))
-          mkdir -p out
-          printf '%s\t%s\t%s\t%s\n' "${{ matrix.id }}" "${{ matrix.name }}" "$flash" "$ram" > "out/${{ matrix.id }}.tsv"
+          mkdir -p "$GITHUB_WORKSPACE/out"
+          printf '%s\t%s\t%s\t%s\n' "${{ matrix.id }}" "${{ matrix.name }}" "$flash" "$ram" \
+            > "$GITHUB_WORKSPACE/out/${{ matrix.id }}.tsv"
           echo "id=${{ matrix.id }} flash=$flash ram=$ram"
 
       - name: Upload size fragment
