@@ -1,0 +1,21 @@
+# Copyright (c) 2026 Benjamin H
+# SPDX-License-Identifier: MIT
+
+if SHIELD_DM_SIZE
+
+config ZMK_KEYBOARD_NAME
+    default "DM SIZE"
+
+# Keep the firmware minimal and deterministic so the measured delta is the
+# dynamic-macro module's code, not unrelated subsystems. BLE/display add large,
+# config-independent blocks that would swamp the module's contribution.
+config ZMK_BLE
+    default n
+
+config ZMK_USB
+    default y
+
+config ZMK_DISPLAY
+    default n
+
+endif
