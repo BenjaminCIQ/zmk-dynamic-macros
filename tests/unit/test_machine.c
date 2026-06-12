@@ -278,8 +278,126 @@ static void goto_state(dm_state want) {
         occupy(RAM0);
         cmd(DM_CMD_SLOT, RAM0);
         break;
+    case DM_STATE_TYPING_FEEDBACK:
+        /* a speak transition parks a return-state and enters TYPING_FEEDBACK;
+         * suppress the auto-finish so the machine stays there (the live-typing
+         * case where the ring drain is a separate later event). */
+        fx.suppress_auto_finish = true;
+        cmd(DM_CMD_REC, 0);
+        break;
+    case DM_STATE_TYPING_ERASE:
+        dm_machine_erase_due(&fx.m); /* parks IDLE, writes TYPING_ERASE */
+        break;
     default:
         break;
+    }
+}
+
+/* ---- exhaustive legality sweep: every (state, command) cell ----------------
+ *
+ * The design doc (§2.2) claims the legality[state][command] matrix is
+ * "exhaustively testable (9 states x 13 commands), every cell a known verdict".
+ * The hand-picked cell tests below prove representative cells; this sweep proves
+ * ALL of them, so a single stray flipped cell (exactly the class of the
+ * REC-from-PREVIEW_PENDING defect caught at the pre-cut-over review) is caught
+ * mechanically.
+ *
+ * The expected table here is derived INDEPENDENTLY from the prose rules — it is
+ * NOT a copy of the production `legality[][]` (that would be tautological). The
+ * rules, verbatim from §2.2 / the matrix comment:
+ *   - REC: restarts recording from IDLE, RECORDING, PENDING_ASSIGN, PREVIEW_PENDING.
+ *   - STP: only in RECORDING.
+ *   - DEL / MOV / STATE / PREVIEW / the four knobs / TEST_RELOAD: IDLE-only.
+ *
+ * One documented exception to the effect-witness: TEST_RELOAD is matrix-ALLOWED
+ * in IDLE (so the gate passes it to the shell, which performs the reload — §2.4)
+ * but the MACHINE handler returns DM_OK with no transition ("dispatched by
+ * dm_nvs, not a transition", dm_machine.c). It is therefore the lone ALLOWED cell
+ * that produces no machine-side observable, so the effect-witness can't see it;
+ * the sweep skips the effect check for exactly that cell and asserts its
+ * gate-passes-through verdict separately below.
+ *   - SLOT: every state that consumes a slot press — IDLE (play), RECORDING
+ *     (chain), PENDING_ASSIGN (assign), DELETE_PENDING, MOVE_PENDING,
+ *     PREVIEW_PENDING; NOT PLAYING/TYPING_*.
+ *   - OVERFLOW: internal, only in RECORDING.
+ *   - PLAYING, TYPING_FEEDBACK, TYPING_ERASE: machine-busy, ignore everything.
+ *
+ * Witness: a command is ALLOWED iff it produces an observable effect — a state
+ * change OR at least one logged callback (notify/speak/apply_knob/store). An
+ * IGNORED command returns DM_OK before any handler, so state is unchanged AND
+ * log_n == 0. (The lone ALLOWED-without-a-log cell, DEL from IDLE -> arms the
+ * timeout + writes DELETE_PENDING, is caught by the state-change half; the fake
+ * does not wire arm/cancel_timeout, so those never log.)
+ */
+enum { A = 1, I = 0 }; /* ALLOWED / IGNORED, local so it can't alias production */
+
+static const uint8_t expected_legality[9][DM_CMD__COUNT] = {
+    /* state                  REC STP DEL MOV SLOT STATE PRE F+  F-  STY ERS RLD OVF */
+    [DM_STATE_IDLE]         = { A,  I,  A,  A,  A,   A,   A,  A,  A,  A,  A,  A,  I },
+    [DM_STATE_RECORDING]    = { A,  A,  I,  I,  A,   I,   I,  I,  I,  I,  I,  I,  A },
+    [DM_STATE_PENDING_ASSIGN]={ A,  I,  I,  I,  A,   I,   I,  I,  I,  I,  I,  I,  I },
+    [DM_STATE_DELETE_PENDING]={ I,  I,  I,  I,  A,   I,   I,  I,  I,  I,  I,  I,  I },
+    [DM_STATE_MOVE_PENDING] = { I,  I,  I,  I,  A,   I,   I,  I,  I,  I,  I,  I,  I },
+    [DM_STATE_PREVIEW_PENDING]={A,  I,  I,  I,  A,   I,   I,  I,  I,  I,  I,  I,  I },
+    [DM_STATE_PLAYING]      = { I,  I,  I,  I,  I,   I,   I,  I,  I,  I,  I,  I,  I },
+    [DM_STATE_TYPING_FEEDBACK]={I,  I,  I,  I,  I,   I,   I,  I,  I,  I,  I,  I,  I },
+    [DM_STATE_TYPING_ERASE] = { I,  I,  I,  I,  I,   I,   I,  I,  I,  I,  I,  I,  I },
+};
+
+ZTEST(dm_machine, legality_matrix_every_cell) {
+    for (int st = 0; st < 9; st++) {
+        for (int c = 0; c < DM_CMD__COUNT; c++) {
+            setup();
+            goto_state((dm_state)st);
+            /* a goto into PENDING_ASSIGN via STP needs a non-empty draft; keep one
+             * staged for the whole sweep so the pending states are reachable and
+             * SLOT-as-assign has a draft to commit. */
+            fx.draft_count = 1;
+            dm_state pre = dm_machine_state(&fx.m);
+            fx.log_n = 0;
+
+            /* SLOT needs a slot param; use an empty RAM slot so every ALLOWED SLOT
+             * context still fires an observable (play-empty/chain-empty/delete-
+             * empty/move-source/preview/assign all speak or notify or commit). */
+            int param = (c == DM_CMD_SLOT) ? (RAM0 + 1) : 0;
+            cmd((dm_command)c, param);
+
+            /* TEST_RELOAD is gate-ALLOWED but effect-free in the machine (see the
+             * header comment): the effect-witness genuinely cannot see it, so skip
+             * it here and pin its verdict in legality_test_reload_passes_gate. */
+            if (c == DM_CMD_TEST_RELOAD) {
+                continue;
+            }
+
+            bool observed = (dm_machine_state(&fx.m) != pre) || (fx.log_n > 0);
+            bool want_allowed = (expected_legality[st][c] == A);
+            zassert_equal(observed, want_allowed,
+                          "state %d cmd %d: expected %s, observed %s", st, c,
+                          want_allowed ? "ALLOWED" : "IGNORED",
+                          observed ? "ALLOWED" : "IGNORED");
+        }
+    }
+}
+
+/* The cell the sweep deliberately skips: TEST_RELOAD is matrix-ALLOWED in IDLE
+ * (the gate passes it to the shell, which performs the reload — §2.4) yet the
+ * machine handler returns DM_OK with no transition. Its observable contract is
+ * therefore "never a machine-side effect, in ANY state": IDLE passes the gate to
+ * a no-op handler; non-IDLE is dropped by the gate. Both return DM_OK with no
+ * state change and no callback, which is exactly what this pins — so the reload
+ * dispatch stays the shell's job and never accidentally becomes a transition. */
+ZTEST(dm_machine, legality_test_reload_passes_gate) {
+    for (int st = 0; st < 9; st++) {
+        setup();
+        goto_state((dm_state)st);
+        dm_state pre = dm_machine_state(&fx.m);
+        fx.log_n = 0;
+        dm_result rc = cmd(DM_CMD_TEST_RELOAD, 0);
+        zassert_equal(rc, DM_OK, "state %d: TEST_RELOAD must return DM_OK", st);
+        zassert_equal(dm_machine_state(&fx.m), pre,
+                      "state %d: TEST_RELOAD must not transition the machine", st);
+        zassert_equal(fx.log_n, 0,
+                      "state %d: TEST_RELOAD must not call back", st);
     }
 }
 
