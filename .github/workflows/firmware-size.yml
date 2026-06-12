@@ -97,14 +97,15 @@ jobs:
           # (dt_compat_enabled) stays off and none of the module compiles.
           BASELINE_ARGS=""
           if [ "${{ matrix.baseline }}" = "true" ]; then
-            # Two independent guarantees the module is fully absent from the baseline:
-            #  1. DTS_EXTRA_CPPFLAGS makes DM_SIZE_BASELINE visible to the keymap's
-            #     C-preprocessor pass (the overlay CPP — EXTRA_DTC_FLAGS goes to dtc,
-            #     NOT this pass, which is why the first attempt still built the module),
-            #     so the behavior node + &dm bindings are omitted.
-            #  2. Force the Kconfig off so CMakeLists' target_sources_ifdef gates skip
-            #     every module source even though no &dm reference would auto-enable it.
-            BASELINE_ARGS='-DDTS_EXTRA_CPPFLAGS=-DDM_SIZE_BASELINE -DCONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO=n'
+            # DTS_EXTRA_CPPFLAGS makes DM_SIZE_BASELINE visible to the keymap's
+            # C-preprocessor pass (the overlay CPP — EXTRA_DTC_FLAGS goes to dtc, NOT
+            # this pass), so the behavior node + &dm bindings are omitted. With no
+            # zmk,behavior-dynamic-macro node present, the module's Kconfig auto-enable
+            # (default $(dt_compat_enabled,...)) stays off and CMakeLists compiles none
+            # of it. (The symbol has no prompt, so it cannot be forced off via
+            # -DCONFIG_...=n — the keymap node absence is the only lever, and it is
+            # sufficient.)
+            BASELINE_ARGS='-DDTS_EXTRA_CPPFLAGS=-DDM_SIZE_BASELINE'
           fi
           # ZMK_EXTRA_MODULES points the build at the checked-out module;
           # BOARD_ROOT exposes the in-repo size shield under tests/size/boards/.
