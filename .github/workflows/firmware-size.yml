@@ -22,6 +22,11 @@ jobs:
     runs-on: ubuntu-24.04
     container:
       image: zmkfirmware/zmk-build-arm:stable
+    # The zmk-build-arm container's default shell is dash (sh), which rejects
+    # `set -o pipefail`. Force bash for every run step in this job.
+    defaults:
+      run:
+        shell: bash
     strategy:
       fail-fast: false
       matrix:
