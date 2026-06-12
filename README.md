@@ -208,6 +208,8 @@ ARROW uses single punctuation marks with fixed roles: `>` success, `-` delete, `
 
 When enabled, feedback text is automatically erased by emitting backspace keycodes after the configured delay. If you type before the delay expires, the erase is cancelled. Multi-line status output is excluded. Pairs well with ARROW style's short output.
 
+`FEEDBACK_AUTO_ERASE` is the **build-time gate and the default** — it must be `y` for the feature to be compiled in. Once compiled in, `DM_ERASE_TOGGLE` flips auto-erase on/off at runtime (persisted across reboots), starting from this Kconfig default. With `FEEDBACK_AUTO_ERASE=n` the erase code is left out entirely and the toggle has no effect.
+
 ### Locale
 
 | Option      | Description                        |
@@ -283,7 +285,7 @@ selections below do.
 | **Typed feedback** (`FEEDBACK_*` > OFF, or any `STATUS_*` > OFF) | Verbose | The feedback pump, message builder, `dm_render`, the active locale table, ring + preview streaming | _TBD_ (largest single lever) |
 | `EVENTS` | n | Event notifications, the query API, preview mode | _TBD_ |
 | `PERSIST` | y | The full NVS storage backend (`dm_nvs`): async work queue, serialization, settings handlers | _TBD_ |
-| `FEEDBACK_AUTO_ERASE` | n | The auto-erase scheduler + backspace batching | _TBD_ (small) |
+| `FEEDBACK_AUTO_ERASE` | n | The auto-erase scheduler + backspace batching. Also the build-time **default** for the runtime `DM_ERASE_TOGGLE` — when this is off the erase code is compiled out entirely, so the toggle has nothing to switch. | _TBD_ (small) |
 | `TEST_RELOAD` | n | Test-only reload command — **do not enable in production** | _TBD_ (test only) |
 
 Notes for when the figures land:
