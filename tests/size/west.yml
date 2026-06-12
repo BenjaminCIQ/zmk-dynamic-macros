@@ -1,6 +1,8 @@
-# West manifest for the firmware-size workflow. Pulls ZMK (with its Zephyr) and
-# wires THIS repo as the dynamic-macro module, so the size builds use the module
-# at the checked-out commit. Mirrors tests/west.yml but adds the module self-ref.
+# West manifest for the firmware-size workspace. ZMK (with its Zephyr) only —
+# this module is NOT a `self` project here; the workflow points the build at the
+# checked-out module via ZMK_EXTRA_MODULES. Keeping the manifest module-free lets
+# the workspace live in an isolated temp dir (the proven urob/zmk-actions pattern)
+# without the module nesting under it.
 manifest:
   remotes:
     - name: zmkfirmware
@@ -11,4 +13,4 @@ manifest:
       revision: main
       import: app/west.yml
   self:
-    path: zmk-dynamic-macros
+    path: config

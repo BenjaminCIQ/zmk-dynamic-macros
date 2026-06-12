@@ -23,8 +23,12 @@
 #include <dt-bindings/zmk/dynamic_macros.h>
 #include <behaviors/dynamic_macro.dtsi>
 
+/* RAM-slot bindings only: RAM_SLOTS is always >= 1, whereas NVS_SLOTS collapses to
+ * 0 when PERSIST=n (the minimal/feedback-no-persist configs), which a keymap
+ * BUILD_ASSERT correctly rejects. Slot handling compiles identically for NVS/RAM,
+ * so this exercises the same code paths while building under every config. */
 #define DM_ROW_1 &dm DM_REC 0          &dm DM_STP 0           &dm DM_STATE 0
-#define DM_ROW_2 &dm DM_SLOT_NVS 0     &dm DM_SLOT_NVS 1      &dm DM_SLOT_RAM 0
+#define DM_ROW_2 &dm DM_SLOT_RAM 0     &dm DM_SLOT_RAM 1      &dm DM_SLOT_RAM 2
 #define DM_ROW_3 &dm DM_DEL 0          &dm DM_MOV 0           &dm DM_PREVIEW 0
 #define DM_ROW_4 &dm DM_FEEDBACK_INC 0 &dm DM_STYLE_TOGGLE 0  &dm DM_ERASE_TOGGLE 0
 
