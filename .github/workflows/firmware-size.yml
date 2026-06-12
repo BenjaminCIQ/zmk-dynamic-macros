@@ -115,9 +115,19 @@ jobs:
         run: |
           set -euo pipefail
           elf=build/zephyr/zephyr.elf
-          arm-none-eabi-size -A "$elf"
+          # The Zephyr SDK ARM toolchain is arm-zephyr-eabi-*, not arm-none-eabi-*,
+          # and may not be on PATH. Resolve a size binary robustly.
+          SIZE=""
+          for cand in arm-zephyr-eabi-size arm-none-eabi-size size; do
+            if command -v "$cand" >/dev/null 2>&1; then SIZE="$cand"; break; fi
+          done
+          if [ -z "$SIZE" ]; then
+            SIZE="$(find "${ZEPHYR_SDK_INSTALL_DIR:-/opt}" -name '*-size' -type f 2>/dev/null | head -1)"
+          fi
+          echo "Using size tool: $SIZE"
+          "$SIZE" -A "$elf"
           # flash = text + data ; ram = data + bss, from the -B (Berkeley) totals.
-          read -r text data bss _ < <(arm-none-eabi-size -B "$elf" | awk 'NR==2{print $1, $2, $3}')
+          read -r text data bss _ < <("$SIZE" -B "$elf" | awk 'NR==2{print $1, $2, $3}')
           flash=$((text + data))
           ram=$((data + bss))
           mkdir -p "$GITHUB_WORKSPACE/out"
