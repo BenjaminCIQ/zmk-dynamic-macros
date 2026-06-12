@@ -3,7 +3,7 @@
  *
  * SPDX-License-Identifier: MIT
  *
- * Standalone host runner (redesign §4.1).
+ * Standalone host runner.
  *
  * Provides the storage for the test registry declared in ztest_shim.h and a
  * main() that runs every ZTEST-registered test, printing a summary. Compiled

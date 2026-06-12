@@ -6,7 +6,7 @@
  * dm_nvs — the storage backend (single-instance, file-scoped).
  *
  * Owns the async work queue, the storage msgq, the save/load buffer, and the
- * settings handler. File-scoped per ADR-0002: one work queue / msgq / buffer
+ * settings handler. File-scoped, single-instance: one work queue / msgq / buffer
  * shared, no instance handle threaded — the per-instance slot_store calls in
  * through the injected dm_nvs_sink, whose adapter (dm_nvs_sink_save/del) lands
  * here.

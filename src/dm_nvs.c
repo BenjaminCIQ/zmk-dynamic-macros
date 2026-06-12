@@ -5,7 +5,7 @@
  *
  * dm_nvs — storage backend (see dm_nvs.h).
  *
- * File-scoped/single-instance (ADR-0002): one work queue, one msgq, one buffer.
+ * File-scoped/single-instance: one work queue, one msgq, one buffer.
  * slot_store reaches it only through the dm_nvs_sink; the async outcome flows back
  * UP through the system-queue completion (slot_store_complete_delete +
  * dm_machine_deliver_async). The storage thread never touches slot state.
@@ -42,7 +42,7 @@ struct dm_slot_header {
 
 BUILD_ASSERT(sizeof(struct dm_slot_header) == 8, "dm_slot_header must be 8 bytes packed");
 
-/* ---- the single instance's wiring (file-scoped per ADR-0002) --------------- */
+/* ---- the single instance's wiring (file-scoped) ---------------------------- */
 
 static slot_store        *dm_store;
 static struct dm_machine *dm_machine_ref;

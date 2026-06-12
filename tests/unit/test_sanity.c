@@ -3,7 +3,7 @@
  *
  * SPDX-License-Identifier: MIT
  *
- * Step-0 sanity test (redesign §5, step 0): one trivial test that passes BOTH
+ * Sanity test: one trivial test that passes BOTH
  * ways — as Ztest under `west test` and as a standalone host binary. Its only
  * job is to prove the dual-mode loop is wired before any pure-core module
  * (dm_render / slot_store / dm_machine) is extracted.

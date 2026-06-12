@@ -1,4 +1,4 @@
-# Standalone host build for the pure-core unit tests (redesign §4.1).
+# Standalone host build for the pure-core unit tests.
 #
 # Plain `cc`, NO Zephyr — this IS the CI rail for the pure core (a gcc job runs
 # `make` here; see .github/workflows/host-tests.yml) as well as the sub-second
@@ -21,7 +21,7 @@ CFLAGS  := -std=c11 -Wall -Wextra -Werror -g -O0 \
 TEST_SRCS := $(wildcard test_*.c)
 
 # Pure-core module sources under test, compiled directly (Zephyr-free). Add each
-# module's .c here as steps 1/3/4 extract them (mirrors run-host.ps1).
+# pure module's .c here as it is added (mirrors run-host.ps1).
 MODULE_SRCS := $(REPO)/src/dm_render.c $(REPO)/src/slot_store.c $(REPO)/src/dm_machine.c \
                $(REPO)/src/dm_feedback_build.c $(REPO)/src/dm_query.c
 

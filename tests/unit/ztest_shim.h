@@ -3,7 +3,7 @@
  *
  * SPDX-License-Identifier: MIT
  *
- * Dual-mode test shim (redesign §4.1).
+ * Dual-mode test shim.
  *
  * The pure-core unit tests (dm_render, slot_store, dm_machine) are written ONCE
  * and compiled TWO ways:
@@ -19,8 +19,7 @@
  * no-op shim.
  *
  * Keep the mapped surface MINIMAL: add a zassert_* only when a unit test needs
- * it (§6 — "ztest_shim surface grows as the unit tests are written"). Step 0
- * maps just enough for the sanity test.
+ * it, so the shim grows alongside the tests rather than ahead of them.
  */
 
 #ifndef DM_ZTEST_SHIM_H

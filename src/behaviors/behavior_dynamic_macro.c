@@ -63,8 +63,8 @@ BUILD_ASSERT(RAM_SLOTS <= 48, "Dynamic macros support at most 48 RAM slots");
 BUILD_ASSERT(MAX_SLOTS <= 64, "Dynamic macros support at most 64 total slots");
 BUILD_ASSERT(sizeof(struct dm_event) == 8, "dm_event must be 8 bytes packed");
 
-/* The single-instance assumption is anchored HERE, in one place (ADR-0002): the
- * storage backend, query resolution, and listener suppression all rely on it. */
+/* The single-instance assumption is anchored HERE, in one place: the storage
+ * backend, query resolution, and listener suppression all rely on it. */
 BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) <= 1,
              "Only one zmk,behavior-dynamic-macro instance is supported. The "
              "per-instance scaffolding follows ZMK convention; the query API and "

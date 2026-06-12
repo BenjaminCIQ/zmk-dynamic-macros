@@ -1,7 +1,5 @@
 # Pure-core unit tests (dual-mode harness)
 
-Step 0 of the deep-module rewrite (see `docs/architecture-redesign.md` §4.1, §5).
-
 The pure-core modules (`dm_render`, `slot_store`, `dm_machine`) are Zephyr-free, so
 their tests are written **once** and run **two ways**:
 
@@ -47,11 +45,10 @@ Runs as `native_sim` under Twister via `testcase.yaml`, picked up by the same
 
 - Each `test_*.c` is one translation unit, compiled by **both** the `Makefile`/`cl` host
   build and `CMakeLists.txt` (Ztest).
-- When a pure module is extracted (steps 1/3/4), add its Zephyr-free `.c` next to the test
+- When a pure module is extracted, add its Zephyr-free `.c` next to the test
   that drives it — to `SRCS` in the `Makefile` (host) and it is globbed automatically in
   `CMakeLists.txt` (Ztest sources are `test_*.c`; add module `.c` explicitly there).
-- Grow the `zassert_*` surface in `ztest_shim.h` only as a test needs a new macro
-  (redesign §6).
+- Grow the `zassert_*` surface in `ztest_shim.h` only as a test needs a new macro.
 
 `host_runner.c` supplies `main()` + the registry for the host build only; the Ztest build
 excludes it (Ztest provides its own `main`).
