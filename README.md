@@ -267,32 +267,36 @@ See [docs/event-api.md](docs/event-api.md) for full API reference, code examples
 
 ## Firmware Size
 
-> **🚧 Placeholder — numbers to be measured.** The flash/RAM figures below are not yet
-> filled in. They will be measured per configuration on a representative target
-> (e.g. nice!nano v2 / nRF52840) and reported here so you can estimate the module's
-> cost before building. The table structure and the switches that drive it are final;
-> only the measured values are pending.
-
 The module's footprint is driven almost entirely by a handful of **compile-time**
 switches that include or exclude whole subsystems. Runtime knobs (feedback level,
 style, locale selection at runtime) do not change firmware size — only the build-time
 selections below do.
 
+Figures below are the **delta the module adds** over a module-absent build, measured
+on a **nice!nano v2 (nRF52840)** from Zephyr's own memory-region accounting (the
+flash/RAM the linker actually reserves). Stated as deltas so they stay comparable
+across ZMK versions and board layouts. Measure them yourself any time with the
+`Firmware size` workflow (`.github/workflows/firmware-size.yml`).
+
 ### What each switch adds
 
-| Switch | Default | Code it includes when on | Relative flash impact |
-| --- | --- | --- | --- |
-| **Typed feedback** (`FEEDBACK_*` > OFF, or any `STATUS_*` > OFF) | Verbose | The feedback pump, message builder, `dm_render`, the active locale table, ring + preview streaming | _TBD_ (largest single lever) |
-| `EVENTS` | n | Event notifications, the query API, preview mode | _TBD_ |
-| `PERSIST` | y | The full NVS storage backend (`dm_nvs`): async work queue, serialization, settings handlers | _TBD_ |
-| `FEEDBACK_AUTO_ERASE` | n | The auto-erase scheduler + backspace batching. Also the build-time **default** for the runtime `DM_ERASE_TOGGLE` — when this is off the erase code is compiled out entirely, so the toggle has nothing to switch. | _TBD_ (small) |
-| `TEST_RELOAD` | n | Test-only reload command — **do not enable in production** | _TBD_ (test only) |
+| Switch | Default | Code it includes when on | Δ Flash | Δ RAM |
+| --- | --- | --- | --: | --: |
+| **Typed feedback** (`FEEDBACK_*` > OFF, or any `STATUS_*` > OFF) | Verbose | The feedback pump, message builder, `dm_render`, the active locale table, ring + preview streaming | ~6.2 KB | ~0.5 KB |
+| `PERSIST` | y | The full NVS storage backend (`dm_nvs`): async work queue, serialization, settings handlers | ~1.6 KB | ~7.8 KB |
+| `EVENTS` | n | Event notifications, the query API, preview mode | ~0.2 KB | ~0 |
+| `FEEDBACK_AUTO_ERASE` | n | The auto-erase scheduler + backspace batching. Also the build-time **default** for the runtime `DM_ERASE_TOGGLE` — when this is off the erase code is compiled out entirely, so the toggle has nothing to switch. | ~0 | ~0 |
+| `TEST_RELOAD` | n | Test-only reload command — **do not enable in production** | — | — |
 
-Notes for when the figures land:
-- **Typed feedback is the dominant lever.** Turning it fully off (`FEEDBACK_OFF` *and*
-  `STATUS_OFF`) compiles out the pump, renderer, and locale tables together — the
-  single biggest saving. With it off, the module is just the state machine + slot
-  storage (+ NVS if `PERSIST`).
+(Per-switch costs isolated by toggling one switch at a time from the same base; see
+the representative combinations below.)
+
+- **Typed feedback is the dominant flash lever** (~6.2 KB). Turning it fully off
+  (`FEEDBACK_OFF` *and* `STATUS_OFF`) compiles out the pump, renderer, and locale
+  tables together — the single biggest saving. With it off, the module is just the
+  state machine + slot storage (+ NVS if `PERSIST`).
+- **Persistence is the dominant RAM lever** (~7.8 KB) — the NVS work-queue stack and
+  serialization buffers. Flash cost is small.
 - **Locale choice does not change size** meaningfully — exactly one `static const`
   locale table is linked regardless of which locale you pick; selecting a different
   locale swaps the table, it doesn't add one.
@@ -301,18 +305,20 @@ Notes for when the figures land:
 
 ### Representative combinations
 
-The combinations worth quoting (each a row once measured: flash Δ vs. baseline, RAM Δ):
+Delta vs. a module-absent baseline (nice!nano v2). At its largest the whole module is
+about **+11.7 KB flash / +11 KB RAM** — roughly 1.5% of the board's flash.
 
-| Configuration | Feedback | EVENTS | PERSIST | Flash | RAM |
-| --- | --- | --- | --- | --- | --- |
-| **Minimal** (record/play only, RAM slots) | off | n | n | _TBD_ | _TBD_ |
-| **Persistent, no feedback** | off | n | y | _TBD_ | _TBD_ |
-| **Feedback, no persistence** | verbose | n | n | _TBD_ | _TBD_ |
-| **Default** | verbose | n | y | _TBD_ | _TBD_ |
-| **Full** (widgets + feedback + persistence) | verbose | y | y | _TBD_ | _TBD_ |
+| Configuration | Feedback | EVENTS | PERSIST | Δ Flash | Δ RAM |
+| --- | --- | --- | --- | --: | --: |
+| **Minimal** (record/play only, RAM slots) | off | n | n | +2.9 KB | +2.8 KB |
+| **Persistent, no feedback** | off | n | y | +4.4 KB | +10.4 KB |
+| **Feedback, no persistence** | verbose | n | n | +9.0 KB | +3.3 KB |
+| **Default** | verbose | n | y | +11.3 KB | +10.9 KB |
+| **Full** (widgets + feedback + persistence + auto-erase) | verbose | y | y | +11.5 KB | +10.9 KB |
 
-Baseline = ZMK firmware without the module. Figures will be stated as the delta the
-module adds, so they remain comparable across ZMK versions.
+Baseline = ZMK firmware without the module. Your absolute firmware size will be
+larger depending on the rest of your build (other modules, keymap, BLE/display), but
+the module's *contribution* is the delta above.
 
 ## Notes
 
