@@ -1,0 +1,62 @@
+#include <dt-bindings/zmk/keys.h>
+#include <behaviors.dtsi>
+#include <dt-bindings/zmk/kscan_mock.h>
+#include <behaviors/dynamic_macro.dtsi>
+#include <dt-bindings/zmk/dynamic_macros.h>
+
+/*
+ * Regression guard for ordinary modifier chords. The mod-morph fix must NOT
+ * strip the modifier from genuine chords. Two encodings are exercised:
+ *
+ *   - encoded mod:  &kp LC(C) / &kp LS(A) -> a single keycode event that
+ *     carries the modifier in implicit_mods.
+ *   - separate keys: &kp LCTRL then &kp C -> a bare LCTRL event surrounding C.
+ *
+ * Both must record and replay with the modifier intact.
+ */
+
+&kscan {
+    rows = <5>;
+    columns = <2>;
+    exit-after;
+    events = <
+        /* REC */
+        ZMK_MOCK_PRESS(0,0,10)
+        ZMK_MOCK_RELEASE(0,0,10)
+        /* Capital A via encoded shift: &kp LS(A) */
+        ZMK_MOCK_PRESS(2,0,10)
+        ZMK_MOCK_RELEASE(2,0,10)
+        /* Ctrl+C via encoded ctrl: &kp LC(C) */
+        ZMK_MOCK_PRESS(2,1,10)
+        ZMK_MOCK_RELEASE(2,1,10)
+        /* Ctrl+C via separate keys: hold LCTRL, tap C, release LCTRL */
+        ZMK_MOCK_PRESS(3,0,10)
+        ZMK_MOCK_PRESS(3,1,10)
+        ZMK_MOCK_RELEASE(3,1,10)
+        ZMK_MOCK_RELEASE(3,0,10)
+        /* STP */
+        ZMK_MOCK_PRESS(0,1,10)
+        ZMK_MOCK_RELEASE(0,1,10)
+        /* Assign to RAM slot 0 */
+        ZMK_MOCK_PRESS(1,0,10)
+        ZMK_MOCK_RELEASE(1,0,10)
+        /* Play RAM slot 0: replays both chords with modifiers intact */
+        ZMK_MOCK_PRESS(1,0,2000)
+        ZMK_MOCK_RELEASE(1,0,10)
+    >;
+};
+
+/ {
+    keymap {
+        compatible = "zmk,keymap";
+        default_layer {
+            bindings = <
+                &dm DM_REC 0        &dm DM_STP 0
+                &dm DM_SLOT_RAM 0   &dm DM_SLOT_RAM 1
+                &kp LS(A)           &kp LC(C)
+                &kp LCTRL           &kp C
+                &none               &none
+            >;
+        };
+    };
+};

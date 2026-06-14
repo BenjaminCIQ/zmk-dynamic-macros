@@ -40,6 +40,8 @@ Two test layers run in CI:
 | `overflow` | Recording past `MAX_EVENTS` → pending assign |
 | `pool_full` | Shared event arena exhausted → fourth assign rejected, stored slots intact |
 | `modifier_record` | Modifier chords (Shift/Ctrl + key) record and replay |
+| `modifier_chords` | Encoded (`LS(A)`/`LC(C)`) and separate-key modifier chords record/replay with mods intact (mod-morph-fix regression guard) |
+| `mod_morph_record` | A mod-morph (`Ctrl+Del`→`Backspace`) records the morphed result only, not the held modifier |
 | `load_e2e` | Several RAM slots filled to capacity, loaded and played |
 | `nvs_roundtrip` | Record → save to NVS → reload → play (save/load fidelity) |
 | `multi_slot_nvs` | Three NVS slots survive a reload independently |
