@@ -24,6 +24,7 @@
 #include <zmk/behavior.h>
 #include <zmk/event_manager.h>
 #include <zmk/events/keycode_state_changed.h>
+#include <zmk/hid.h>
 #include <zmk/keys.h>
 #include <zmk/keymap.h>
 #include <dt-bindings/zmk/hid_usage_pages.h>
@@ -601,6 +602,30 @@ static int dm_event_listener(const zmk_event_t *eh) {
     }
 #endif
 
+    /*
+     * Record the *effective* keystroke, not the raw event stream. A bare
+     * modifier key (LCTRL..RGUI) is never recorded on its own: its effect is
+     * folded into the modifier byte of the keys it brackets. We read that byte
+     * from the live HID keyboard report, which is `(explicit & ~masked) |
+     * implicit` — i.e. exactly what ZMK is about to send. The `~masked` term is
+     * what a mod-morph uses to strip its trigger modifier (e.g. Ctrl+Del ->
+     * Backspace masks the Ctrl), so reading the report drops that Ctrl from the
+     * recording while a genuinely-held Ctrl/Shift stays in the byte.
+     *
+     * The report's modifier byte is order-independent for a non-modifier key:
+     * the bracketing modifier was registered by a prior, fully-dispatched event,
+     * and a mod-morph sets its mask before raising the morphed keycode. The one
+     * value that may not yet be in the report when this listener runs is the
+     * key's OWN encoded implicit mods (e.g. &kp LS(A)), so we OR those in from
+     * the event itself.
+     */
+    if (is_mod(ev->usage_page, ev->keycode)) {
+        return ZMK_EV_EVENT_BUBBLE;
+    }
+
+    uint8_t effective_mods =
+        ev->implicit_modifiers | zmk_hid_get_keyboard_report()->body.modifiers;
+
     for (size_t i = 0; i < dm_devices_len; i++) {
         struct dm_inst *inst = dm_devices[i]->data;
         if (dm_machine_state(&inst->machine) != DM_STATE_RECORDING) {
@@ -610,7 +635,7 @@ static int dm_event_listener(const zmk_event_t *eh) {
         struct dm_event rec = {
             .usage_page = ev->usage_page,
             .keycode = (uint16_t)ev->keycode,
-            .implicit_mods = ev->implicit_modifiers,
+            .implicit_mods = effective_mods,
             .explicit_mods = ev->explicit_modifiers,
             .pressed = ev->state,
             ._reserved = 0,
