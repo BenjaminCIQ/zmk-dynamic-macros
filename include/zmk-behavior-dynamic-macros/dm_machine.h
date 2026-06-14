@@ -8,7 +8,7 @@
  * Owns state, parked return-states, and the assign/move-source timeout pending
  * flag. Every state transition goes through dm_machine_command(); the legality
  * matrix answers "does this command do anything in this state?" (ALLOWED /
- * IGNORED) and is exhaustively testable: 9 states × 14 commands. Guards run
+ * IGNORED) and is exhaustively testable: 9 states × 13 commands. Guards run
  * only on ALLOWED and are data-dependent (ask slot_store, never peek at bytes).
  *
  * PURE: no Zephyr, no I/O. The callback vtable (dm_machine_callbacks) is the
@@ -85,8 +85,10 @@ typedef struct {
     int       (*store_draft_count)(void *ctx);
     bool      (*store_is_empty)(void *ctx, int idx);
     void      (*store_draft_reset)(void *ctx);
+    /* mark_playing only: the machine asks the store to pin the playing slot when it
+     * enters PLAYING, but clearing it is owned by the shell's playback emitter
+     * (playback_finish calls slot_store_clear_playing directly on completion). */
     void      (*store_mark_playing)(void *ctx, int idx);
-    void      (*store_clear_playing)(void *ctx);
 
     /*
      * Type one feedback message. The machine builds the spec from the parts it

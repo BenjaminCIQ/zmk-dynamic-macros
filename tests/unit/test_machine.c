@@ -114,7 +114,6 @@ static int  cb_draft_count(void *c) { (void)c; return g->draft_count; }
 static bool cb_is_empty(void *c, int i) { (void)c; return slot_store_is_empty(&g->store, i); }
 static void cb_draft_reset(void *c) { (void)c; log_tag("draft_reset"); }
 static void cb_mark_playing(void *c, int i) { (void)c; (void)i; log_tag("mark_playing"); }
-static void cb_clear_playing(void *c) { (void)c; log_tag("clear_playing"); }
 
 /*
  * speak — one thunk for every message. It maps spec->kind back to the short tag
@@ -205,7 +204,6 @@ static const dm_machine_callbacks fake_cb = {
     .store_is_empty = cb_is_empty,
     .store_draft_reset = cb_draft_reset,
     .store_mark_playing = cb_mark_playing,
-    .store_clear_playing = cb_clear_playing,
     .speak = fake_speak,
     .apply_knob = fake_apply_knob,
     .notify = cb_notify,

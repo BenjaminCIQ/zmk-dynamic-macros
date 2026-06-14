@@ -398,10 +398,6 @@ static void cb_store_mark_playing(void *ctx, int idx) {
     inst->playback_event = 0;
     k_timer_start(&inst->playback_timer, K_NO_WAIT, K_NO_WAIT);
 }
-static void cb_store_clear_playing(void *ctx) {
-    struct dm_inst *inst = ctx;
-    slot_store_clear_playing(&inst->store);
-}
 
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
 static void cb_notify(void *ctx, int event, int slot) {
@@ -464,7 +460,6 @@ static void wire_callbacks(struct dm_inst *inst) {
     cb->store_is_empty = cb_store_is_empty;
     cb->store_draft_reset = cb_store_draft_reset;
     cb->store_mark_playing = cb_store_mark_playing;
-    cb->store_clear_playing = cb_store_clear_playing;
     cb->notify = cb_notify;
     cb->arm_timeout = cb_arm_timeout;
     cb->cancel_timeout = cb_cancel_timeout;

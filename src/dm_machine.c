@@ -121,9 +121,8 @@ static dm_result do_rec(dm_machine *m) {
      * any pending-state timeout unconditionally so a stale timer cannot fire
      * mid-recording. */
     cancel_timeout(m);
-    /* REC from PENDING_ASSIGN with a non-empty draft discards the unassigned
-     * take in favor of a fresh recording. */
-    (void)m->cb->store_draft_count(m->cb->ctx); /* observe; discard is the reset below */
+    /* REC from PENDING_ASSIGN with a non-empty draft discards the unassigned take
+     * in favor of a fresh recording — the reset below drops it unconditionally. */
     m->cb->store_draft_reset(m->cb->ctx);
     /* notify BEFORE the state write so the event's coarse state reflects the
      * pre-transition state. The cue then types while suppressed and returns to
