@@ -196,18 +196,20 @@ static void on_typing_drained(dm_feedback *f) {
             return;
         }
         f->erase_in_progress = false;
+        f->emit_active = false;
         f->set_suppress(f->ctx, false);
         dm_machine_erase_finished(f->machine);
         return;
     }
 
     if (f->status_mode && status_advance(f)) {
-        return;
+        return; /* another status line started: still actively emitting */
     }
 
     bool was_status = f->status_mode;
     f->status_mode = false;
     f->have_spec = false;
+    f->emit_active = false;
 
     f->set_suppress(f->ctx, false);
 
@@ -231,19 +233,31 @@ static void on_typing_drained(dm_feedback *f) {
  * a tight burst; the tail only advances after the release.
  */
 static void emit_iteration(dm_feedback *f) {
-    /* refill the ring from the preview walk / its suffix when it empties */
+    /* A stale timer fire after a cancel: the iteration is no longer owed. Bail
+     * before on_typing_drained so it cannot report a phantom typing_finished. */
+    if (!f->emit_active) {
+        return;
+    }
+
+    /* refill the ring from the preview walk when it empties */
     if (ring_empty(f) && f->preview_pending) {
         dm_render_slot_view view = slot_view(f, f->spec.slot);
         dm_fb_sink sink = pump_sink(f);
         bool done = dm_feedback_build_preview(&view, f->locale, &sink, &f->cursor);
         if (done) {
-            f->preview_pending = false;
-            if (f->suffix_pending) {
-                dm_fb_facts facts = gather_facts(f, &f->spec);
-                dm_feedback_build_preview_suffix(&f->spec, f->style, f->locale, &facts, &sink);
-                f->suffix_pending = false;
-            }
+            f->preview_pending = false; /* the suffix waits for a fresh, empty ring below */
         }
+    }
+
+    /* The suffix ("' (N)\n", or SAVED's preview_end + close) is short (<= ~10
+     * chars) but the preview walk above can leave the ring nearly full, where an
+     * inline suffix emit would be silently dropped by the sink. Emit it once the
+     * preview has fully drained AND the ring is empty, so it always fits. */
+    if (ring_empty(f) && f->suffix_pending && !f->preview_pending) {
+        dm_fb_facts facts = gather_facts(f, &f->spec);
+        dm_fb_sink sink = pump_sink(f);
+        dm_feedback_build_preview_suffix(&f->spec, f->style, f->locale, &facts, &sink);
+        f->suffix_pending = false;
     }
 
     if (ring_empty(f)) {
@@ -327,6 +341,7 @@ void dm_feedback_speak(dm_feedback *f, const dm_feedback_spec *spec) {
     /* an empty message (e.g. status header that fit nothing meaningful, or a
      * preview-only spec with an empty slot) still has to drain through the loop
      * so status continuation / typing_finished run consistently. */
+    f->emit_active = true;
     start_timer(f);
 }
 
@@ -449,6 +464,7 @@ static void erase_work_handler(struct k_work *work) {
         f->erase_pending = true;
     }
 
+    f->emit_active = true;
     f->set_suppress(f->ctx, true);
     start_timer(f);
 }
@@ -462,9 +478,14 @@ static void cancel_erase(dm_feedback *f) {
     }
     if (f->erase_in_progress) {
         /* drain the ring to abort mid-sequence, drop suppression, and let the
-         * machine restore the parked return-state. */
+         * machine restore the parked return-state. Clearing emit_active makes the
+         * emit_timer fire already in flight inert (it cannot be un-queued once the
+         * timer ISR has submitted emit_work), so it cannot report a phantom
+         * typing_finished that would clobber the command pressed to cancel. */
+        k_timer_stop(&f->emit_timer);
         f->ring_head = f->ring_tail;
         f->erase_in_progress = false;
+        f->emit_active = false;
         f->set_suppress(f->ctx, false);
         dm_machine_erase_cancel(f->machine);
     }

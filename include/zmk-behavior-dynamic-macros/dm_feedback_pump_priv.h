@@ -53,6 +53,10 @@ struct dm_feedback {
     /* timer/work driving one press/release per TAP_DELAY */
     struct k_timer emit_timer;
     struct k_work  emit_work;
+    bool           emit_active; /* a message/erase is draining; false makes a stale
+                                 * emit_iteration (a timer fire already in flight when
+                                 * an erase was cancelled) inert instead of reporting a
+                                 * phantom typing_finished. */
 
     /* the spec currently being typed + its preview-streaming continuation */
     dm_feedback_spec spec;

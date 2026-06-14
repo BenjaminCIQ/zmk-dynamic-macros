@@ -96,3 +96,14 @@ Each test directory contains:
 - Tests use `ZMK_MOCK_PRESS/RELEASE` macros to simulate key events at specific timestamps
 - Feedback typing (if enabled) adds extra keycodes between operations
 - Timer-based playback may require generous timing gaps in test sequences
+
+## Pending regression coverage
+
+- **auto-erase cancel vs. no-cue command** (`dm_feedback_pump` `emit_active` guard).
+  With `FEEDBACK_AUTO_ERASE` enabled, pressing a command that types no cue
+  (`DM_DEL`, `DM_PREVIEW`, or a slot key to play) *while the auto-erase backspaces
+  are still emitting* must not let the stale `emit_timer` fire report a phantom
+  `typing_finished`. Expected: the machine ends in `DELETE_PENDING` /
+  `PREVIEW_PENDING` / `PLAYING` respectively. A `native_sim` case needs auto-erase
+  on and a press timed inside the erase-emission window; capture the golden
+  snapshot from a ZMK west workspace.
