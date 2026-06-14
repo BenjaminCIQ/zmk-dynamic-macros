@@ -1,0 +1,82 @@
+#include <dt-bindings/zmk/keys.h>
+#include <behaviors.dtsi>
+#include <dt-bindings/zmk/kscan_mock.h>
+#include <behaviors/dynamic_macro.dtsi>
+#include <dt-bindings/zmk/dynamic_macros.h>
+
+/*
+ * Regression: auto-erase cancel vs. a no-cue command (the dm_feedback_pump
+ * emit_active guard).
+ *
+ * Record "ABABAB" into RAM slot 0, then let the VERBOSE SAVED cue's auto-erase
+ * begin emitting backspaces. Press DEL *while those backspaces are still
+ * emitting* (cancelling the in-progress erase), then press RAM slot 0.
+ *
+ * With the fix: the cancelled erase's stale emit-timer fire is inert, so the
+ * machine stays in DELETE_PENDING and the slot press DELETES the macro (emits the
+ * "-R0" DELETED cue, no playback).
+ *
+ * Without the fix: the stale fire reports a phantom typing_finished that reverts
+ * DELETE_PENDING -> IDLE, so the slot press PLAYS the macro instead (replaying the
+ * recorded A/B keystrokes). The snapshot diff makes that regression visible.
+ *
+ * A long preview ("ABABAB" -> ~13 backspaces) widens the erase-emission window so
+ * the DEL press reliably lands mid-emission; the SAVED erase therefore shows a
+ * PARTIAL backspace run in the snapshot, proving the in-progress cancel path.
+ */
+
+&kscan {
+    rows = <3>;
+    columns = <2>;
+    exit-after;
+};
+
+/ {
+    keymap {
+        compatible = "zmk,keymap";
+        default_layer {
+            bindings = <
+                &dm DM_REC 0        &dm DM_STP 0
+                &dm DM_SLOT_RAM 0   &dm DM_DEL 0
+                &kp A               &kp B
+            >;
+        };
+    };
+};
+
+&kscan {
+    events = <
+        /* REC (cue ">*" types while suppressed; its scheduled erase is cancelled
+         * by the first recorded keystroke below) */
+        ZMK_MOCK_PRESS(0,0,10)
+        ZMK_MOCK_RELEASE(0,0,10)
+        /* A B A B A B recorded (real keystrokes, also emitted to HID) */
+        ZMK_MOCK_PRESS(2,0,250)
+        ZMK_MOCK_RELEASE(2,0,40)
+        ZMK_MOCK_PRESS(2,1,40)
+        ZMK_MOCK_RELEASE(2,1,40)
+        ZMK_MOCK_PRESS(2,0,40)
+        ZMK_MOCK_RELEASE(2,0,40)
+        ZMK_MOCK_PRESS(2,1,40)
+        ZMK_MOCK_RELEASE(2,1,40)
+        ZMK_MOCK_PRESS(2,0,40)
+        ZMK_MOCK_RELEASE(2,0,40)
+        ZMK_MOCK_PRESS(2,1,40)
+        ZMK_MOCK_RELEASE(2,1,40)
+        /* STP (STOPPED cue ">."; its erase is cancelled by the assign below) */
+        ZMK_MOCK_PRESS(0,1,200)
+        ZMK_MOCK_RELEASE(0,1,10)
+        /* SLOT_RAM 0 assign (VERBOSE SAVED cue ">R0:'ABABAB'", then schedules its
+         * auto-erase ~500ms after the cue finishes typing) */
+        ZMK_MOCK_PRESS(1,0,250)
+        ZMK_MOCK_RELEASE(1,0,10)
+        /* DEL: timed ~1820ms after the assign press so the SAVED erase has STARTED
+         * emitting backspaces; DEL cancels the in-progress erase. */
+        ZMK_MOCK_PRESS(1,1,1820)
+        ZMK_MOCK_RELEASE(1,1,10)
+        /* SLOT_RAM 0: DELETE (fixed) vs PLAY (buggy). The long final release keeps
+         * the sim alive for the DELETED cue + its trailing erase to fully drain. */
+        ZMK_MOCK_PRESS(1,0,150)
+        ZMK_MOCK_RELEASE(1,0,4000)
+    >;
+};
