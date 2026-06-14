@@ -10,9 +10,12 @@
  *
  *   - encoded mod:  &kp LC(C) / &kp LS(A) -> a single keycode event that
  *     carries the modifier in implicit_mods.
- *   - separate keys: &kp LCTRL then &kp C -> a bare LCTRL event surrounding C.
+ *   - separate keys: &kp LCTRL then &kp C (and &kp LSHFT then &kp A) -> a bare
+ *     modifier event surrounding the base key, with no mod on the base key.
  *
- * Both must record and replay with the modifier intact.
+ * All must record and replay with the modifier intact. The separate-key cases
+ * matter most: a bare modifier here must be KEPT, whereas the morph fix drops a
+ * bare modifier that the morph masked out of the HID report.
  */
 
 &kscan {
@@ -34,6 +37,11 @@
         ZMK_MOCK_PRESS(3,1,10)
         ZMK_MOCK_RELEASE(3,1,10)
         ZMK_MOCK_RELEASE(3,0,10)
+        /* Capital A via separate keys: hold LSHFT, tap A, release LSHFT */
+        ZMK_MOCK_PRESS(4,0,10)
+        ZMK_MOCK_PRESS(4,1,10)
+        ZMK_MOCK_RELEASE(4,1,10)
+        ZMK_MOCK_RELEASE(4,0,10)
         /* STP */
         ZMK_MOCK_PRESS(0,1,10)
         ZMK_MOCK_RELEASE(0,1,10)
@@ -55,7 +63,7 @@
                 &dm DM_SLOT_RAM 0   &dm DM_SLOT_RAM 1
                 &kp LS(A)           &kp LC(C)
                 &kp LCTRL           &kp C
-                &none               &none
+                &kp LSHFT           &kp A
             >;
         };
     };
