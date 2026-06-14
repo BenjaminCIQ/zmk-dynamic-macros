@@ -1,0 +1,65 @@
+#include <dt-bindings/zmk/keys.h>
+#include <behaviors.dtsi>
+#include <dt-bindings/zmk/kscan_mock.h>
+#include <behaviors/dynamic_macro.dtsi>
+#include <dt-bindings/zmk/dynamic_macros.h>
+
+/*
+ * Standalone modifier taps are kept. A bare modifier recorded with NO
+ * intervening key (e.g. a lone GUI/Win tap to open a launcher) is a lone tap
+ * and replays verbatim. A bare modifier that DOES bracket a key is still
+ * dropped and folded onto that key. This keymap records, in one macro:
+ *
+ *   1. a lone LGUI tap            -> kept as GUI down/up
+ *   2. a lone LSHFT tap           -> kept as Shift down/up
+ *   3. Shift+A (separate keys)    -> bracketed: bare Shift dropped, A folded
+ *
+ * so playback proves both verdicts in the same recording.
+ */
+
+&kscan {
+    rows = <4>;
+    columns = <2>;
+    exit-after;
+    events = <
+        /* REC */
+        ZMK_MOCK_PRESS(0,0,10)
+        ZMK_MOCK_RELEASE(0,0,10)
+        /* lone LGUI tap  (binding at 1,1) */
+        ZMK_MOCK_PRESS(1,1,10)
+        ZMK_MOCK_RELEASE(1,1,10)
+        /* lone LSHFT tap (binding at 2,0) */
+        ZMK_MOCK_PRESS(2,0,10)
+        ZMK_MOCK_RELEASE(2,0,10)
+        /* Shift+A via separate keys (bracketed): LSHFT 2,0  A 2,1 */
+        ZMK_MOCK_PRESS(2,0,10)
+        ZMK_MOCK_PRESS(2,1,10)
+        ZMK_MOCK_RELEASE(2,1,10)
+        ZMK_MOCK_RELEASE(2,0,10)
+        /* STP */
+        ZMK_MOCK_PRESS(0,1,10)
+        ZMK_MOCK_RELEASE(0,1,10)
+        /* Assign to RAM slot 0 */
+        ZMK_MOCK_PRESS(1,0,10)
+        ZMK_MOCK_RELEASE(1,0,10)
+        /* Play RAM slot 0 */
+        ZMK_MOCK_PRESS(1,0,2000)
+        ZMK_MOCK_RELEASE(1,0,10)
+    >;
+};
+
+/ {
+    keymap {
+        compatible = "zmk,keymap";
+        default_layer {
+            bindings = <
+                &dm DM_REC 0        &dm DM_STP 0
+                &dm DM_SLOT_RAM 0   &kp LGUI
+                &kp LSHFT           &kp A
+                &none               &none
+            >;
+            /* grid: (0,0)REC (0,1)STP / (1,0)SLOT0 (1,1)LGUI /
+             *       (2,0)LSHFT (2,1)A / (3,0)none (3,1)none */
+        };
+    };
+};

@@ -480,6 +480,9 @@ static void dispatch(struct dm_inst *inst, dm_command cmd, int param) {
     dm_machine_command(&inst->machine, cmd, param);
 }
 
+/* defined with the listener's recording helpers below; called on REC start */
+static void pending_mods_reset(struct dm_inst *inst);
+
 static int on_keymap_binding_pressed(struct zmk_behavior_binding *binding,
                                      struct zmk_behavior_binding_event event) {
     const struct device *dev = zmk_behavior_get_binding(binding->behavior_dev);
@@ -492,6 +495,9 @@ static int on_keymap_binding_pressed(struct zmk_behavior_binding *binding,
 
     switch (binding->param1) {
     case DM_REC:
+        /* fresh recording: drop any bare-modifier buffer left held across a
+         * prior stop so it can't leak a stale lone-tap into this draft. */
+        pending_mods_reset(inst);
         dispatch(inst, DM_CMD_REC, 0);
         return ZMK_BEHAVIOR_OPAQUE;
     case DM_STP:
@@ -579,6 +585,75 @@ static const struct behavior_driver_api behavior_dynamic_macro_driver_api = {
 /*  Event listener: capture keycodes during recording                         */
 /* -------------------------------------------------------------------------- */
 
+/*
+ * Append a finished dm_event to a draft, raising OVERFLOW through the machine if
+ * the draft is full (so the RECORDING -> PENDING_ASSIGN transition stays a
+ * machine write). Returns false on overflow so callers can stop feeding events.
+ */
+static bool record_event(struct dm_inst *inst, const struct dm_event *rec) {
+    if (slot_store_draft_append(&inst->store, rec)) {
+        return true;
+    }
+    LOG_WRN("Dynamic macro recording buffer full (%d events)", MAX_EVENTS);
+    dispatch(inst, DM_CMD_OVERFLOW, 0);
+    return false;
+}
+
+/* Clear the pending bare-modifier buffer (called at each recording start so a
+ * modifier held across a stop can never leak into the next recording). */
+static void pending_mods_reset(struct dm_inst *inst) {
+    memset(inst->pending_mods, 0, sizeof(inst->pending_mods));
+}
+
+/* A non-modifier key was recorded: every still-held bare modifier is now part
+ * of a chord (its mods are folded onto keys), so it can never become a lone
+ * tap. Mark them bracketed; their buffered presses will be discarded on
+ * release. */
+static void pending_mods_mark_bracketed(struct dm_inst *inst) {
+    for (size_t i = 0; i < ARRAY_SIZE(inst->pending_mods); i++) {
+        if (inst->pending_mods[i].keycode != 0) {
+            inst->pending_mods[i].bracketed = true;
+        }
+    }
+}
+
+/* Buffer a bare-modifier press, deferring the keep/drop verdict until release.
+ * If the buffer is full we cannot defer, so fall back to dropping (the common
+ * chord case), matching the no-lone-tap behaviour. */
+static void pending_mod_push(struct dm_inst *inst, const struct dm_event *press) {
+    for (size_t i = 0; i < ARRAY_SIZE(inst->pending_mods); i++) {
+        if (inst->pending_mods[i].keycode == 0) {
+            inst->pending_mods[i].keycode = press->keycode;
+            inst->pending_mods[i].bracketed = false;
+            inst->pending_mods[i].press = *press;
+            return;
+        }
+    }
+}
+
+/*
+ * A bare modifier released. If its press is still pending and no key intervened,
+ * it was a lone tap: flush the buffered press + this release into the draft.
+ * Otherwise (bracketed, or no matching press) drop it — the modifier was folded
+ * onto the keys it bracketed. Returns true iff the press was found and consumed.
+ */
+static void pending_mod_release(struct dm_inst *inst, const struct dm_event *release) {
+    for (size_t i = 0; i < ARRAY_SIZE(inst->pending_mods); i++) {
+        if (inst->pending_mods[i].keycode != release->keycode) {
+            continue;
+        }
+        bool lone = !inst->pending_mods[i].bracketed;
+        struct dm_event press = inst->pending_mods[i].press;
+        inst->pending_mods[i].keycode = 0;
+        if (lone && record_event(inst, &press)) {
+            record_event(inst, release);
+        }
+        return;
+    }
+    /* No matching press buffered (e.g. modifier held since before recording
+     * began): treat as bracketed and drop. */
+}
+
 static int dm_event_listener(const zmk_event_t *eh) {
     const struct zmk_keycode_state_changed *ev = as_zmk_keycode_state_changed(eh);
     if (!ev) {
@@ -603,26 +678,26 @@ static int dm_event_listener(const zmk_event_t *eh) {
 #endif
 
     /*
-     * Record the *effective* keystroke, not the raw event stream. A bare
-     * modifier key (LCTRL..RGUI) is never recorded on its own: its effect is
-     * folded into the modifier byte of the keys it brackets. We read that byte
-     * from the live HID keyboard report, which is `(explicit & ~masked) |
-     * implicit` — i.e. exactly what ZMK is about to send. The `~masked` term is
-     * what a mod-morph uses to strip its trigger modifier (e.g. Ctrl+Del ->
-     * Backspace masks the Ctrl), so reading the report drops that Ctrl from the
-     * recording while a genuinely-held Ctrl/Shift stays in the byte.
+     * Record the *effective* keystroke, not the raw event stream.
      *
-     * The report's modifier byte is order-independent for a non-modifier key:
-     * the bracketing modifier was registered by a prior, fully-dispatched event,
-     * and a mod-morph sets its mask before raising the morphed keycode. The one
-     * value that may not yet be in the report when this listener runs is the
-     * key's OWN encoded implicit mods (e.g. &kp LS(A)), so we OR those in from
-     * the event itself.
+     * For a NON-modifier key we fold the active modifiers onto it: implicit_mods
+     * is taken from the live HID keyboard report (`(explicit & ~masked) |
+     * implicit` — exactly what ZMK is about to send), OR'd with the key's own
+     * encoded implicit mods. The `~masked` term is how a mod-morph strips its
+     * trigger modifier (Ctrl+Del -> Backspace masks the Ctrl), so the report
+     * already excludes it; a genuinely-held Ctrl/Shift stays in the byte. The
+     * report is order-independent for a non-modifier key (its bracketing mods
+     * came from prior, fully-dispatched events, and a morph sets its mask before
+     * raising the morphed keycode); only the key's OWN encoded mods may not be
+     * in the report yet, hence the OR.
+     *
+     * A BARE modifier key is not recorded immediately: we cannot yet tell a lone
+     * tap (keep — e.g. a GUI tap to open a launcher) from a chord/morph modifier
+     * (drop — folded onto its keys). We buffer the press and decide at release:
+     * a non-modifier key seen in between marks it bracketed (drop); a release
+     * with nothing in between flushes it as a lone tap (press + release).
      */
-    if (is_mod(ev->usage_page, ev->keycode)) {
-        return ZMK_EV_EVENT_BUBBLE;
-    }
-
+    bool is_modifier = is_mod(ev->usage_page, ev->keycode);
     uint8_t effective_mods =
         ev->implicit_modifiers | zmk_hid_get_keyboard_report()->body.modifiers;
 
@@ -635,16 +710,19 @@ static int dm_event_listener(const zmk_event_t *eh) {
         struct dm_event rec = {
             .usage_page = ev->usage_page,
             .keycode = (uint16_t)ev->keycode,
-            .implicit_mods = effective_mods,
+            .implicit_mods = is_modifier ? ev->implicit_modifiers : effective_mods,
             .explicit_mods = ev->explicit_modifiers,
             .pressed = ev->state,
             ._reserved = 0,
         };
-        if (!slot_store_draft_append(&inst->store, &rec)) {
-            /* draft full: the overflow is a machine event so the RECORDING ->
-             * PENDING_ASSIGN transition stays a machine write. */
-            LOG_WRN("Dynamic macro recording buffer full (%d events)", MAX_EVENTS);
-            dispatch(inst, DM_CMD_OVERFLOW, 0);
+
+        if (!is_modifier) {
+            pending_mods_mark_bracketed(inst);
+            record_event(inst, &rec);
+        } else if (ev->state) {
+            pending_mod_push(inst, &rec);
+        } else {
+            pending_mod_release(inst, &rec);
         }
     }
 
