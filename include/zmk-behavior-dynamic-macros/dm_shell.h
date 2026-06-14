@@ -57,6 +57,20 @@ struct dm_inst {
     bool suppress_recording;          /* listener gate while emitters type */
     struct k_work_delayable timeout_work; /* assign/move/delete/preview timeout */
 
+    /*
+     * Pending bare-modifier presses awaiting a keep/drop verdict (listener,
+     * recording-scoped). A bare modifier is recorded ONLY as a lone tap — i.e.
+     * when it releases with no intervening key. Until then its press is held
+     * here; an intervening non-modifier key marks it `bracketed` (its effect is
+     * folded onto that key instead) so the bare events are dropped on release.
+     * Capacity is the eight HID modifiers; reset at each recording start.
+     */
+    struct dm_pending_mod {
+        uint16_t keycode;     /* 0 = free slot */
+        bool     bracketed;   /* a key was recorded while this modifier was held */
+        struct dm_event press; /* the buffered press, flushed iff it stays a lone tap */
+    } pending_mods[8];
+
     /* playback emitter (co-located primitive: replays a slot's dm_events) */
     int            playback_slot;     /* -1 = idle */
     uint32_t       playback_event;

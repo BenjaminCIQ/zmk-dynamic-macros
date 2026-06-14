@@ -1,0 +1,59 @@
+#include <dt-bindings/zmk/keys.h>
+#include <behaviors.dtsi>
+#include <dt-bindings/zmk/kscan_mock.h>
+#include <behaviors/dynamic_macro.dtsi>
+#include <dt-bindings/zmk/dynamic_macros.h>
+
+/ {
+    behaviors {
+        /* Ctrl+Del morphs to Backspace, masking the Ctrl out of the output.
+         * This is the canonical mod-morph case: live output is a clean
+         * Backspace, but the keycode event bus still carries the bare LCTRL
+         * around the morphed Backspace. */
+        bspc_morph: bspc_morph {
+            compatible = "zmk,behavior-mod-morph";
+            #binding-cells = <0>;
+            bindings = <&kp DEL>, <&kp BSPC>;
+            mods = <(MOD_LCTL|MOD_RCTL)>;
+        };
+    };
+};
+
+&kscan {
+    rows = <4>;
+    columns = <2>;
+    exit-after;
+    events = <
+        /* REC */
+        ZMK_MOCK_PRESS(0,0,10)
+        ZMK_MOCK_RELEASE(0,0,10)
+        /* Hold Ctrl, tap the morph (-> Backspace), release Ctrl */
+        ZMK_MOCK_PRESS(1,1,10)
+        ZMK_MOCK_PRESS(2,0,10)
+        ZMK_MOCK_RELEASE(2,0,10)
+        ZMK_MOCK_RELEASE(1,1,10)
+        /* STP */
+        ZMK_MOCK_PRESS(0,1,10)
+        ZMK_MOCK_RELEASE(0,1,10)
+        /* Assign to RAM slot 0 */
+        ZMK_MOCK_PRESS(1,0,10)
+        ZMK_MOCK_RELEASE(1,0,10)
+        /* Play RAM slot 0: should replay a clean Backspace, NOT Ctrl+Backspace */
+        ZMK_MOCK_PRESS(1,0,2000)
+        ZMK_MOCK_RELEASE(1,0,10)
+    >;
+};
+
+/ {
+    keymap {
+        compatible = "zmk,keymap";
+        default_layer {
+            bindings = <
+                &dm DM_REC 0        &dm DM_STP 0
+                &dm DM_SLOT_RAM 0   &kp LCTRL
+                &bspc_morph         &none
+                &none               &none
+            >;
+        };
+    };
+};
