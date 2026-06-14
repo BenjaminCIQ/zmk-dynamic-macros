@@ -1,0 +1,13 @@
+# Standalone host-build artifacts (tests/unit/Makefile and the MSVC/cl loop).
+# The Ztest build runs out-of-tree under west/Twister, so nothing it produces
+# lands here.
+dm_unit_host
+dm_unit_host.exe
+*.obj
+*.o
+*.pdb
+*.ilk
+
+# Machine-local MSVC convenience runner (not a portable test rail; the Makefile
+# and `west test` in CI are). Discovers VsDevCmd via vswhere, but stays local.
+run-host.ps1

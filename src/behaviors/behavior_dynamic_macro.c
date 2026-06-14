@@ -2,53 +2,70 @@
  * Copyright (c) 2026 Benjamin H
  *
  * SPDX-License-Identifier: MIT
+ *
+ * behavior_dynamic_macro — the thin wiring/dispatch layer.
+ *
+ * Owns nothing but wiring: it composes the modules (dm_machine, slot_store,
+ * dm_feedback, dm_nvs, dm_events) into one dev->data, parses a binding into a
+ * dm_command, runs the keymap-validation BUILD_ASSERTs and metadata, owns the
+ * listener + its recording-suppression flag, and drives the co-located playback
+ * emitter. State is written ONLY by dm_machine; persistence ordering lives ONLY
+ * in slot_store; message formatting lives ONLY in dm_feedback/dm_render.
  */
 
 #define DT_DRV_COMPAT zmk_behavior_dynamic_macro
 
-#include <stdio.h>
 #include <string.h>
 
 #include <zephyr/device.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/kernel.h>
-#include <zephyr/sys/atomic.h>
 #include <drivers/behavior.h>
 #include <zmk/behavior.h>
 #include <zmk/event_manager.h>
 #include <zmk/events/keycode_state_changed.h>
+#include <zmk/hid.h>
 #include <zmk/keys.h>
 #include <zmk/keymap.h>
 #include <dt-bindings/zmk/hid_usage_pages.h>
 #include <dt-bindings/zmk/dynamic_macros.h>
-#include <zmk-behavior-dynamic-macros/dm_internal.h>
-#include <zmk-behavior-dynamic-macros/dm_feedback.h>
-#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
-#include <zmk-behavior-dynamic-macros/events/dynamic_macro_state_changed.h>
+
+#include <zmk-behavior-dynamic-macros/dm_kconfig.h>
+#include <zmk-behavior-dynamic-macros/dm_machine.h>
+#include <zmk-behavior-dynamic-macros/dm_notify.h>
+#include <zmk-behavior-dynamic-macros/dm_render.h>
+#include <zmk-behavior-dynamic-macros/dm_shell.h>
+#include <zmk-behavior-dynamic-macros/slot_store.h>
+#if DM_TYPING_ENABLED
+#include <zmk-behavior-dynamic-macros/dm_feedback_pump.h>
+#endif
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_PERSIST)
+#include <zmk-behavior-dynamic-macros/dm_nvs.h>
 #endif
 
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 #if DT_HAS_COMPAT_STATUS_OKAY(DT_DRV_COMPAT)
 
-/* -------------------------------------------------------------------------- */
-/*  Constants and types                                                       */
-/* -------------------------------------------------------------------------- */
-
 #define TAP_DELAY CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_TAP_DELAY
 
+/* -------------------------------------------------------------------------- */
+/*  Build-time validation                                                     */
+/* -------------------------------------------------------------------------- */
+
 BUILD_ASSERT(MAX_EVENTS > 0, "Dynamic macros require at least 1 event per slot");
+BUILD_ASSERT(AVG_EVENTS >= 1, "AVG_EVENTS_PER_SLOT must be at least 1");
+BUILD_ASSERT(MAX_EVENTS <= ARENA_EVENTS,
+             "A single macro (MAX_EVENTS) cannot exceed the shared pool "
+             "(AVG_EVENTS_PER_SLOT x number of slots)");
+BUILD_ASSERT(ARENA_EVENTS <= UINT16_MAX, "arena offsets must fit in uint16_t");
 BUILD_ASSERT(NVS_SLOTS <= 16, "Dynamic macros support at most 16 NVS slots");
 BUILD_ASSERT(RAM_SLOTS <= 48, "Dynamic macros support at most 48 RAM slots");
 BUILD_ASSERT(MAX_SLOTS <= 64, "Dynamic macros support at most 64 total slots");
+BUILD_ASSERT(sizeof(struct dm_event) == 8, "dm_event must be 8 bytes packed");
 
-/*
- * Single-instance only. The driver uses the standard ZMK per-instance
- * scaffolding (DT_INST_FOREACH_STATUS_OKAY, the dm_devices[] array) purely to
- * follow convention, but the query API reads dm_devices[0] and recording
- * suppression is global across instances, so multiple enabled nodes would not
- * behave independently.
- */
+/* The single-instance assumption is anchored HERE, in one place: the storage
+ * backend, query resolution, and listener suppression all rely on it. */
 BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) <= 1,
              "Only one zmk,behavior-dynamic-macro instance is supported. The "
              "per-instance scaffolding follows ZMK convention; the query API and "
@@ -58,198 +75,137 @@ BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) <= 1,
 #warning "Dynamic macro has zero slots; all dynamic macro slot bindings are invalid"
 #endif
 
-#define DM_IS_DM_BINDING(idx, layer)                                                              \
-    DT_NODE_HAS_COMPAT(DT_PHANDLE_BY_IDX(layer, bindings, idx),                                   \
-                       zmk_behavior_dynamic_macro)
+#define DM_IS_DM_BINDING(idx, layer)                                                                \
+    DT_NODE_HAS_COMPAT(DT_PHANDLE_BY_IDX(layer, bindings, idx), zmk_behavior_dynamic_macro)
 
-#define DM_VALIDATE_SLOT_CMD(idx, layer, command, limit, msg)                                     \
-    COND_CODE_1(DM_IS_DM_BINDING(idx, layer),                                                     \
-                (BUILD_ASSERT(DT_PHA_BY_IDX(layer, bindings, idx, param1) != command ||           \
-                                  DT_PHA_BY_IDX(layer, bindings, idx, param2) < (limit),           \
-                              msg);),                                                            \
+#define DM_VALIDATE_SLOT_CMD(idx, layer, command, limit, msg)                                       \
+    COND_CODE_1(DM_IS_DM_BINDING(idx, layer),                                                       \
+                (BUILD_ASSERT(DT_PHA_BY_IDX(layer, bindings, idx, param1) != command ||             \
+                                  DT_PHA_BY_IDX(layer, bindings, idx, param2) < (limit),            \
+                              msg);),                                                                \
                 ())
 
-#define DM_VALIDATE_CMD_RANGE(idx, layer)                                                         \
-    COND_CODE_1(DM_IS_DM_BINDING(idx, layer),                                                     \
-                (BUILD_ASSERT(DT_PHA_BY_IDX(layer, bindings, idx, param1) <= DM_TEST_RELOAD,      \
-                              "Dynamic macro param1 is not a valid command (expected 0-12)");),   \
+#define DM_VALIDATE_CMD_RANGE(idx, layer)                                                           \
+    COND_CODE_1(DM_IS_DM_BINDING(idx, layer),                                                       \
+                (BUILD_ASSERT(DT_PHA_BY_IDX(layer, bindings, idx, param1) <= DM_TEST_RELOAD,        \
+                              "Dynamic macro param1 is not a valid command (expected 0-12)");),     \
                 ())
 
-#define DM_VALIDATE_CMD_NO_PARAM2(idx, layer, command)                                            \
-    COND_CODE_1(DM_IS_DM_BINDING(idx, layer),                                                     \
-                (BUILD_ASSERT(DT_PHA_BY_IDX(layer, bindings, idx, param1) != command ||           \
-                                  DT_PHA_BY_IDX(layer, bindings, idx, param2) == 0,                \
-                              #command " does not use param2 (must be 0)");),                     \
+#define DM_VALIDATE_CMD_NO_PARAM2(idx, layer, command)                                              \
+    COND_CODE_1(DM_IS_DM_BINDING(idx, layer),                                                       \
+                (BUILD_ASSERT(DT_PHA_BY_IDX(layer, bindings, idx, param1) != command ||             \
+                                  DT_PHA_BY_IDX(layer, bindings, idx, param2) == 0,                 \
+                              #command " does not use param2 (must be 0)");),                        \
                 ())
 
-#define DM_VALIDATE_KEYMAP_BINDING(idx, layer)                                                    \
-    DM_VALIDATE_CMD_RANGE(idx, layer)                                                             \
-    DM_VALIDATE_CMD_NO_PARAM2(idx, layer, DM_REC)                                                 \
-    DM_VALIDATE_CMD_NO_PARAM2(idx, layer, DM_STP)                                                 \
-    DM_VALIDATE_CMD_NO_PARAM2(idx, layer, DM_DEL)                                                 \
-    DM_VALIDATE_CMD_NO_PARAM2(idx, layer, DM_STATE)                                               \
-    DM_VALIDATE_CMD_NO_PARAM2(idx, layer, DM_MOV)                                                 \
-    DM_VALIDATE_SLOT_CMD(idx, layer, DM_SLOT_NVS, NVS_SLOTS,                                      \
-                         "DM_SLOT_NVS index exceeds configured NVS dynamic macro slots")          \
-    DM_VALIDATE_SLOT_CMD(idx, layer, DM_SLOT_RAM, RAM_SLOTS,                                      \
-                         "DM_SLOT_RAM index exceeds configured RAM dynamic macro slots")          \
-    DM_VALIDATE_CMD_NO_PARAM2(idx, layer, DM_PREVIEW)                                             \
-    DM_VALIDATE_CMD_NO_PARAM2(idx, layer, DM_FEEDBACK_INC)                                        \
-    DM_VALIDATE_CMD_NO_PARAM2(idx, layer, DM_FEEDBACK_DEC)                                       \
-    DM_VALIDATE_CMD_NO_PARAM2(idx, layer, DM_STYLE_TOGGLE)                                       \
-    DM_VALIDATE_CMD_NO_PARAM2(idx, layer, DM_ERASE_TOGGLE)                                       \
+#define DM_VALIDATE_KEYMAP_BINDING(idx, layer)                                                      \
+    DM_VALIDATE_CMD_RANGE(idx, layer)                                                               \
+    DM_VALIDATE_CMD_NO_PARAM2(idx, layer, DM_REC)                                                   \
+    DM_VALIDATE_CMD_NO_PARAM2(idx, layer, DM_STP)                                                   \
+    DM_VALIDATE_CMD_NO_PARAM2(idx, layer, DM_DEL)                                                   \
+    DM_VALIDATE_CMD_NO_PARAM2(idx, layer, DM_STATE)                                                 \
+    DM_VALIDATE_CMD_NO_PARAM2(idx, layer, DM_MOV)                                                   \
+    DM_VALIDATE_SLOT_CMD(idx, layer, DM_SLOT_NVS, NVS_SLOTS,                                        \
+                         "DM_SLOT_NVS index exceeds configured NVS dynamic macro slots")            \
+    DM_VALIDATE_SLOT_CMD(idx, layer, DM_SLOT_RAM, RAM_SLOTS,                                        \
+                         "DM_SLOT_RAM index exceeds configured RAM dynamic macro slots")            \
+    DM_VALIDATE_CMD_NO_PARAM2(idx, layer, DM_PREVIEW)                                               \
+    DM_VALIDATE_CMD_NO_PARAM2(idx, layer, DM_FEEDBACK_INC)                                          \
+    DM_VALIDATE_CMD_NO_PARAM2(idx, layer, DM_FEEDBACK_DEC)                                          \
+    DM_VALIDATE_CMD_NO_PARAM2(idx, layer, DM_STYLE_TOGGLE)                                          \
+    DM_VALIDATE_CMD_NO_PARAM2(idx, layer, DM_ERASE_TOGGLE)                                          \
     DM_VALIDATE_CMD_NO_PARAM2(idx, layer, DM_TEST_RELOAD)
 
-#define DM_VALIDATE_KEYMAP_LAYER(layer)                                                           \
-    COND_CODE_1(DT_NODE_HAS_PROP(layer, bindings),                                                \
-                (LISTIFY(DT_PROP_LEN(layer, bindings), DM_VALIDATE_KEYMAP_BINDING, (), layer)),   \
+#define DM_VALIDATE_KEYMAP_LAYER(layer)                                                             \
+    COND_CODE_1(DT_NODE_HAS_PROP(layer, bindings),                                                  \
+                (LISTIFY(DT_PROP_LEN(layer, bindings), DM_VALIDATE_KEYMAP_BINDING, (), layer)),     \
                 ())
 
 ZMK_KEYMAP_LAYERS_FOREACH(DM_VALIDATE_KEYMAP_LAYER)
 
-BUILD_ASSERT(sizeof(struct dm_event) == 8, "dm_event must be 8 bytes packed");
+/* -------------------------------------------------------------------------- */
+/*  Behavior parameter metadata                                               */
+/* -------------------------------------------------------------------------- */
 
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_METADATA)
 
-#define DM_COMMAND_VALUE(name, command)                                                           \
-    {                                                                                              \
-        .display_name = name,                                                                      \
-        .type = BEHAVIOR_PARAMETER_VALUE_TYPE_VALUE,                                               \
-        .value = command,                                                                          \
-    }
+#define DM_COMMAND_VALUE(name, command)                                                             \
+    {.display_name = name, .type = BEHAVIOR_PARAMETER_VALUE_TYPE_VALUE, .value = command}
 
 static const struct behavior_parameter_value_metadata dm_param_rec[] = {
-    DM_COMMAND_VALUE("Record", DM_REC),
-};
+    DM_COMMAND_VALUE("Record", DM_REC)};
 static const struct behavior_parameter_value_metadata dm_param_stop[] = {
-    DM_COMMAND_VALUE("Stop", DM_STP),
-};
+    DM_COMMAND_VALUE("Stop", DM_STP)};
 static const struct behavior_parameter_value_metadata dm_param_delete[] = {
-    DM_COMMAND_VALUE("Delete", DM_DEL),
-};
+    DM_COMMAND_VALUE("Delete", DM_DEL)};
 static const struct behavior_parameter_value_metadata dm_param_state[] = {
-    DM_COMMAND_VALUE("State", DM_STATE),
-};
+    DM_COMMAND_VALUE("State", DM_STATE)};
 static const struct behavior_parameter_value_metadata dm_param_move[] = {
-    DM_COMMAND_VALUE("Move", DM_MOV),
-};
+    DM_COMMAND_VALUE("Move", DM_MOV)};
 #if NVS_SLOTS > 0
 static const struct behavior_parameter_value_metadata dm_param_slot_nvs[] = {
-    DM_COMMAND_VALUE("NVS Slot", DM_SLOT_NVS),
-};
+    DM_COMMAND_VALUE("NVS Slot", DM_SLOT_NVS)};
 #endif
 #if RAM_SLOTS > 0
 static const struct behavior_parameter_value_metadata dm_param_slot_ram[] = {
-    DM_COMMAND_VALUE("RAM Slot", DM_SLOT_RAM),
-};
+    DM_COMMAND_VALUE("RAM Slot", DM_SLOT_RAM)};
 #endif
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
 static const struct behavior_parameter_value_metadata dm_param_preview[] = {
-    DM_COMMAND_VALUE("Preview", DM_PREVIEW),
-};
+    DM_COMMAND_VALUE("Preview", DM_PREVIEW)};
 #endif
 #if DM_TYPING_ENABLED
 static const struct behavior_parameter_value_metadata dm_param_feedback_inc[] = {
-    DM_COMMAND_VALUE("Feedback+", DM_FEEDBACK_INC),
-};
+    DM_COMMAND_VALUE("Feedback+", DM_FEEDBACK_INC)};
 static const struct behavior_parameter_value_metadata dm_param_feedback_dec[] = {
-    DM_COMMAND_VALUE("Feedback-", DM_FEEDBACK_DEC),
-};
+    DM_COMMAND_VALUE("Feedback-", DM_FEEDBACK_DEC)};
 #endif
 static const struct behavior_parameter_value_metadata dm_param_unused[] = {
-    {
-        .display_name = "Unused",
-        .type = BEHAVIOR_PARAMETER_VALUE_TYPE_NIL,
-    },
-};
+    {.display_name = "Unused", .type = BEHAVIOR_PARAMETER_VALUE_TYPE_NIL}};
 
 #if NVS_SLOTS > 0
 static const struct behavior_parameter_value_metadata dm_param_nvs_slot_index[] = {
-    {
-        .display_name = "NVS slot index",
-        .type = BEHAVIOR_PARAMETER_VALUE_TYPE_RANGE,
-        .range = {.min = 0, .max = NVS_SLOTS - 1},
-    },
-};
+    {.display_name = "NVS slot index",
+     .type = BEHAVIOR_PARAMETER_VALUE_TYPE_RANGE,
+     .range = {.min = 0, .max = NVS_SLOTS - 1}}};
 #endif
 #if RAM_SLOTS > 0
 static const struct behavior_parameter_value_metadata dm_param_ram_slot_index[] = {
-    {
-        .display_name = "RAM slot index",
-        .type = BEHAVIOR_PARAMETER_VALUE_TYPE_RANGE,
-        .range = {.min = 0, .max = RAM_SLOTS - 1},
-    },
-};
+    {.display_name = "RAM slot index",
+     .type = BEHAVIOR_PARAMETER_VALUE_TYPE_RANGE,
+     .range = {.min = 0, .max = RAM_SLOTS - 1}}};
 #endif
 
 static const struct behavior_parameter_metadata_set dm_parameter_metadata_sets[] = {
-    {
-        .param1_values_len = ARRAY_SIZE(dm_param_rec),
-        .param1_values = dm_param_rec,
-        .param2_values_len = ARRAY_SIZE(dm_param_unused),
-        .param2_values = dm_param_unused,
-    },
-    {
-        .param1_values_len = ARRAY_SIZE(dm_param_stop),
-        .param1_values = dm_param_stop,
-        .param2_values_len = ARRAY_SIZE(dm_param_unused),
-        .param2_values = dm_param_unused,
-    },
-    {
-        .param1_values_len = ARRAY_SIZE(dm_param_delete),
-        .param1_values = dm_param_delete,
-        .param2_values_len = ARRAY_SIZE(dm_param_unused),
-        .param2_values = dm_param_unused,
-    },
-    {
-        .param1_values_len = ARRAY_SIZE(dm_param_state),
-        .param1_values = dm_param_state,
-        .param2_values_len = ARRAY_SIZE(dm_param_unused),
-        .param2_values = dm_param_unused,
-    },
-    {
-        .param1_values_len = ARRAY_SIZE(dm_param_move),
-        .param1_values = dm_param_move,
-        .param2_values_len = ARRAY_SIZE(dm_param_unused),
-        .param2_values = dm_param_unused,
-    },
+    {.param1_values_len = ARRAY_SIZE(dm_param_rec), .param1_values = dm_param_rec,
+     .param2_values_len = ARRAY_SIZE(dm_param_unused), .param2_values = dm_param_unused},
+    {.param1_values_len = ARRAY_SIZE(dm_param_stop), .param1_values = dm_param_stop,
+     .param2_values_len = ARRAY_SIZE(dm_param_unused), .param2_values = dm_param_unused},
+    {.param1_values_len = ARRAY_SIZE(dm_param_delete), .param1_values = dm_param_delete,
+     .param2_values_len = ARRAY_SIZE(dm_param_unused), .param2_values = dm_param_unused},
+    {.param1_values_len = ARRAY_SIZE(dm_param_state), .param1_values = dm_param_state,
+     .param2_values_len = ARRAY_SIZE(dm_param_unused), .param2_values = dm_param_unused},
+    {.param1_values_len = ARRAY_SIZE(dm_param_move), .param1_values = dm_param_move,
+     .param2_values_len = ARRAY_SIZE(dm_param_unused), .param2_values = dm_param_unused},
 #if NVS_SLOTS > 0
-    {
-        .param1_values_len = ARRAY_SIZE(dm_param_slot_nvs),
-        .param1_values = dm_param_slot_nvs,
-        .param2_values_len = ARRAY_SIZE(dm_param_nvs_slot_index),
-        .param2_values = dm_param_nvs_slot_index,
-    },
+    {.param1_values_len = ARRAY_SIZE(dm_param_slot_nvs), .param1_values = dm_param_slot_nvs,
+     .param2_values_len = ARRAY_SIZE(dm_param_nvs_slot_index),
+     .param2_values = dm_param_nvs_slot_index},
 #endif
 #if RAM_SLOTS > 0
-    {
-        .param1_values_len = ARRAY_SIZE(dm_param_slot_ram),
-        .param1_values = dm_param_slot_ram,
-        .param2_values_len = ARRAY_SIZE(dm_param_ram_slot_index),
-        .param2_values = dm_param_ram_slot_index,
-    },
+    {.param1_values_len = ARRAY_SIZE(dm_param_slot_ram), .param1_values = dm_param_slot_ram,
+     .param2_values_len = ARRAY_SIZE(dm_param_ram_slot_index),
+     .param2_values = dm_param_ram_slot_index},
 #endif
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
-    {
-        .param1_values_len = ARRAY_SIZE(dm_param_preview),
-        .param1_values = dm_param_preview,
-        .param2_values_len = ARRAY_SIZE(dm_param_unused),
-        .param2_values = dm_param_unused,
-    },
+    {.param1_values_len = ARRAY_SIZE(dm_param_preview), .param1_values = dm_param_preview,
+     .param2_values_len = ARRAY_SIZE(dm_param_unused), .param2_values = dm_param_unused},
 #endif
 #if DM_TYPING_ENABLED
-    {
-        .param1_values_len = ARRAY_SIZE(dm_param_feedback_inc),
-        .param1_values = dm_param_feedback_inc,
-        .param2_values_len = ARRAY_SIZE(dm_param_unused),
-        .param2_values = dm_param_unused,
-    },
-    {
-        .param1_values_len = ARRAY_SIZE(dm_param_feedback_dec),
-        .param1_values = dm_param_feedback_dec,
-        .param2_values_len = ARRAY_SIZE(dm_param_unused),
-        .param2_values = dm_param_unused,
-    },
+    {.param1_values_len = ARRAY_SIZE(dm_param_feedback_inc), .param1_values = dm_param_feedback_inc,
+     .param2_values_len = ARRAY_SIZE(dm_param_unused), .param2_values = dm_param_unused},
+    {.param1_values_len = ARRAY_SIZE(dm_param_feedback_dec), .param1_values = dm_param_feedback_dec,
+     .param2_values_len = ARRAY_SIZE(dm_param_unused), .param2_values = dm_param_unused},
 #endif
 };
 
@@ -261,541 +217,344 @@ static const struct behavior_parameter_metadata dm_parameter_metadata = {
 #endif /* CONFIG_ZMK_BEHAVIOR_METADATA */
 
 /* -------------------------------------------------------------------------- */
-/*  NVS Persistence                                                           */
+/*  Single-instance resolution (dm_shell.h)                                   */
 /* -------------------------------------------------------------------------- */
 
-#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_PERSIST)
+#define DM_DEVICE(inst) DEVICE_DT_INST_GET(inst),
+const struct device *dm_devices[] = {DT_INST_FOREACH_STATUS_OKAY(DM_DEVICE)};
+const size_t dm_devices_len = ARRAY_SIZE(dm_devices);
 
-int dm_save_slot(struct behavior_dynamic_macro_data *data, int slot_idx) {
-    return dm_storage_save_slot(data, slot_idx);
-}
-
-int dm_delete_slot_from_storage(struct behavior_dynamic_macro_data *data, int slot_idx) {
-    return dm_storage_delete_slot(data, slot_idx);
-}
-
-#else /* !CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_PERSIST */
-
-int dm_save_slot(struct behavior_dynamic_macro_data *data, int slot_idx) {
-    (void)data;
-    (void)slot_idx;
-    return 0;
-}
-
-int dm_delete_slot_from_storage(struct behavior_dynamic_macro_data *data, int slot_idx) {
-    (void)data;
-    (void)slot_idx;
-    return 0;
-}
-
-#endif /* CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_PERSIST */
-
-/* -------------------------------------------------------------------------- */
-/*  Event notification                                                        */
-/* -------------------------------------------------------------------------- */
-
-#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
-void dm_raise_state_changed(struct behavior_dynamic_macro_data *data,
-                            int event, int slot) {
-    enum zmk_dynamic_macro_state state;
-
-    switch (data->state) {
-    case DM_STATE_RECORDING:
-        state = ZMK_DYNAMIC_MACRO_STATE_RECORDING;
-        break;
-    case DM_STATE_PLAYING:
-        state = ZMK_DYNAMIC_MACRO_STATE_PLAYING;
-        break;
-    default:
-        state = ZMK_DYNAMIC_MACRO_STATE_IDLE;
-        break;
+struct dm_inst *dm_shell_instance(void) {
+    if (dm_devices_len == 0) {
+        return NULL;
     }
+    return dm_devices[0]->data;
+}
 
-    LOG_DBG("dm_event: type=%d slot=%d state=%d", event, slot, state);
+/* -------------------------------------------------------------------------- */
+/*  Recording-suppression ownership (the shell owns the flag + the listener)  */
+/* -------------------------------------------------------------------------- */
 
-    raise_zmk_dynamic_macro_state_changed((struct zmk_dynamic_macro_state_changed){
-        .state = state,
-        .event = event,
-        .slot = slot,
-        .slot_is_nvs = slot >= 0 ? slot_is_nvs(slot) : false,
+/* The one inline through which emitters set/clear suppression — feedback typing
+ * and playback both flip it via this so it lives in exactly one owner. */
+static void dm_set_suppress(void *ctx, bool suppress) {
+    struct dm_inst *inst = ctx;
+    inst->suppress_recording = suppress;
+}
+
+#if DM_TYPING_ENABLED
+/* The pump emits feedback keystrokes through this — a HID keyboard press/release.
+ * Suppression is already held by the pump while it types, so these are not
+ * recorded. */
+static void dm_raise_feedback_keycode(void *ctx, uint16_t keycode, uint8_t mods, bool pressed) {
+    (void)ctx;
+    raise_zmk_keycode_state_changed((struct zmk_keycode_state_changed){
+        .usage_page = HID_USAGE_KEY,
+        .keycode = keycode,
+        .implicit_modifiers = mods,
+        .explicit_modifiers = 0,
+        .state = pressed,
+        .timestamp = k_uptime_get(),
     });
 }
 #endif
 
-/* -------------------------------------------------------------------------- */
-/*  Unified emit pump (playback + feedback typing)                            */
-/* -------------------------------------------------------------------------- */
-
-
-/*
- * Unified emit handler for both macro playback and feedback typing.
- * Playback emits recorded dm_events directly; feedback emits fb_events
- * from ring buffer with streaming refill for previews.
- */
-static void emit_work_handler(struct k_work *work) {
-    struct behavior_dynamic_macro_data *data =
-        CONTAINER_OF(work, struct behavior_dynamic_macro_data, emit_work);
-
-    if (data->state == DM_STATE_PLAYING) {
-        if (data->playback_slot < 0) {
-            k_timer_stop(&data->emit_timer);
-            return;
-        }
-
-        struct dm_slot *slot = &data->slots[data->playback_slot];
-        if (data->playback_event >= slot->event_count) {
-            data->state = DM_STATE_IDLE;
-#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
-            dm_raise_state_changed(data, ZMK_DYNAMIC_MACRO_PLAY_FINISHED, data->playback_slot);
+#if DM_TYPING_ENABLED && IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_PERSIST)
+/* Adapt the pump's save_knobs hook (ctx-carrying) to the file-scoped dm_nvs entry
+ * (single-instance, no handle). */
+static void dm_save_knobs(void *ctx, uint8_t level, uint8_t style, bool erase) {
+    (void)ctx;
+    dm_nvs_save_knobs(level, style, erase);
+}
 #endif
-            data->playback_slot = -1;
-            k_timer_stop(&data->emit_timer);
-            return;
-        }
 
-        const struct dm_event *ev = &slot->events[data->playback_event++];
 
-        struct zmk_keycode_state_changed kc = {
-            .usage_page = ev->usage_page,
-            .keycode = ev->keycode,
-            .implicit_modifiers = ev->implicit_mods,
-            .explicit_modifiers = ev->explicit_mods,
-            .state = ev->pressed,
-            .timestamp = k_uptime_get(),
-        };
+/* -------------------------------------------------------------------------- */
+/*  Playback emitter (co-located primitive: replay a slot's dm_events)        */
+/* -------------------------------------------------------------------------- */
 
-        data->suppress_recording = true;
-        raise_zmk_keycode_state_changed(kc);
-        data->suppress_recording = false;
-
-        if (data->playback_event >= slot->event_count) {
-            data->state = DM_STATE_IDLE;
+static void playback_finish(struct dm_inst *inst) {
+    int slot = inst->playback_slot;
+    inst->playback_slot = -1;
+    slot_store_clear_playing(&inst->store);
+    k_timer_stop(&inst->playback_timer);
+    /* PLAY_FINISHED is the one notification the machine does not raise (it has no
+     * playback-completion transition of its own); the playback emitter raises it.
+     * Settle the machine to IDLE FIRST, then raise — the event's coarse state
+     * field is derived from the machine, so the widget sees IDLE. */
+    dm_machine_play_finished(&inst->machine);
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
-            dm_raise_state_changed(data, ZMK_DYNAMIC_MACRO_PLAY_FINISHED, data->playback_slot);
+    dm_events_raise(inst, DM_EVT_PLAY_FINISHED, slot);
 #endif
-            data->playback_slot = -1;
-            k_timer_stop(&data->emit_timer);
-        } else {
-            k_timer_start(&data->emit_timer, K_MSEC(TAP_DELAY), K_NO_WAIT);
-        }
+}
+
+static void playback_work_handler(struct k_work *work) {
+    struct dm_inst *inst = CONTAINER_OF(work, struct dm_inst, playback_work);
+
+    if (inst->playback_slot < 0) {
+        k_timer_stop(&inst->playback_timer);
+        return;
+    }
+    struct dm_slot_view slot = slot_store_get(&inst->store, inst->playback_slot);
+    if (slot.events == NULL || inst->playback_event >= slot.event_count) {
+        playback_finish(inst);
         return;
     }
 
+    const struct dm_event *ev = &slot.events[inst->playback_event++];
+    struct zmk_keycode_state_changed kc = {
+        .usage_page = ev->usage_page,
+        .keycode = ev->keycode,
+        .implicit_modifiers = ev->implicit_mods,
+        .explicit_modifiers = ev->explicit_mods,
+        .state = ev->pressed,
+        .timestamp = k_uptime_get(),
+    };
+
+    inst->suppress_recording = true;
+    raise_zmk_keycode_state_changed(kc);
+    inst->suppress_recording = false;
+
+    if (inst->playback_event >= slot.event_count) {
+        playback_finish(inst);
+    } else {
+        k_timer_start(&inst->playback_timer, K_MSEC(TAP_DELAY), K_NO_WAIT);
+    }
+}
+
+static void playback_timer_handler(struct k_timer *timer) {
+    struct dm_inst *inst = CONTAINER_OF(timer, struct dm_inst, playback_timer);
+    k_work_submit(&inst->playback_work);
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Assign/move/delete/preview timeout                                        */
+/* -------------------------------------------------------------------------- */
+
+static void timeout_handler(struct k_work *work) {
+    struct k_work_delayable *d = k_work_delayable_from_work(work);
+    struct dm_inst *inst = CONTAINER_OF(d, struct dm_inst, timeout_work);
+    dm_machine_timeout(&inst->machine);
+}
+
+/* The machine drives these through its vtable whenever it enters / resolves a
+ * *_PENDING state, so the timer tracks the pending state wherever the transition
+ * originates (command, listener overflow, or a typing_finished up-call inside the
+ * pump) — no polling needed. */
+static void cb_arm_timeout(void *ctx) {
+    struct dm_inst *inst = ctx;
+    k_work_reschedule(&inst->timeout_work,
+                      K_MSEC(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_ASSIGN_TIMEOUT));
+}
+
+static void cb_cancel_timeout(void *ctx) {
+    struct dm_inst *inst = ctx;
+    k_work_cancel_delayable(&inst->timeout_work);
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Machine callback vtable — store_* + notify + speak_* (the latter funnel    */
+/*  into dm_feedback_speak)                                                    */
+/* -------------------------------------------------------------------------- */
+
+/* store_* adapters: thin wrappers over slot_store, except mark_playing also kicks
+ * the playback emitter (the machine wrote PLAYING; the emitter must start). */
+static dm_result cb_store_move(void *ctx, int src, int dst) {
+    struct dm_inst *inst = ctx;
+    return slot_store_move(&inst->store, src, dst);
+}
+static dm_result cb_store_delete(void *ctx, int idx) {
+    struct dm_inst *inst = ctx;
+    return slot_store_delete(&inst->store, idx);
+}
+static dm_result cb_store_persist(void *ctx, int idx) {
+    struct dm_inst *inst = ctx;
+    return slot_store_persist(&inst->store, idx);
+}
+static dm_result cb_store_draft_commit(void *ctx, int dst) {
+    struct dm_inst *inst = ctx;
+    return slot_store_draft_commit(&inst->store, dst);
+}
+static dm_result cb_store_draft_chain(void *ctx, int src) {
+    struct dm_inst *inst = ctx;
+    return slot_store_draft_chain(&inst->store, src);
+}
+static int cb_store_draft_count(void *ctx) {
+    struct dm_inst *inst = ctx;
+    return (int)slot_store_draft_count(&inst->store);
+}
+static bool cb_store_is_empty(void *ctx, int idx) {
+    struct dm_inst *inst = ctx;
+    return slot_store_is_empty(&inst->store, idx);
+}
+static void cb_store_draft_reset(void *ctx) {
+    struct dm_inst *inst = ctx;
+    slot_store_draft_reset(&inst->store);
+}
+static void cb_store_mark_playing(void *ctx, int idx) {
+    struct dm_inst *inst = ctx;
+    slot_store_mark_playing(&inst->store, idx);
+    inst->playback_slot = idx;
+    inst->playback_event = 0;
+    k_timer_start(&inst->playback_timer, K_NO_WAIT, K_NO_WAIT);
+}
+
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
+static void cb_notify(void *ctx, int event, int slot) {
+    dm_events_raise(ctx, event, slot);
+}
+#else
+static void cb_notify(void *ctx, int event, int slot) {
+    (void)ctx; (void)event; (void)slot;
+}
+#endif
+
+/* speak: one adapter funnels every message spec the machine builds into the
+ * pump. The machine has already written state + parked the return-state, so this
+ * is pure presentation. ctx is the dm_inst *. */
 #if DM_TYPING_ENABLED
-    if (data->state == DM_STATE_TYPING_FEEDBACK || data->state == DM_STATE_TYPING_ERASE) {
-        /* Refill ring from streaming preview if needed */
-        if (ring_empty(data) && !data->preview_done) {
-            bool more = render_slot_contents_stream(data);
-            if (!more) {
-                data->preview_done = true;
-                if (data->needs_suffix) {
-                    dm_feedback_preview_suffix(data);
-                    data->needs_suffix = false;
-                } else if (data->status_mode && data->status_current_slot >= 0) {
-                    /* status slot suffix */
-                    status_slot_suffix(data, data->status_current_slot);
-                    data->status_current_slot = -1;
-                }
-            }
-        }
-
-        if (ring_empty(data)) {
-            feedback_complete(data);
-            return;
-        }
-
-        /* Peek at tail without removing */
-        struct fb_event *ev = &data->ring[data->ring_tail];
-        struct zmk_keycode_state_changed kc = {
-            .usage_page = HID_USAGE_KEY,
-            .keycode = ev->keycode,
-            .implicit_modifiers = ev->mods,
-            .explicit_modifiers = 0,
-            .state = data->feedback_press_phase,
-            .timestamp = k_uptime_get(),
-        };
-
-        raise_zmk_keycode_state_changed(kc);
-
-        if (data->feedback_press_phase) {
-            data->feedback_press_phase = false;
-#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_FEEDBACK_AUTO_ERASE)
-            if (data->state == DM_STATE_TYPING_FEEDBACK && ev->keycode != 0x28) {
-                data->erase_char_count++;
-            }
-#endif
-        } else {
-            data->feedback_press_phase = true;
-            /* Advance tail after both press and release */
-            data->ring_tail = (data->ring_tail + 1) & (FB_RING_SIZE - 1);
-        }
-
-        k_timer_start(&data->emit_timer, K_MSEC(TAP_DELAY), K_NO_WAIT);
-        return;
-    }
-#endif
+static void cb_speak(void *c, const dm_feedback_spec *spec) {
+    struct dm_inst *inst = c;
+    dm_feedback_speak(&inst->feedback, spec);
 }
 
-static void emit_timer_handler(struct k_timer *timer) {
-    struct behavior_dynamic_macro_data *data =
-        CONTAINER_OF(timer, struct behavior_dynamic_macro_data, emit_timer);
+/* apply_knob: the machine drives the knob effect through here, inside the knob
+ * transition. Maps the command to the pump's knob entry; each ends by reporting
+ * typing_finished. The level/style/erase change + persist + confirmation all
+ * live in the pump (the runtime-knob owner). */
+static void cb_apply_knob(void *c, dm_command cmd) {
+    struct dm_inst *inst = c;
+    switch (cmd) {
+    case DM_CMD_FEEDBACK_INC:  dm_feedback_knob_level(&inst->feedback, 1);  break;
+    case DM_CMD_FEEDBACK_DEC:  dm_feedback_knob_level(&inst->feedback, -1); break;
+    case DM_CMD_STYLE_TOGGLE:  dm_feedback_knob_style_toggle(&inst->feedback); break;
+    case DM_CMD_ERASE_TOGGLE:  dm_feedback_knob_erase_toggle(&inst->feedback); break;
+    default: break;
+    }
+}
+#else /* !DM_TYPING_ENABLED — feedback compiled out: every speak finishes now */
+static void cb_speak(void *c, const dm_feedback_spec *spec) {
+    (void)spec;
+    dm_machine_typing_finished(&((struct dm_inst *)c)->machine);
+}
+static void cb_apply_knob(void *c, dm_command cmd) {
+    /* no typing pump to change/persist/confirm: the knob transition still has to
+     * settle, so report typing_finished. (Knob commands are IDLE-only and the
+     * level gate types nothing here anyway.) */
+    (void)cmd;
+    dm_machine_typing_finished(&((struct dm_inst *)c)->machine);
+}
+#endif /* DM_TYPING_ENABLED */
 
-    k_work_submit(&data->emit_work);
+static void wire_callbacks(struct dm_inst *inst) {
+    dm_machine_callbacks *cb = &inst->callbacks;
+    memset(cb, 0, sizeof(*cb));
+
+    cb->ctx = inst;
+    cb->store_move = cb_store_move;
+    cb->store_delete = cb_store_delete;
+    cb->store_persist = cb_store_persist;
+    cb->store_draft_commit = cb_store_draft_commit;
+    cb->store_draft_chain = cb_store_draft_chain;
+    cb->store_draft_count = cb_store_draft_count;
+    cb->store_is_empty = cb_store_is_empty;
+    cb->store_draft_reset = cb_store_draft_reset;
+    cb->store_mark_playing = cb_store_mark_playing;
+    cb->notify = cb_notify;
+    cb->arm_timeout = cb_arm_timeout;
+    cb->cancel_timeout = cb_cancel_timeout;
+    cb->speak = cb_speak;
+    cb->apply_knob = cb_apply_knob;
 }
 
 /* -------------------------------------------------------------------------- */
-/*  Assign/delete timeout                                                     */
+/*  Binding dispatch                                                          */
 /* -------------------------------------------------------------------------- */
 
-static void assign_timeout_handler(struct k_work *work) {
-    struct k_work_delayable *delayable = k_work_delayable_from_work(work);
-    struct behavior_dynamic_macro_data *data =
-        CONTAINER_OF(delayable, struct behavior_dynamic_macro_data, assign_timeout_work);
-
-    if (data->state == DM_STATE_PENDING_ASSIGN || data->state == DM_STATE_DELETE_PENDING ||
-        data->state == DM_STATE_MOVE_PENDING
-#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
-        || data->state == DM_STATE_PREVIEW_PENDING
-#endif
-    ) {
-        LOG_DBG("Dynamic macro assign/delete/preview timed out");
-        data->move_source_slot = -1;
-        data->state = DM_STATE_IDLE;
-    }
+static void dispatch(struct dm_inst *inst, dm_command cmd, int param) {
+    dm_machine_command(&inst->machine, cmd, param);
 }
 
-/* -------------------------------------------------------------------------- */
-/*  Command handlers                                                          */
-/* -------------------------------------------------------------------------- */
-
-static void cmd_record(struct behavior_dynamic_macro_data *data) {
-    if (data->state == DM_STATE_PLAYING || data->state == DM_STATE_TYPING_FEEDBACK ||
-        data->state == DM_STATE_TYPING_ERASE || data->state == DM_STATE_DELETE_PENDING ||
-        data->state == DM_STATE_MOVE_PENDING) {
-        return;
-    }
-
-    /*
-     * REC restarts recording from IDLE, RECORDING (re-record), and
-     * PENDING_ASSIGN (a finished-but-unassigned recording is discarded in
-     * favour of a fresh one). The PENDING_ASSIGN case silently dropped the
-     * buffered recording before; flag it so callers/tests can see the discard,
-     * and emit a recording-started cue so the user knows the old take is gone.
-     */
-    if (data->state == DM_STATE_PENDING_ASSIGN && data->recording_buffer.event_count > 0) {
-        LOG_DBG("REC during pending-assign: discarding %u unassigned events",
-                (unsigned int)data->recording_buffer.event_count);
-    }
-
-    data->recording_buffer.event_count = 0;
-    k_work_cancel_delayable(&data->assign_timeout_work);
-    LOG_DBG("Started recording dynamic macro");
-    feedback_rec(data);
-}
-
-static void cmd_stop(struct behavior_dynamic_macro_data *data) {
-    if (data->state != DM_STATE_RECORDING) {
-        return;
-    }
-
-    if (data->recording_buffer.event_count == 0) {
-        LOG_DBG("Stop with nothing recorded; discarding");
-        feedback_no_recording(data);
-        return;
-    }
-
-    LOG_DBG("Stopped recording (%d events), awaiting slot assignment",
-            data->recording_buffer.event_count);
-    feedback_stop(data);
-}
-
-static void cmd_delete_mode(struct behavior_dynamic_macro_data *data) {
-    if (data->state != DM_STATE_IDLE) {
-        return;
-    }
-
-    data->state = DM_STATE_DELETE_PENDING;
-    k_work_reschedule(&data->assign_timeout_work,
-                      K_MSEC(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_ASSIGN_TIMEOUT));
-    LOG_DBG("Entered delete mode");
-}
-
-static void cmd_move_mode(struct behavior_dynamic_macro_data *data) {
-    if (data->state != DM_STATE_IDLE) {
-        return;
-    }
-
-    data->move_source_slot = -1;
-    data->state = DM_STATE_MOVE_PENDING;
-    k_work_reschedule(&data->assign_timeout_work,
-                      K_MSEC(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_ASSIGN_TIMEOUT));
-    LOG_DBG("Entered move mode");
-    feedback_move_prompt(data);
-}
-
-static void cmd_status(struct behavior_dynamic_macro_data *data) {
-    if (data->state != DM_STATE_IDLE) {
-        return;
-    }
-
-    feedback_status(data);
-}
-
-static void cmd_slot(struct behavior_dynamic_macro_data *data, int slot_idx) {
-    if (slot_idx < 0 || slot_idx >= MAX_SLOTS) {
-        LOG_ERR("Invalid slot index: %d", slot_idx);
-        return;
-    }
-
-    switch (data->state) {
-    case DM_STATE_RECORDING: {
-        if (slot_is_empty(data, slot_idx)) {
-            feedback_chain_empty(data, slot_idx);
-            return;
-        }
-
-        struct dm_slot *src = &data->slots[slot_idx];
-        uint32_t remaining = MAX_EVENTS - data->recording_buffer.event_count;
-        if (src->event_count > remaining) {
-            feedback_chain_no_room(data, slot_idx);
-            return;
-        }
-
-        memcpy(&data->recording_buffer.events[data->recording_buffer.event_count],
-               src->events, src->event_count * sizeof(struct dm_event));
-        data->recording_buffer.event_count += src->event_count;
-        feedback_chain_insert(data, slot_idx, src);
-        LOG_DBG("Chained slot %d into recording (%u events total)", slot_idx,
-                (unsigned int)data->recording_buffer.event_count);
-        break;
-    }
-
-    case DM_STATE_PENDING_ASSIGN:
-        k_work_cancel_delayable(&data->assign_timeout_work);
-        if (data->slots[slot_idx].event_count > 0 && !atomic_test_bit(data->pending_delete, slot_idx)) {
-            LOG_ERR("Assign rejected: slot %d is occupied (%u events)", slot_idx,
-                    (unsigned int)data->slots[slot_idx].event_count);
-            feedback_slot_full(data, slot_idx);
-            return;
-        }
-        atomic_clear_bit(data->pending_delete, slot_idx);
-        data->slot_generation[slot_idx]++;
-        memcpy(&data->slots[slot_idx], &data->recording_buffer, sizeof(struct dm_slot));
-        feedback_saved(data, slot_idx, &data->slots[slot_idx]);
-        LOG_DBG("Assigned recording to slot %d (%d events)", slot_idx,
-                data->slots[slot_idx].event_count);
-        break;
-
-    case DM_STATE_DELETE_PENDING:
-        k_work_cancel_delayable(&data->assign_timeout_work);
-        if (slot_is_empty(data, slot_idx)) {
-            feedback_slot_empty(data, slot_idx);
-        } else {
-            if (slot_is_nvs(slot_idx)) {
-                atomic_set_bit(data->pending_delete, slot_idx);
-                data->state = DM_STATE_IDLE;
-                int rc = dm_delete_slot_from_storage(data, slot_idx);
-                if (rc) {
-                    atomic_clear_bit(data->pending_delete, slot_idx);
-                    return;
-                }
-
-                LOG_DBG("Queued slot %d for deletion", slot_idx);
-                break;
-            }
-
-            data->slots[slot_idx].event_count = 0;
-            dm_feedback_deleted(data, slot_idx);
-        }
-        LOG_DBG("Slot %d cleared", slot_idx);
-        break;
-
-    case DM_STATE_MOVE_PENDING: {
-        if (data->move_source_slot < 0) {
-            if (slot_is_empty(data, slot_idx)) {
-                feedback_slot_empty(data, slot_idx);
-                return;
-            }
-
-            data->move_source_slot = slot_idx;
-            feedback_move_source_selected(data, slot_idx);
-            LOG_DBG("Selected move source slot %d", slot_idx);
-            return;
-        }
-
-        int src = data->move_source_slot;
-        int dst = slot_idx;
-
-        if (src == dst) {
-            data->move_source_slot = -1;
-            k_work_cancel_delayable(&data->assign_timeout_work);
-            feedback_move_cancelled(data);
-            LOG_DBG("Cancelled same-slot move %d", src);
-            return;
-        }
-
-        if (!slot_is_empty(data, dst)) {
-            feedback_slot_full(data, dst);
-            return;
-        }
-
-        k_work_cancel_delayable(&data->assign_timeout_work);
-        data->move_source_slot = -1;
-
-        /*
-         * A move is two independent NVS ops (write dst, delete src) with no
-         * atomicity. Order them so the only reachable failure is a benign
-         * transient duplicate, never data loss:
-         *
-         *   1. Commit dst in RAM and persist it. If the save can't even be
-         *      enqueued, roll dst back and leave src fully intact -- the user
-         *      keeps their macro and is told to retry. Nothing is lost.
-         *   2. Only once dst's save is queued, zero src in RAM and delete it
-         *      from storage. If that delete can't be enqueued, dst is already
-         *      safe; src may resurrect on reboot, so surface the failure
-         *      rather than reporting a clean move.
-         *
-         * State is moved to IDLE up front: the queue-full feedback helpers only
-         * speak from IDLE (and drive their own typing return-to-IDLE), so we
-         * must not be in MOVE_PENDING when calling them, and we must not clobber
-         * the typing they start afterwards.
-         */
-        data->state = DM_STATE_IDLE;
-
-        atomic_clear_bit(data->pending_delete, dst);
-        data->slot_generation[dst]++;
-        memcpy(&data->slots[dst], &data->slots[src], sizeof(struct dm_slot));
-
-        if (dm_save_slot(data, dst) != 0) {
-            /* Roll back dst; src is untouched. dm_feedback_save_queue_full
-             * (invoked by the enqueue path) has already reported the failure. */
-            data->slot_generation[dst]++;
-            memset(&data->slots[dst], 0, sizeof(struct dm_slot));
-            LOG_ERR("Move %d -> %d aborted: could not persist dst", src, dst);
-            return;
-        }
-
-        atomic_clear_bit(data->pending_delete, src);
-        data->slot_generation[src]++;
-        memset(&data->slots[src], 0, sizeof(struct dm_slot));
-
-        if (dm_delete_slot_from_storage(data, src) != 0) {
-            /* dst is safe; src's NVS copy lingers and may reappear on reboot.
-             * dm_feedback_delete_queue_full has already reported the failure. */
-            LOG_ERR("Move %d -> %d: dst persisted but src NVS delete failed", src, dst);
-            return;
-        }
-
-        LOG_DBG("Moved slot %d -> slot %d", src, dst);
-        feedback_moved(data, src, dst);
-        break;
-    }
-
-#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
-    case DM_STATE_PREVIEW_PENDING:
-        k_work_cancel_delayable(&data->assign_timeout_work);
-        data->state = DM_STATE_IDLE;
-        dm_raise_state_changed(data, ZMK_DYNAMIC_MACRO_PREVIEW_READY, slot_idx);
-        LOG_DBG("Preview requested for slot %d", slot_idx);
-        break;
-#endif
-
-    case DM_STATE_IDLE:
-        if (slot_is_empty(data, slot_idx)) {
-            LOG_DBG("Slot %d is empty, nothing to play", slot_idx);
-            feedback_slot_empty(data, slot_idx);
-            return;
-        }
-        data->state = DM_STATE_PLAYING;
-        data->playback_slot = slot_idx;
-        data->playback_event = 0;
-#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
-        dm_raise_state_changed(data, ZMK_DYNAMIC_MACRO_PLAY_STARTED, slot_idx);
-#endif
-        LOG_DBG("Playing slot %d (%d events)", slot_idx, data->slots[slot_idx].event_count);
-        k_timer_start(&data->emit_timer, K_NO_WAIT, K_NO_WAIT);
-        break;
-
-    default:
-        break;
-    }
-}
-
-/* -------------------------------------------------------------------------- */
-/*  Behavior driver API                                                       */
-/* -------------------------------------------------------------------------- */
+/* defined with the listener's recording helpers below; called on REC start */
+static void pending_mods_reset(struct dm_inst *inst);
 
 static int on_keymap_binding_pressed(struct zmk_behavior_binding *binding,
                                      struct zmk_behavior_binding_event event) {
     const struct device *dev = zmk_behavior_get_binding(binding->behavior_dev);
-    struct behavior_dynamic_macro_data *data = dev->data;
+    struct dm_inst *inst = dev->data;
 
-#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_FEEDBACK_AUTO_ERASE)
-    dm_feedback_cancel_erase(data);
+#if DM_TYPING_ENABLED
+    /* any DM binding press cancels a scheduled / in-progress auto-erase */
+    dm_feedback_pump_cancel_erase(&inst->feedback);
 #endif
 
     switch (binding->param1) {
     case DM_REC:
-        cmd_record(data);
+        /* fresh recording: drop any bare-modifier buffer left held across a
+         * prior stop so it can't leak a stale lone-tap into this draft. */
+        pending_mods_reset(inst);
+        dispatch(inst, DM_CMD_REC, 0);
         return ZMK_BEHAVIOR_OPAQUE;
     case DM_STP:
-        cmd_stop(data);
+        dispatch(inst, DM_CMD_STP, 0);
         return ZMK_BEHAVIOR_OPAQUE;
     case DM_DEL:
-        cmd_delete_mode(data);
+        dispatch(inst, DM_CMD_DEL, 0);
         return ZMK_BEHAVIOR_OPAQUE;
     case DM_MOV:
-        cmd_move_mode(data);
+        dispatch(inst, DM_CMD_MOV, 0);
         return ZMK_BEHAVIOR_OPAQUE;
     case DM_STATE:
-        cmd_status(data);
+        dispatch(inst, DM_CMD_STATE, 0);
         return ZMK_BEHAVIOR_OPAQUE;
     case DM_SLOT_NVS:
         if (binding->param2 < 0 || binding->param2 >= NVS_SLOTS) {
             LOG_ERR("NVS slot index %d out of range (max %d)", binding->param2, NVS_SLOTS - 1);
             return -EINVAL;
         }
-        cmd_slot(data, binding->param2);
+        dispatch(inst, DM_CMD_SLOT, binding->param2);
         return ZMK_BEHAVIOR_OPAQUE;
     case DM_SLOT_RAM:
         if (binding->param2 < 0 || binding->param2 >= RAM_SLOTS) {
             LOG_ERR("RAM slot index %d out of range (max %d)", binding->param2, RAM_SLOTS - 1);
             return -EINVAL;
         }
-        cmd_slot(data, NVS_SLOTS + binding->param2);
+        dispatch(inst, DM_CMD_SLOT, NVS_SLOTS + binding->param2);
         return ZMK_BEHAVIOR_OPAQUE;
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
     case DM_PREVIEW:
-        if (data->state == DM_STATE_IDLE) {
-            data->state = DM_STATE_PREVIEW_PENDING;
-            k_work_reschedule(&data->assign_timeout_work,
-                              K_MSEC(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_ASSIGN_TIMEOUT));
-        }
+        dispatch(inst, DM_CMD_PREVIEW, 0);
         return ZMK_BEHAVIOR_OPAQUE;
 #endif
 #if DM_TYPING_ENABLED
+    /*
+     * Knob commands dispatch uniformly: the machine gates them IDLE-only, and on
+     * ALLOWED drives the change + persist + confirmation through apply_knob INSIDE
+     * the transition. The shell no longer re-runs the command or peeks state to
+     * reconstruct whether it was accepted — the legality verdict stays the
+     * machine's.
+     */
     case DM_FEEDBACK_INC:
-        cmd_feedback_adjust(data, 1);
+        dispatch(inst, DM_CMD_FEEDBACK_INC, 0);
         return ZMK_BEHAVIOR_OPAQUE;
     case DM_FEEDBACK_DEC:
-        cmd_feedback_adjust(data, -1);
+        dispatch(inst, DM_CMD_FEEDBACK_DEC, 0);
         return ZMK_BEHAVIOR_OPAQUE;
     case DM_STYLE_TOGGLE:
-        cmd_style_toggle(data);
+        dispatch(inst, DM_CMD_STYLE_TOGGLE, 0);
         return ZMK_BEHAVIOR_OPAQUE;
     case DM_ERASE_TOGGLE:
-        cmd_erase_toggle(data);
+        dispatch(inst, DM_CMD_ERASE_TOGGLE, 0);
         return ZMK_BEHAVIOR_OPAQUE;
 #endif
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_TEST_RELOAD)
     case DM_TEST_RELOAD:
-        if (data->state != DM_STATE_IDLE) {
+        /* IDLE-only, like any other; reload is dm_nvs mechanics, not a machine
+         * transition (the machine IGNOREs TEST_RELOAD). */
+        if (dm_machine_state(&inst->machine) != DM_STATE_IDLE) {
             return ZMK_BEHAVIOR_OPAQUE;
         }
-        LOG_DBG("Test reload: flushing storage and reloading from NVS");
-        dm_storage_flush();
-        dm_storage_test_reload();
-        LOG_DBG("Test reload: complete, NVS slots restored");
+        dm_nvs_test_reload();
         return ZMK_BEHAVIOR_OPAQUE;
 #endif
     default:
@@ -818,12 +577,77 @@ static const struct behavior_driver_api behavior_dynamic_macro_driver_api = {
 };
 
 /* -------------------------------------------------------------------------- */
-/*  Event listener: capture keycode events during recording                   */
+/*  Event listener: capture keycodes during recording                         */
 /* -------------------------------------------------------------------------- */
 
-#define DM_DEVICE(inst) DEVICE_DT_INST_GET(inst),
-const struct device *dm_devices[] = {DT_INST_FOREACH_STATUS_OKAY(DM_DEVICE)};
-const size_t dm_devices_len = ARRAY_SIZE(dm_devices);
+/*
+ * Append a finished dm_event to a draft, raising OVERFLOW through the machine if
+ * the draft is full (so the RECORDING -> PENDING_ASSIGN transition stays a
+ * machine write). Returns false on overflow so callers can stop feeding events.
+ */
+static bool record_event(struct dm_inst *inst, const struct dm_event *rec) {
+    if (slot_store_draft_append(&inst->store, rec)) {
+        return true;
+    }
+    LOG_WRN("Dynamic macro recording buffer full (%d events)", MAX_EVENTS);
+    dispatch(inst, DM_CMD_OVERFLOW, 0);
+    return false;
+}
+
+/* Clear the pending bare-modifier buffer (called at each recording start so a
+ * modifier held across a stop can never leak into the next recording). */
+static void pending_mods_reset(struct dm_inst *inst) {
+    memset(inst->pending_mods, 0, sizeof(inst->pending_mods));
+}
+
+/* A non-modifier key was recorded: every still-held bare modifier is now part
+ * of a chord (its mods are folded onto keys), so it can never become a lone
+ * tap. Mark them bracketed; their buffered presses will be discarded on
+ * release. */
+static void pending_mods_mark_bracketed(struct dm_inst *inst) {
+    for (size_t i = 0; i < ARRAY_SIZE(inst->pending_mods); i++) {
+        if (inst->pending_mods[i].keycode != 0) {
+            inst->pending_mods[i].bracketed = true;
+        }
+    }
+}
+
+/* Buffer a bare-modifier press, deferring the keep/drop verdict until release.
+ * If the buffer is full we cannot defer, so fall back to dropping (the common
+ * chord case), matching the no-lone-tap behaviour. */
+static void pending_mod_push(struct dm_inst *inst, const struct dm_event *press) {
+    for (size_t i = 0; i < ARRAY_SIZE(inst->pending_mods); i++) {
+        if (inst->pending_mods[i].keycode == 0) {
+            inst->pending_mods[i].keycode = press->keycode;
+            inst->pending_mods[i].bracketed = false;
+            inst->pending_mods[i].press = *press;
+            return;
+        }
+    }
+}
+
+/*
+ * A bare modifier released. If its press is still pending and no key intervened,
+ * it was a lone tap: flush the buffered press + this release into the draft.
+ * Otherwise (bracketed, or no matching press) drop it — the modifier was folded
+ * onto the keys it bracketed. Returns true iff the press was found and consumed.
+ */
+static void pending_mod_release(struct dm_inst *inst, const struct dm_event *release) {
+    for (size_t i = 0; i < ARRAY_SIZE(inst->pending_mods); i++) {
+        if (inst->pending_mods[i].keycode != release->keycode) {
+            continue;
+        }
+        bool lone = !inst->pending_mods[i].bracketed;
+        struct dm_event press = inst->pending_mods[i].press;
+        inst->pending_mods[i].keycode = 0;
+        if (lone && record_event(inst, &press)) {
+            record_event(inst, release);
+        }
+        return;
+    }
+    /* No matching press buffered (e.g. modifier held since before recording
+     * began): treat as bracketed and drop. */
+}
 
 static int dm_event_listener(const zmk_event_t *eh) {
     const struct zmk_keycode_state_changed *ev = as_zmk_keycode_state_changed(eh);
@@ -831,48 +655,70 @@ static int dm_event_listener(const zmk_event_t *eh) {
         return ZMK_EV_EVENT_BUBBLE;
     }
 
-    for (size_t i = 0; i < ARRAY_SIZE(dm_devices); i++) {
-        struct behavior_dynamic_macro_data *data = dm_devices[i]->data;
-
-        if (data->suppress_recording) {
+    /* single-instance: any instance suppressing means the emitted keystrokes are
+     * our own playback/feedback output — do not record them. */
+    for (size_t i = 0; i < dm_devices_len; i++) {
+        struct dm_inst *inst = dm_devices[i]->data;
+        if (inst->suppress_recording) {
             return ZMK_EV_EVENT_BUBBLE;
         }
     }
 
-#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_FEEDBACK_AUTO_ERASE)
-    for (size_t i = 0; i < ARRAY_SIZE(dm_devices); i++) {
-        struct behavior_dynamic_macro_data *data = dm_devices[i]->data;
-        dm_feedback_cancel_erase(data);
+#if DM_TYPING_ENABLED
+    /* a real keycode cancels a scheduled / in-progress auto-erase */
+    for (size_t i = 0; i < dm_devices_len; i++) {
+        struct dm_inst *inst = dm_devices[i]->data;
+        dm_feedback_pump_cancel_erase(&inst->feedback);
     }
 #endif
 
-    for (size_t i = 0; i < ARRAY_SIZE(dm_devices); i++) {
-        struct behavior_dynamic_macro_data *data = dm_devices[i]->data;
+    /*
+     * Record the *effective* keystroke, not the raw event stream.
+     *
+     * For a NON-modifier key we fold the active modifiers onto it: implicit_mods
+     * is taken from the live HID keyboard report (`(explicit & ~masked) |
+     * implicit` — exactly what ZMK is about to send), OR'd with the key's own
+     * encoded implicit mods. The `~masked` term is how a mod-morph strips its
+     * trigger modifier (Ctrl+Del -> Backspace masks the Ctrl), so the report
+     * already excludes it; a genuinely-held Ctrl/Shift stays in the byte. The
+     * report is order-independent for a non-modifier key (its bracketing mods
+     * came from prior, fully-dispatched events, and a morph sets its mask before
+     * raising the morphed keycode); only the key's OWN encoded mods may not be
+     * in the report yet, hence the OR.
+     *
+     * A BARE modifier key is not recorded immediately: we cannot yet tell a lone
+     * tap (keep — e.g. a GUI tap to open a launcher) from a chord/morph modifier
+     * (drop — folded onto its keys). We buffer the press and decide at release:
+     * a non-modifier key seen in between marks it bracketed (drop); a release
+     * with nothing in between flushes it as a lone tap (press + release).
+     */
+    bool is_modifier = is_mod(ev->usage_page, ev->keycode);
+    uint8_t effective_mods =
+        ev->implicit_modifiers | zmk_hid_get_keyboard_report()->body.modifiers;
 
-        if (data->state != DM_STATE_RECORDING) {
+    for (size_t i = 0; i < dm_devices_len; i++) {
+        struct dm_inst *inst = dm_devices[i]->data;
+        if (dm_machine_state(&inst->machine) != DM_STATE_RECORDING) {
             continue;
         }
 
-        if (data->recording_buffer.event_count >= MAX_EVENTS) {
-            LOG_WRN("Dynamic macro recording buffer full (%d events)", MAX_EVENTS);
-            feedback_overflow(data);
-            continue;
+        struct dm_event rec = {
+            .usage_page = ev->usage_page,
+            .keycode = (uint16_t)ev->keycode,
+            .implicit_mods = is_modifier ? ev->implicit_modifiers : effective_mods,
+            .explicit_mods = ev->explicit_modifiers,
+            .pressed = ev->state,
+            ._reserved = 0,
+        };
+
+        if (!is_modifier) {
+            pending_mods_mark_bracketed(inst);
+            record_event(inst, &rec);
+        } else if (ev->state) {
+            pending_mod_push(inst, &rec);
+        } else {
+            pending_mod_release(inst, &rec);
         }
-
-        struct dm_event *rec = &data->recording_buffer.events[data->recording_buffer.event_count];
-        rec->usage_page = ev->usage_page;
-        /* HID usage IDs fit in 16 bits for every supported page (keyboard,
-         * consumer, button), so narrowing the 32-bit keycode is safe. */
-        rec->keycode = (uint16_t)ev->keycode;
-        rec->implicit_mods = ev->implicit_modifiers;
-        rec->explicit_mods = ev->explicit_modifiers;
-        rec->pressed = ev->state;
-        rec->_reserved = 0;
-        data->recording_buffer.event_count++;
-
-        LOG_DBG("Recorded event %d/%d: page=0x%02x key=0x%02x %s",
-                data->recording_buffer.event_count, MAX_EVENTS,
-                ev->usage_page, ev->keycode, ev->state ? "press" : "release");
     }
 
     return ZMK_EV_EVENT_BUBBLE;
@@ -882,206 +728,80 @@ ZMK_LISTENER(dynamic_macro, dm_event_listener);
 ZMK_SUBSCRIPTION(dynamic_macro, zmk_keycode_state_changed);
 
 /* -------------------------------------------------------------------------- */
-/*  Initialization                                                            */
+/*  Initialization                                                           */
 /* -------------------------------------------------------------------------- */
 
 static int behavior_dynamic_macro_init(const struct device *dev) {
-    struct behavior_dynamic_macro_data *data = dev->data;
+    struct dm_inst *inst = dev->data;
 
-    memset(data, 0, sizeof(*data));
-    data->dev = dev;
-    data->state = DM_STATE_IDLE;
-    data->move_source_slot = -1;
-    data->playback_slot = -1;
+    memset(inst, 0, sizeof(*inst));
+    inst->dev = dev;
+    inst->playback_slot = -1;
 
-    k_work_init_delayable(&data->assign_timeout_work, assign_timeout_handler);
-    k_work_init(&data->emit_work, emit_work_handler);
-    k_timer_init(&data->emit_timer, emit_timer_handler, NULL);
+    const dm_nvs_sink *sink = NULL;
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_PERSIST)
-    dm_storage_init();
+    sink = dm_nvs_sink_get();
 #endif
+    slot_store_init(&inst->store, sink);
+
+    wire_callbacks(inst);
+    dm_machine_init(&inst->machine, &inst->store, &inst->callbacks);
+
+    k_work_init_delayable(&inst->timeout_work, timeout_handler);
+    k_timer_init(&inst->playback_timer, playback_timer_handler, NULL);
+    k_work_init(&inst->playback_work, playback_work_handler);
+
 #if DM_TYPING_ENABLED
-    data->current_feedback_level = DM_FEEDBACK_LEVEL;
-    data->current_feedback_style = DM_FEEDBACK_STYLE;
-    data->auto_erase_enabled = IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_FEEDBACK_AUTO_ERASE);
-    data->feedback_post_save_slot = -1;
-    data->status_current_slot = -1;
-    data->preview_done = true;
-#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_FEEDBACK_AUTO_ERASE)
-    dm_feedback_erase_init(data);
+    dm_feedback_config fcfg = {
+        .machine = &inst->machine,
+        .store = &inst->store,
+        .locale = (dm_locale)DM_LOCALE,
+        .status_detail = DM_STATUS_DETAIL,
+        .nvs_slots = NVS_SLOTS,
+        .max_slots = MAX_SLOTS,
+        .default_level = DM_FEEDBACK_LEVEL,
+        .default_style = DM_FEEDBACK_STYLE,
+        .default_erase = IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_FEEDBACK_AUTO_ERASE),
+        .raise_keycode = dm_raise_feedback_keycode,
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_PERSIST)
+        .save_knobs = dm_save_knobs,
+#else
+        .save_knobs = NULL,
 #endif
+        .set_suppress = dm_set_suppress,
+        .ctx = inst,
+    };
+    dm_feedback_pump_init(&inst->feedback, &fcfg);
 #endif
 
-    LOG_DBG("Dynamic macro behavior initialized (%d slots, %d max events)",
-            MAX_SLOTS, MAX_EVENTS);
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_PERSIST)
+    {
+        const struct behavior_dynamic_macro_config *config = dev->config;
+        dm_nvs_init(&inst->store, &inst->machine,
+#if DM_TYPING_ENABLED
+                    &inst->feedback,
+#else
+                    NULL,
+#endif
+                    config->settings_name);
+    }
+#endif
+
+    LOG_DBG("Dynamic macro behavior initialized (%d slots, %d max events)", MAX_SLOTS,
+            MAX_EVENTS);
     return 0;
 }
 
-#define DM_INST(n)                                                                            \
-    static struct behavior_dynamic_macro_data behavior_dynamic_macro_data_##n = {};            \
-    static const struct behavior_dynamic_macro_config behavior_dynamic_macro_config_##n = {     \
-        .settings_name = DEVICE_DT_NAME(DT_DRV_INST(n)),                                       \
-    };                                                                                         \
-    BEHAVIOR_DT_INST_DEFINE(n, behavior_dynamic_macro_init, NULL,                              \
-                            &behavior_dynamic_macro_data_##n,                                  \
-                            &behavior_dynamic_macro_config_##n, POST_KERNEL,                   \
-                            CONFIG_KERNEL_INIT_PRIORITY_DEFAULT,                               \
+#define DM_INST(n)                                                                                  \
+    static struct dm_inst dm_inst_##n = {};                                                         \
+    static const struct behavior_dynamic_macro_config behavior_dynamic_macro_config_##n = {         \
+        .settings_name = DEVICE_DT_NAME(DT_DRV_INST(n)),                                            \
+    };                                                                                              \
+    BEHAVIOR_DT_INST_DEFINE(n, behavior_dynamic_macro_init, NULL, &dm_inst_##n,                     \
+                            &behavior_dynamic_macro_config_##n, POST_KERNEL,                        \
+                            CONFIG_KERNEL_INIT_PRIORITY_DEFAULT,                                     \
                             &behavior_dynamic_macro_driver_api);
 
 DT_INST_FOREACH_STATUS_OKAY(DM_INST)
 
-/* -------------------------------------------------------------------------- */
-/*  Query API for display widgets                                             */
-/* -------------------------------------------------------------------------- */
-
-#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS)
-
-static struct behavior_dynamic_macro_data *get_first_dm_data(void) {
-    if (dm_devices_len == 0) {
-        return NULL;
-    }
-    return dm_devices[0]->data;
-}
-
-bool dm_is_slot_empty(int slot_idx) {
-    if (slot_idx < 0 || slot_idx >= MAX_SLOTS) {
-        return true;
-    }
-    struct behavior_dynamic_macro_data *data = get_first_dm_data();
-    if (!data) {
-        return true;
-    }
-    return slot_is_empty(data, slot_idx);
-}
-
-const struct dm_event *dm_get_slot_events(int slot_idx, uint32_t *count) {
-    if (slot_idx < 0 || slot_idx >= MAX_SLOTS || !count) {
-        if (count) {
-            *count = 0;
-        }
-        return NULL;
-    }
-    struct behavior_dynamic_macro_data *data = get_first_dm_data();
-    if (!data) {
-        *count = 0;
-        return NULL;
-    }
-    if (slot_is_empty(data, slot_idx)) {
-        *count = 0;
-        return NULL;
-    }
-    *count = data->slots[slot_idx].event_count;
-    return data->slots[slot_idx].events;
-}
-
-int dm_get_preview_string(int slot_idx, char *buf, size_t len) {
-    if (!buf || len == 0) {
-        return 0;
-    }
-    buf[0] = '\0';
-
-    if (slot_idx < 0 || slot_idx >= MAX_SLOTS) {
-        return 0;
-    }
-
-    struct behavior_dynamic_macro_data *data = get_first_dm_data();
-    if (!data || slot_is_empty(data, slot_idx)) {
-        return 0;
-    }
-
-#if DM_TYPING_ENABLED
-    const struct dm_slot *slot = &data->slots[slot_idx];
-    size_t pos = 0;
-    uint8_t active_mods = 0;
-
-    for (uint32_t i = 0; i < slot->event_count && pos < len - 1; i++) {
-        const struct dm_event *ev = &slot->events[i];
-
-        if (is_modifier_key(ev->usage_page, ev->keycode)) {
-            uint8_t mod_bit = 1 << (ev->keycode - 0xE0);
-            if (ev->pressed) {
-                active_mods |= mod_bit;
-            } else {
-                active_mods &= ~mod_bit;
-            }
-            continue;
-        }
-
-        if (!ev->pressed) {
-            continue;
-        }
-
-        uint8_t mods = active_mods | ev->implicit_mods | ev->explicit_mods;
-        char c;
-        /* Use the same classifier as the live preview-typing path so the two
-         * renderings agree: a printable key held with a non-shift modifier
-         * (e.g. Ctrl+A) becomes a <TOKEN>, not a bare character. */
-        if (is_replayable_event(ev, active_mods) &&
-            printable_char_for_keycode(ev->keycode, (mods & MOD_SHIFT_MASK) != 0, &c)) {
-            buf[pos++] = c;
-        } else {
-            size_t needed = token_size(mods, ev->usage_page, ev->keycode);
-            if (pos + needed < len) {
-                pos = render_token_to_buf(buf, pos, len, mods, ev->usage_page, ev->keycode);
-            }
-        }
-    }
-
-    buf[pos] = '\0';
-    return (int)pos;
-#else
-    int n = snprintf(buf, len, "(%u events)", data->slots[slot_idx].event_count);
-    return n < (int)len ? n : (int)len - 1;
-#endif
-}
-
-int dm_get_used_nvs_slots(void) {
-    struct behavior_dynamic_macro_data *data = get_first_dm_data();
-    if (!data) {
-        return 0;
-    }
-    return filled_nvs_slot_count(data);
-}
-
-int dm_get_used_ram_slots(void) {
-    struct behavior_dynamic_macro_data *data = get_first_dm_data();
-    if (!data) {
-        return 0;
-    }
-    return filled_ram_slot_count(data);
-}
-
-int dm_get_total_nvs_slots(void) {
-    return NVS_SLOTS;
-}
-
-int dm_get_total_ram_slots(void) {
-    return RAM_SLOTS;
-}
-
-enum zmk_dynamic_macro_state dm_get_state(void) {
-    struct behavior_dynamic_macro_data *data = get_first_dm_data();
-    if (!data) {
-        return ZMK_DYNAMIC_MACRO_STATE_IDLE;
-    }
-    switch (data->state) {
-    case DM_STATE_RECORDING:
-        return ZMK_DYNAMIC_MACRO_STATE_RECORDING;
-    case DM_STATE_PLAYING:
-        return ZMK_DYNAMIC_MACRO_STATE_PLAYING;
-    default:
-        return ZMK_DYNAMIC_MACRO_STATE_IDLE;
-    }
-}
-
-uint32_t dm_get_recording_event_count(void) {
-    struct behavior_dynamic_macro_data *data = get_first_dm_data();
-    if (!data || data->state != DM_STATE_RECORDING) {
-        return 0;
-    }
-    return data->recording_buffer.event_count;
-}
-
-#endif /* CONFIG_ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS */
-
-#endif /* DT_HAS_COMPAT_STATUS_OKAY(DT_DRV_COMPAT) */
+#endif /* DT_HAS_COMPAT_STATUS_OKAY */

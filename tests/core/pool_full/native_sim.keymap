@@ -1,0 +1,117 @@
+#include <dt-bindings/zmk/keys.h>
+#include <behaviors.dtsi>
+#include <dt-bindings/zmk/kscan_mock.h>
+#include <behaviors/dynamic_macro.dtsi>
+#include <dt-bindings/zmk/dynamic_macros.h>
+
+/* Shared-arena pool-full test.
+ *
+ * Pool sizing: AVG_EVENTS_PER_SLOT=2 x RAM_SLOTS=4 => ARENA_EVENTS = 8 events
+ * (== MAX_EVENTS, so a single macro may still fill the whole pool and the
+ * MAX_EVENTS <= ARENA_EVENTS build guard holds).
+ *
+ * Key layout (5 rows x 2 cols):
+ *   (0,0)=REC        (0,1)=STP
+ *   (1,0)=SLOT_RAM0  (1,1)=SLOT_RAM1
+ *   (2,0)=SLOT_RAM2  (2,1)=SLOT_RAM3
+ *   (3,0)=A          (3,1)=B
+ *   (4,0)=C          (4,1)=D
+ *
+ * Flow:
+ *   1. Record A once  (2 events), assign slot 0 -> stored, pool 2/8.
+ *   2. Record B twice (4 events), assign slot 1 -> stored, pool 6/8.
+ *   3. Record C once  (2 events), assign slot 2 -> stored, pool 8/8 (FULL).
+ *   4. Record D once  (2 events), assign slot 3 -> REJECTED (pool full); the
+ *      live D keypress still passes through, but nothing is stored and the
+ *      machine stays in PENDING_ASSIGN.
+ *   5. Wait past ASSIGN_TIMEOUT (500ms) -> pending assign auto-cancels to IDLE.
+ *   6. Play slot 3 -> empty, no output (proves the fourth macro was NOT stored).
+ *   7. Play slot 0 -> A; play slot 1 -> B B; play slot 2 -> C (the three stored
+ *      macros survived the full pool intact).
+ *
+ * With FEEDBACK_OFF the only emitted keycodes are the live record passthrough
+ * plus playback, so the snapshot reads:
+ *   A          (live record, slot 0)
+ *   B B        (live record, slot 1)
+ *   C          (live record, slot 2)
+ *   D          (live record, slot 3 — rejected assign, passthrough only)
+ *   A          (play slot 0)
+ *   B B        (play slot 1)
+ *   C          (play slot 2)
+ */
+
+&kscan {
+    rows = <5>;
+    columns = <2>;
+    exit-after;
+    events = <
+        /* ===== 1. record A, assign slot 0 ===== */
+        ZMK_MOCK_PRESS(0,0,10)    /* REC */
+        ZMK_MOCK_RELEASE(0,0,10)
+        ZMK_MOCK_PRESS(3,0,10)    /* A */
+        ZMK_MOCK_RELEASE(3,0,10)
+        ZMK_MOCK_PRESS(0,1,10)    /* STP */
+        ZMK_MOCK_RELEASE(0,1,10)
+        ZMK_MOCK_PRESS(1,0,10)    /* SLOT_RAM 0 */
+        ZMK_MOCK_RELEASE(1,0,10)
+
+        /* ===== 2. record B twice, assign slot 1 ===== */
+        ZMK_MOCK_PRESS(0,0,10)    /* REC */
+        ZMK_MOCK_RELEASE(0,0,10)
+        ZMK_MOCK_PRESS(3,1,10)    /* B */
+        ZMK_MOCK_RELEASE(3,1,10)
+        ZMK_MOCK_PRESS(3,1,10)    /* B */
+        ZMK_MOCK_RELEASE(3,1,10)
+        ZMK_MOCK_PRESS(0,1,10)    /* STP */
+        ZMK_MOCK_RELEASE(0,1,10)
+        ZMK_MOCK_PRESS(1,1,10)    /* SLOT_RAM 1 */
+        ZMK_MOCK_RELEASE(1,1,10)
+
+        /* ===== 3. record C, assign slot 2 (pool now full) ===== */
+        ZMK_MOCK_PRESS(0,0,10)    /* REC */
+        ZMK_MOCK_RELEASE(0,0,10)
+        ZMK_MOCK_PRESS(4,0,10)    /* C */
+        ZMK_MOCK_RELEASE(4,0,10)
+        ZMK_MOCK_PRESS(0,1,10)    /* STP */
+        ZMK_MOCK_RELEASE(0,1,10)
+        ZMK_MOCK_PRESS(2,0,10)    /* SLOT_RAM 2 */
+        ZMK_MOCK_RELEASE(2,0,10)
+
+        /* ===== 4. record D, attempt assign slot 3 -> rejected (pool full) ===== */
+        ZMK_MOCK_PRESS(0,0,10)    /* REC */
+        ZMK_MOCK_RELEASE(0,0,10)
+        ZMK_MOCK_PRESS(4,1,10)    /* D */
+        ZMK_MOCK_RELEASE(4,1,10)
+        ZMK_MOCK_PRESS(0,1,10)    /* STP */
+        ZMK_MOCK_RELEASE(0,1,10)
+        ZMK_MOCK_PRESS(2,1,10)    /* SLOT_RAM 3 -> REJECTED_FULL, stays PENDING_ASSIGN */
+        ZMK_MOCK_RELEASE(2,1,1000) /* 5. wait > ASSIGN_TIMEOUT (500ms): auto-cancel to IDLE */
+
+        /* ===== 6. play slot 3: empty, no output ===== */
+        ZMK_MOCK_PRESS(2,1,200)
+        ZMK_MOCK_RELEASE(2,1,10)
+
+        /* ===== 7. play slot 0: A, slot 1: B B, slot 2: C ===== */
+        ZMK_MOCK_PRESS(1,0,2000)
+        ZMK_MOCK_RELEASE(1,0,10)
+        ZMK_MOCK_PRESS(1,1,2000)
+        ZMK_MOCK_RELEASE(1,1,10)
+        ZMK_MOCK_PRESS(2,0,2000)
+        ZMK_MOCK_RELEASE(2,0,10)
+    >;
+};
+
+/ {
+    keymap {
+        compatible = "zmk,keymap";
+        default_layer {
+            bindings = <
+                &dm DM_REC 0      &dm DM_STP 0
+                &dm DM_SLOT_RAM 0 &dm DM_SLOT_RAM 1
+                &dm DM_SLOT_RAM 2 &dm DM_SLOT_RAM 3
+                &kp A             &kp B
+                &kp C             &kp D
+            >;
+        };
+    };
+};

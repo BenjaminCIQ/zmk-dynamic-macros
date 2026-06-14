@@ -7,8 +7,24 @@ config ZMK_BEHAVIOR_DYNAMIC_MACRO
 if ZMK_BEHAVIOR_DYNAMIC_MACRO
 
 config ZMK_BEHAVIOR_DYNAMIC_MACRO_MAX_EVENTS
-    int "Maximum number of events per macro slot (press + release = 2 events)"
+    int "Maximum number of events a single macro can hold (press + release = 2 events)"
     default 64
+    help
+      Maximum events a single macro can hold. Also sizes the in-progress recording
+      buffer. Must be <= AVG_EVENTS_PER_SLOT x number of slots.
+
+config ZMK_BEHAVIOR_DYNAMIC_MACRO_AVG_EVENTS_PER_SLOT
+    int "Average events per slot (sizes the shared recording pool)"
+    default 32
+    range 1 64
+    help
+      All macro slots share one recording pool sized AVG_EVENTS_PER_SLOT x number
+      of slots. A single macro can be longer than this average, as long as the
+      total recorded across all slots stays within the pool -- so a few long
+      macros leave less room for the rest. A typical keystroke is 2 events
+      (press + release). Set this equal to "Maximum events per macro" to guarantee
+      every slot can be filled to the maximum at once (no pool sharing, no RAM
+      savings).
 
 config ZMK_BEHAVIOR_DYNAMIC_MACRO_TAP_DELAY
     int "Delay in ms between each event during playback"
@@ -191,3 +207,16 @@ config ZMK_BEHAVIOR_DYNAMIC_MACRO_EVENTS
       slot contents.
 
 endif
+
+# The native_sim flash simulator defaults to a file backing (./flash.bin,
+# relative to the process working directory). ZMK's run-test.sh runs every
+# test binary from one shared directory, up to four in parallel, so any two
+# NVS tests would share — and corrupt — the same flash file, and a previous
+# run's slots would leak into the next. Backing the flash with RAM gives each
+# test process a pristine, private flash; DM_TEST_RELOAD still exercises the
+# full settings/NVS round-trip in-process. Gated on the test-only RELOAD
+# symbol so production native builds are unaffected.
+config NATIVE_EXTRA_CMDLINE_ARGS
+    string
+    depends on ARCH_POSIX
+    default "--flash_in_ram" if ZMK_BEHAVIOR_DYNAMIC_MACRO_TEST_RELOAD && FLASH_SIMULATOR
